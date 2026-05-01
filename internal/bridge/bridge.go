@@ -274,6 +274,10 @@ func (br *Bridge) HandleEvent(evt backend.AppEvent) {
 			for _, id := range receipt.MessageIDs {
 				br.DB.UpdateMessageStatus(id, receipt.Chat.String(), status)
 			}
+		case *backend.OfflineSyncCompletedEvent:
+			fmt.Println("UI: Offline sync completed")
+		case *backend.IdentityChangeEvent:
+			fmt.Printf("UI: Identity changed for %s\n", v.Info.JID)
 		default:
 			fmt.Printf("UI received unhandled event: %T\n", evt)
 		}

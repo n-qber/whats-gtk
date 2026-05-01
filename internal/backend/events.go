@@ -26,6 +26,12 @@ type PresenceEvent struct {
 	Info *events.Presence
 }
 
+type OfflineSyncCompletedEvent struct{}
+
+type IdentityChangeEvent struct {
+	Info *events.IdentityChange
+}
+
 func (b *Backend) registerEventHandlers() {
 	b.Client.AddEventHandler(func(evt interface{}) {
 		var appEvt AppEvent
@@ -43,6 +49,10 @@ func (b *Backend) registerEventHandlers() {
 			appEvt = &ReceiptEvent{Info: v}
 		case *events.Presence:
 			appEvt = &PresenceEvent{Info: v}
+		case *events.OfflineSyncCompleted:
+			appEvt = &OfflineSyncCompletedEvent{}
+		case *events.IdentityChange:
+			appEvt = &IdentityChangeEvent{Info: v}
 		default:
 			// log unhandled event or pass as is
 			appEvt = evt
