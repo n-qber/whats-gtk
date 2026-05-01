@@ -78,110 +78,67 @@ func (br *Bridge) Start(ctx context.Context) {
 		return
 	}
 
-	// Initial load from local DB for instant UI
+	// 1. Initial load from local DB for instant UI
 	go func() {
 		contacts, err := br.DB.GetAllContacts(50)
-		if err != nil {
-			fmt.Printf("Bridge: Error loading initial contacts: %v\n", err)
-			return
-		}
-		fmt.Printf("Bridge: Loaded %d contacts from local DB\n", len(contacts))
-		if len(contacts) > 0 {
-			glib.IdleAdd(func() {
-				br.App.ClearChats()
-				br.jids = nil
-				for _, c := range contacts {
-					jid, _ := types.ParseJID(c.JID)
-					br.jids = append(br.jids, jid)
-					prefix := ""
-					if c.IsGroup {
-						prefix = "[G] "
-					}
-					
-					name := c.Name
-					if name == "" {
-						name = c.PushName
-					}
-					if name == "" {
-						name = jid.User
-					}
-					br.App.AddChat(prefix + name)
-				}
-			})
+		if err == nil && len(contacts) > 0 {
+			fmt.Printf("Bridge: Loaded %d contacts from local DB\n", len(contacts))
+			br.refreshSidebar(contacts)
 		}
 	}()
 
-	// Background sync to refresh from WhatsApp
+	// 2. Background sync to refresh from WhatsApp
 	go func() {
-		addedJIDs := make(map[string]bool)
-
-		// 1. Fetch joined groups
+		// Fetch groups
 		groups, err := br.Backend.GetJoinedGroups(ctx)
 		if err == nil {
 			fmt.Printf("Bridge: Synced %d groups from server\n", len(groups))
 			for _, g := range groups {
 				br.DB.SaveContact(database.Contact{
-					JID:     g.JID.String(),
-					Name:    g.Name,
-					IsGroup: true,
+					JID:       g.JID.String(),
+					SavedName: g.Name,
+					IsGroup:   true,
 				})
-				addedJIDs[g.JID.String()] = true
 			}
-		} else {
-			fmt.Printf("Bridge: Failed to sync groups: %v\n", err)
 		}
 
-		// 2. Fetch all contacts from store
+		// Fetch contacts
 		contacts, err := br.Backend.GetAllContacts(ctx)
 		if err == nil {
 			fmt.Printf("Bridge: Synced %d contacts from store\n", len(contacts))
 			for jid, info := range contacts {
-				name := info.FullName
-				if name == "" {
-					name = info.PushName
-				}
-				if name == "" {
-					name = jid.User
-				}
 				br.DB.SaveContact(database.Contact{
-					JID:      jid.String(),
-					Name:     name,
-					PushName: info.PushName,
-					IsGroup:  jid.Server == types.GroupServer,
+					JID:       jid.String(),
+					SavedName: info.FullName,
+					PushName:  info.PushName,
+					IsGroup:   jid.Server == types.GroupServer,
 				})
-				addedJIDs[jid.String()] = true
 			}
 		}
 		
-		// 3. Trigger a UI refresh from the updated DB
+		// Refresh UI from updated DB
 		contactsDB, err := br.DB.GetAllContacts(50)
-		if err != nil {
-			fmt.Printf("Bridge: Error refreshing contacts from DB: %v\n", err)
-			return
+		if err == nil {
+			fmt.Printf("Bridge: Refreshing UI with %d contacts after sync\n", len(contactsDB))
+			br.refreshSidebar(contactsDB)
 		}
-		fmt.Printf("Bridge: Refreshing UI with %d contacts\n", len(contactsDB))
-		glib.IdleAdd(func() {
-			br.App.ClearChats()
-			br.jids = nil
-			for _, c := range contactsDB {
-				jid, _ := types.ParseJID(c.JID)
-				br.jids = append(br.jids, jid)
-				prefix := ""
-				if c.IsGroup {
-					prefix = "[G] "
-				}
-				
-				name := c.Name
-				if name == "" {
-					name = c.PushName
-				}
-				if name == "" {
-					name = jid.User
-				}
-				br.App.AddChat(prefix + name)
-			}
-		})
 	}()
+}
+
+func (br *Bridge) refreshSidebar(contacts []database.Contact) {
+	glib.IdleAdd(func() {
+		br.App.ClearChats()
+		br.jids = nil
+		for _, c := range contacts {
+			jid, _ := types.ParseJID(c.JID)
+			br.jids = append(br.jids, jid)
+			prefix := ""
+			if c.IsGroup {
+				prefix = "[G] "
+			}
+			br.App.AddChat(prefix + c.DisplayName())
+		}
+	})
 }
 
 func (br *Bridge) HandleEvent(evt backend.AppEvent) {

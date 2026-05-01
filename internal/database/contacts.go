@@ -6,7 +6,7 @@ import (
 
 type Contact struct {
 	JID           string
-	Name          string
+	SavedName     string
 	PushName      string
 	AvatarPath    string
 	IsGroup       bool
@@ -14,14 +14,14 @@ type Contact struct {
 }
 
 func (a *AppDB) SaveContact(c Contact) error {
-	query := `INSERT INTO contacts (jid, name, push_name, avatar_path, is_group, last_message_at) 
+	query := `INSERT INTO contacts (jid, saved_name, push_name, avatar_path, is_group, last_message_at) 
 	          VALUES (?, ?, ?, ?, ?, ?)
 	          ON CONFLICT(jid) DO UPDATE SET
-	          name=COALESCE(excluded.name, name),
-	          push_name=COALESCE(excluded.push_name, push_name),
+	          saved_name=COALESCE(NULLIF(excluded.saved_name, ''), saved_name),
+	          push_name=COALESCE(NULLIF(excluded.push_name, ''), push_name),
 	          is_group=excluded.is_group,
 	          last_message_at=MAX(COALESCE(last_message_at, '0001-01-01'), excluded.last_message_at)`
-	_, err := a.db.Exec(query, c.JID, c.Name, c.PushName, c.AvatarPath, c.IsGroup, c.LastMessageAt)
+	_, err := a.db.Exec(query, c.JID, c.SavedName, c.PushName, c.AvatarPath, c.IsGroup, c.LastMessageAt)
 	return err
 }
 
@@ -32,7 +32,7 @@ func (a *AppDB) UpdateContactTimestamp(jid string, timestamp time.Time) error {
 }
 
 func (a *AppDB) GetAllContacts(limit int) ([]Contact, error) {
-	query := `SELECT jid, name, push_name, avatar_path, is_group, last_message_at 
+	query := `SELECT jid, saved_name, push_name, avatar_path, is_group, last_message_at 
 	          FROM contacts 
 	          ORDER BY last_message_at DESC 
 	          LIMIT ?`
@@ -45,11 +45,21 @@ func (a *AppDB) GetAllContacts(limit int) ([]Contact, error) {
 	var contacts []Contact
 	for rows.Next() {
 		var c Contact
-		err := rows.Scan(&c.JID, &c.Name, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt)
+		err := rows.Scan(&c.JID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt)
 		if err != nil {
 			return nil, err
 		}
 		contacts = append(contacts, c)
 	}
 	return contacts, nil
+}
+
+func (c *Contact) DisplayName() string {
+	if c.SavedName != "" {
+		return c.SavedName
+	}
+	if c.PushName != "" {
+		return c.PushName
+	}
+	return c.JID
 }
