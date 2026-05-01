@@ -80,7 +80,7 @@ func (br *Bridge) Start(ctx context.Context) {
 
 	// Initial load from local DB for instant UI
 	go func() {
-		contacts, err := br.DB.GetAllContacts()
+		contacts, err := br.DB.GetAllContacts(50)
 		if err != nil {
 			fmt.Printf("Bridge: Error loading initial contacts: %v\n", err)
 			return
@@ -154,7 +154,7 @@ func (br *Bridge) Start(ctx context.Context) {
 		}
 		
 		// 3. Trigger a UI refresh from the updated DB
-		contactsDB, err := br.DB.GetAllContacts()
+		contactsDB, err := br.DB.GetAllContacts(50)
 		if err != nil {
 			fmt.Printf("Bridge: Error refreshing contacts from DB: %v\n", err)
 			return
