@@ -31,6 +31,18 @@ func (a *AppDB) UpdateContactTimestamp(jid string, timestamp time.Time) error {
 	return err
 }
 
+func (a *AppDB) GetContact(jid string) (*Contact, error) {
+	query := `SELECT jid, saved_name, push_name, avatar_path, is_group, last_message_at FROM contacts WHERE jid = ?`
+	row := a.db.QueryRow(query, jid)
+	
+	var c Contact
+	err := row.Scan(&c.JID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
 func (a *AppDB) GetAllContacts(limit int) ([]Contact, error) {
 	query := `SELECT jid, saved_name, push_name, avatar_path, is_group, last_message_at 
 	          FROM contacts 

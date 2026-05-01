@@ -43,12 +43,19 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 				
 				glib.IdleAdd(func() {
 					br.App.ClearMessages()
+					isGroup := jid.Server == types.GroupServer
+					
 					for _, m := range msgs {
-						sender := m.SenderJID
-						if m.IsFromMe {
-							sender = "Me"
+						displayMessage := m.Content
+						if isGroup && !m.IsFromMe {
+							senderName := m.SenderJID
+							contact, err := br.DB.GetContact(m.SenderJID)
+							if err == nil {
+								senderName = contact.DisplayName()
+							}
+							displayMessage = fmt.Sprintf("%s: %s", senderName, m.Content)
 						}
-						br.App.AddMessage(fmt.Sprintf("%s: %s", sender, m.Content), m.IsFromMe)
+						br.App.AddMessage(displayMessage, m.IsFromMe)
 					}
 				})
 			}()
@@ -244,8 +251,16 @@ func (br *Bridge) HandleEvent(evt backend.AppEvent) {
 			}
 			
 			if content != "" {
-				sender := msg.Info.Sender.String()
-				br.App.AddMessage(fmt.Sprintf("%s: %s", sender, content), msg.Info.IsFromMe)
+				displayMessage := content
+				if msg.Info.Chat.Server == types.GroupServer && !msg.Info.IsFromMe {
+					senderName := msg.Info.Sender.String()
+					contact, err := br.DB.GetContact(msg.Info.Sender.String())
+					if err == nil {
+						senderName = contact.DisplayName()
+					}
+					displayMessage = fmt.Sprintf("%s: %s", senderName, content)
+				}
+				br.App.AddMessage(displayMessage, msg.Info.IsFromMe)
 			}
 		case *backend.ReceiptEvent:
 			receipt := v.Info
