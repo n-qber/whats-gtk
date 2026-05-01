@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"whats-gtk/internal/ui/chat/bubbles"
 
 	"github.com/gotk3/gotk3/gdk"
@@ -13,6 +14,7 @@ type App struct {
 	ChatList       *gtk.ListBox
 	MessageList    *gtk.ListBox
 	MessageEntry   *gtk.Entry
+	SearchEntry    *gtk.Entry
 	OnChatSelected func(index int)
 	OnSendMessage  func(text string)
 }
@@ -68,6 +70,7 @@ func NewApp(app *gtk.Application) (*App, error) {
 		ChatList:     chatList,
 		MessageList:  messageList,
 		MessageEntry: messageEntry,
+		SearchEntry:  searchEntry,
 	}
 
 	chatList.Connect("row-selected", func() {
@@ -75,6 +78,23 @@ func NewApp(app *gtk.Application) (*App, error) {
 		if row != nil && a.OnChatSelected != nil {
 			a.OnChatSelected(row.GetIndex())
 		}
+	})
+
+	chatList.SetFilterFunc(func(row *gtk.ListBoxRow) bool {
+		searchText, _ := searchEntry.GetText()
+		if searchText == "" {
+			return true
+		}
+		
+		child, _ := row.GetChild()
+		label := child.(*gtk.Label)
+		text, _ := label.GetText()
+		
+		return strings.Contains(strings.ToLower(text), strings.ToLower(searchText))
+	})
+
+	searchEntry.Connect("changed", func() {
+		chatList.InvalidateFilter()
 	})
 
 	sendButton.Connect("clicked", func() {
