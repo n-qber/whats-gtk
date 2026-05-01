@@ -24,7 +24,8 @@ func (a *AppDB) SaveMessage(m Message) error {
 
 func (a *AppDB) GetMessages(chatJID string, limit int) ([]Message, error) {
 	query := `SELECT msg_id, chat_jid, sender_jid, content, type, timestamp, status, is_from_me 
-	          FROM messages WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT ?`
+	          FROM (SELECT * FROM messages WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT ?)
+	          ORDER BY timestamp ASC`
 	rows, err := a.db.Query(query, chatJID, limit)
 	if err != nil {
 		return nil, err

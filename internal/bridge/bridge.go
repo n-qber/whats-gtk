@@ -32,9 +32,26 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 			jid := br.jids[index]
 			br.selectedJID = &jid
 			fmt.Printf("Selected chat: %s\n", jid)
-			glib.IdleAdd(func() {
-				br.App.ClearMessages()
-			})
+			
+			// Load history from DB
+			go func() {
+				msgs, err := br.DB.GetMessages(jid.String(), 50)
+				if err != nil {
+					fmt.Printf("Failed to load history: %v\n", err)
+					return
+				}
+				
+				glib.IdleAdd(func() {
+					br.App.ClearMessages()
+					for _, m := range msgs {
+						sender := m.SenderJID
+						if m.IsFromMe {
+							sender = "Me"
+						}
+						br.App.AddMessage(fmt.Sprintf("%s: %s", sender, m.Content), m.IsFromMe)
+					}
+				})
+			}()
 		}
 	}
 
