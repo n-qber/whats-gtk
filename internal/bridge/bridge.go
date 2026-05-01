@@ -78,44 +78,47 @@ func (br *Bridge) Start(ctx context.Context) {
 		return
 	}
 
-	// Fetch contacts and groups in a background goroutine
+	// Initial load from local DB for instant UI
+	go func() {
+		contacts, err := br.DB.GetAllContacts()
+		if err == nil && len(contacts) > 0 {
+			glib.IdleAdd(func() {
+				br.App.ClearChats()
+				br.jids = nil
+				for _, c := range contacts {
+					jid, _ := types.ParseJID(c.JID)
+					br.jids = append(br.jids, jid)
+					prefix := ""
+					if c.IsGroup {
+						prefix = "[G] "
+					}
+					br.App.AddChat(prefix + c.Name)
+				}
+			})
+		}
+	}()
+
+	// Background sync to refresh from WhatsApp
 	go func() {
 		addedJIDs := make(map[string]bool)
 
-		// 1. Fetch joined groups from server
+		// 1. Fetch joined groups
 		groups, err := br.Backend.GetJoinedGroups(ctx)
 		if err == nil {
-			glib.IdleAdd(func() {
-				for _, g := range groups {
-					if addedJIDs[g.JID.String()] {
-						continue
-					}
-					br.jids = append(br.jids, g.JID)
-					br.App.AddChat(fmt.Sprintf("[G] %s", g.Name))
-					addedJIDs[g.JID.String()] = true
-					
-					// Persist to DB
-					br.DB.SaveContact(database.Contact{
-						JID:     g.JID.String(),
-						Name:    g.Name,
-						IsGroup: true,
-					})
-				}
-			})
+			for _, g := range groups {
+				br.DB.SaveContact(database.Contact{
+					JID:     g.JID.String(),
+					Name:    g.Name,
+					IsGroup: true,
+				})
+				addedJIDs[g.JID.String()] = true
+			}
 		}
 
 		// 2. Fetch all contacts from store
 		contacts, err := br.Backend.GetAllContacts(ctx)
-		if err != nil {
-			fmt.Printf("Failed to fetch contacts: %v\n", err)
-			return
-		}
-		
-		glib.IdleAdd(func() {
+		if err == nil {
 			for jid, info := range contacts {
-				if addedJIDs[jid.String()] {
-					continue
-				}
 				name := info.FullName
 				if name == "" {
 					name = info.PushName
@@ -123,25 +126,33 @@ func (br *Bridge) Start(ctx context.Context) {
 				if name == "" {
 					name = jid.User
 				}
-				
-				prefix := ""
-				if jid.Server == types.GroupServer {
-					prefix = "[G] "
-				}
-				
-				br.jids = append(br.jids, jid)
-				br.App.AddChat(prefix + name)
-				addedJIDs[jid.String()] = true
-
-				// Persist to DB
 				br.DB.SaveContact(database.Contact{
 					JID:      jid.String(),
 					Name:     name,
 					PushName: info.PushName,
 					IsGroup:  jid.Server == types.GroupServer,
 				})
+				addedJIDs[jid.String()] = true
 			}
-		})
+		}
+		
+		// 3. Trigger a UI refresh from the updated DB
+		contactsDB, err := br.DB.GetAllContacts()
+		if err == nil {
+			glib.IdleAdd(func() {
+				br.App.ClearChats()
+				br.jids = nil
+				for _, c := range contactsDB {
+					jid, _ := types.ParseJID(c.JID)
+					br.jids = append(br.jids, jid)
+					prefix := ""
+					if c.IsGroup {
+						prefix = "[G] "
+					}
+					br.App.AddChat(prefix + c.Name)
+				}
+			})
+		}
 	}()
 }
 
@@ -180,6 +191,9 @@ func (br *Bridge) HandleEvent(evt backend.AppEvent) {
 			Timestamp: msg.Info.Timestamp,
 			IsFromMe:  msg.Info.IsFromMe,
 		})
+		
+		// Update contact timestamp for sorting
+		br.DB.UpdateContactTimestamp(msg.Info.Chat.String(), msg.Info.Timestamp)
 	}
 
 	// 2. UI Updates (Main Thread)

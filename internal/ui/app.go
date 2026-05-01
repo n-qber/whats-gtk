@@ -121,6 +121,15 @@ func (a *App) AddChat(name string) {
 	row.ShowAll()
 }
 
+func (a *App) ClearChats() {
+	children := a.ChatList.GetChildren()
+	children.Foreach(func(item interface{}) {
+		widget := item.(gtk.IWidget)
+		a.ChatList.Remove(widget)
+	})
+	a.ChatList.ShowAll()
+}
+
 func (a *App) AddMessage(text string, isSelf bool) {
 	bubble, err := bubbles.NewTextBubble(text, isSelf)
 	if err != nil {

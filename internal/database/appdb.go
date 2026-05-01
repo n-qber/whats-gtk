@@ -36,7 +36,8 @@ func (a *AppDB) createTables() error {
 			name TEXT,
 			push_name TEXT,
 			avatar_path TEXT,
-			is_group BOOLEAN
+			is_group BOOLEAN,
+			last_message_at DATETIME
 		)`,
 		`CREATE TABLE IF NOT EXISTS messages (
 			msg_id TEXT PRIMARY KEY,
