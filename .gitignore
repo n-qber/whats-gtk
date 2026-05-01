@@ -1,0 +1,25 @@
+# Binaries
+whats-gtk
+
+# Local databases (Sensitive session data)
+store.db
+store.db-shm
+store.db-wal
+app.db
+app.db-shm
+app.db-wal
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Go
+vendor/
+*.exe
+*.test
+*.out
