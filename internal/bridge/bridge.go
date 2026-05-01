@@ -262,6 +262,18 @@ func (br *Bridge) HandleEvent(evt backend.AppEvent) {
 				sender := msg.Info.Sender.String()
 				br.App.AddMessage(fmt.Sprintf("%s: %s", sender, content), msg.Info.IsFromMe)
 			}
+		case *backend.ReceiptEvent:
+			receipt := v.Info
+			status := "sent"
+			if receipt.Type == types.ReceiptTypeDelivered {
+				status = "delivered"
+			} else if receipt.Type == types.ReceiptTypeRead || receipt.Type == types.ReceiptTypeReadSelf {
+				status = "read"
+			}
+			
+			for _, id := range receipt.MessageIDs {
+				br.DB.UpdateMessageStatus(id, receipt.Chat.String(), status)
+			}
 		default:
 			fmt.Printf("UI received unhandled event: %T\n", evt)
 		}

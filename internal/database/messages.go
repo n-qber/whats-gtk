@@ -22,6 +22,12 @@ func (a *AppDB) SaveMessage(m Message) error {
 	return err
 }
 
+func (a *AppDB) UpdateMessageStatus(msgID string, chatJID string, status string) error {
+	query := `UPDATE messages SET status = ? WHERE msg_id = ? AND chat_jid = ?`
+	_, err := a.db.Exec(query, status, msgID, chatJID)
+	return err
+}
+
 func (a *AppDB) GetMessages(chatJID string, limit int) ([]Message, error) {
 	query := `SELECT msg_id, chat_jid, sender_jid, content, type, timestamp, status, is_from_me 
 	          FROM (SELECT * FROM messages WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT ?)
