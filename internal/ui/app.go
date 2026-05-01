@@ -113,6 +113,7 @@ func (a *App) Show() {
 }
 
 func (a *App) AddChat(name string) {
+	fmt.Printf("UI: Adding chat to sidebar: %s\n", name)
 	row, _ := gtk.ListBoxRowNew()
 	label, _ := gtk.LabelNew(name)
 	label.SetXAlign(0)
@@ -122,6 +123,7 @@ func (a *App) AddChat(name string) {
 }
 
 func (a *App) ClearChats() {
+	fmt.Println("UI: Clearing sidebar chats")
 	children := a.ChatList.GetChildren()
 	children.Foreach(func(item interface{}) {
 		widget := item.(gtk.IWidget)

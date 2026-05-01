@@ -81,25 +81,35 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 }
 
 func (br *Bridge) Start(ctx context.Context) {
+	fmt.Println("Bridge: Starting...")
 	br.Backend.SetEventHandler(br.HandleEvent)
 	
 	err := br.Backend.Connect()
 	if err != nil {
-		fmt.Printf("Failed to connect: %v\n", err)
+		fmt.Printf("Bridge: Failed to connect: %v\n", err)
 		return
 	}
+	fmt.Println("Bridge: Connected to WhatsApp")
 
 	// 1. Initial load from local DB for instant UI
 	go func() {
+		fmt.Println("Bridge: Attempting initial contact load from DB...")
 		contacts, err := br.DB.GetAllContacts(50)
-		if err == nil && len(contacts) > 0 {
-			fmt.Printf("Bridge: Loaded %d contacts from local DB\n", len(contacts))
+		if err != nil {
+			fmt.Printf("Bridge: Error loading initial contacts: %v\n", err)
+			return
+		}
+		fmt.Printf("Bridge: Found %d contacts in local DB\n", len(contacts))
+		if len(contacts) > 0 {
 			br.refreshSidebar(contacts)
+		} else {
+			fmt.Println("Bridge: Local DB is empty, waiting for sync...")
 		}
 	}()
 
 	// 2. Background sync to refresh from WhatsApp
 	go func() {
+		fmt.Println("Bridge: Starting background sync refresh...")
 		// Fetch groups
 		groups, err := br.Backend.GetJoinedGroups(ctx)
 		if err == nil {
@@ -111,6 +121,8 @@ func (br *Bridge) Start(ctx context.Context) {
 					IsGroup:   true,
 				})
 			}
+		} else {
+			fmt.Printf("Bridge: Failed to sync groups: %v\n", err)
 		}
 
 		// Fetch contacts
@@ -125,6 +137,8 @@ func (br *Bridge) Start(ctx context.Context) {
 					IsGroup:   jid.Server == types.GroupServer,
 				})
 			}
+		} else {
+			fmt.Printf("Bridge: Failed to sync contacts from store: %v\n", err)
 		}
 		
 		// Refresh UI from updated DB
@@ -132,19 +146,27 @@ func (br *Bridge) Start(ctx context.Context) {
 		if err == nil {
 			fmt.Printf("Bridge: Refreshing UI with %d contacts after sync\n", len(contactsDB))
 			br.refreshSidebar(contactsDB)
+		} else {
+			fmt.Printf("Bridge: Error fetching updated contacts from DB: %v\n", err)
 		}
 	}()
 }
 
 func (br *Bridge) refreshSidebar(contacts []database.Contact) {
+	fmt.Printf("Bridge: refreshSidebar called with %d contacts\n", len(contacts))
 	br.sidebarMutex.Lock()
 	defer br.sidebarMutex.Unlock()
 	
 	glib.IdleAdd(func() {
+		fmt.Println("Bridge: Executing sidebar refresh on main thread...")
 		br.App.ClearChats()
 		br.jids = nil
 		for _, c := range contacts {
-			jid, _ := types.ParseJID(c.JID)
+			jid, err := types.ParseJID(c.JID)
+			if err != nil {
+				fmt.Printf("Bridge: Error parsing JID %s: %v\n", c.JID, err)
+				continue
+			}
 			br.jids = append(br.jids, jid)
 			prefix := ""
 			if c.IsGroup {
@@ -152,6 +174,7 @@ func (br *Bridge) refreshSidebar(contacts []database.Contact) {
 			}
 			br.App.AddChat(prefix + c.DisplayName())
 		}
+		fmt.Printf("Bridge: Finished sidebar refresh. jids length: %d\n", len(br.jids))
 	})
 }
 
