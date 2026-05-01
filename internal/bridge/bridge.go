@@ -3,13 +3,14 @@ package bridge
 import (
 	"context"
 	"fmt"
+	"sync"
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/ui"
 
-	"github.com/gotk3/gotk3/gdk"
 	"github.com/gotk3/gotk3/glib"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 )
 
 type Bridge struct {
@@ -18,6 +19,9 @@ type Bridge struct {
 	DB          *database.AppDB
 	jids        []types.JID
 	selectedJID *types.JID
+	
+	sidebarMutex sync.Mutex
+	isSyncing    bool
 }
 
 func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Context) *Bridge {
@@ -133,6 +137,9 @@ func (br *Bridge) Start(ctx context.Context) {
 }
 
 func (br *Bridge) refreshSidebar(contacts []database.Contact) {
+	br.sidebarMutex.Lock()
+	defer br.sidebarMutex.Unlock()
+	
 	glib.IdleAdd(func() {
 		br.App.ClearChats()
 		br.jids = nil
@@ -149,137 +156,104 @@ func (br *Bridge) refreshSidebar(contacts []database.Contact) {
 }
 
 func (br *Bridge) HandleEvent(evt backend.AppEvent) {
-	// 1. Persistence & Heavy Processing (Background)
+	// 1. Heavy Persistence / Background Processing
 	switch v := evt.(type) {
 	case *backend.HistorySyncEvent:
+		br.isSyncing = true
 		go func() {
+			fmt.Printf("Bridge: Processing HistorySync blob...\n")
 			for _, conv := range v.Data.Data.GetConversations() {
 				chatJID, _ := types.ParseJID(conv.GetID())
 				for _, historyMsg := range conv.GetMessages() {
-					evt, err := br.Backend.Client.ParseWebMessage(chatJID, historyMsg.GetMessage())
+					parsedMsg, err := br.Backend.Client.ParseWebMessage(chatJID, historyMsg.GetMessage())
 					if err == nil {
-						br.HandleEvent(&backend.MessageEvent{Info: evt})
+						br.persistMessage(parsedMsg)
 					}
 				}
 			}
+			fmt.Printf("Bridge: Finished processing HistorySync blob.\n")
 		}()
 		return
 
 	case *backend.MessageEvent:
-		msg := v.Info
-		content := ""
-		if msg.Message.GetConversation() != "" {
-			content = msg.Message.GetConversation()
-		} else if msg.Message.GetExtendedTextMessage().GetText() != "" {
-			content = msg.Message.GetExtendedTextMessage().GetText()
-		}
-
-		br.DB.SaveMessage(database.Message{
-			ID:        msg.Info.ID,
-			ChatJID:   msg.Info.Chat.String(),
-			SenderJID: msg.Info.Sender.String(),
-			Content:   content,
-			Type:      "text",
-			Timestamp: msg.Info.Timestamp,
-			IsFromMe:  msg.Info.IsFromMe,
-		})
-		
-		// Update contact timestamp for sorting
-		br.DB.UpdateContactTimestamp(msg.Info.Chat.String(), msg.Info.Timestamp)
+		br.persistMessage(v.Info)
 	}
 
-	// 2. UI Updates (Main Thread)
-	glib.IdleAdd(func() {
-		switch v := evt.(type) {
-		case *backend.ConnectedEvent:
-			fmt.Println("UI: Connected")
-		case *backend.MessageEvent:
-			msg := v.Info
-			if br.selectedJID == nil || msg.Info.Chat.String() != br.selectedJID.String() {
-				return
+	// 2. UI Updates (Optimized)
+	switch v := evt.(type) {
+	case *backend.ConnectedEvent:
+		glib.IdleAdd(func() { fmt.Println("UI: Connected") })
+	
+	case *backend.OfflineSyncCompletedEvent:
+		br.isSyncing = false
+		glib.IdleAdd(func() { fmt.Println("UI: Offline sync completed") })
+		// Refresh sidebar one last time after sync is complete
+		go func() {
+			contacts, err := br.DB.GetAllContacts(50)
+			if err == nil {
+				br.refreshSidebar(contacts)
 			}
+		}()
 
-			// Handle Polls
-			if pollCreation := msg.Message.GetPollCreationMessage(); pollCreation != nil {
-				question := pollCreation.GetName()
-				var options []string
-				for _, opt := range pollCreation.GetOptions() {
-					options = append(options, opt.GetOptionName())
-				}
-				br.App.AddPoll(question, options, msg.Info.IsFromMe)
-				return
-			}
-
-			// Handle Media (Simplified)
-			if msg.Message.GetImageMessage() != nil || msg.Message.GetStickerMessage() != nil {
-				go func() {
-					data, err := br.Backend.DownloadMedia(context.Background(), msg)
-					if err != nil {
-						fmt.Printf("Failed to download media: %v\n", err)
-						return
-					}
-					
-					glib.IdleAdd(func() {
-						loader, _ := gdk.PixbufLoaderNew()
-						loader.Write(data)
-						loader.Close()
-						pixbuf, _ := loader.GetPixbuf()
-						if pixbuf != nil {
-							if msg.Message.GetStickerMessage() != nil {
-								br.App.AddSticker(pixbuf, msg.Info.IsFromMe)
-							} else {
-								br.App.AddImage(pixbuf, msg.Info.IsFromMe)
+	case *backend.MessageEvent:
+		msg := v.Info
+		// Only trigger UI update if it's NOT a massive sync OR it's the active chat
+		if !br.isSyncing || (br.selectedJID != nil && msg.Info.Chat.String() == br.selectedJID.String()) {
+			glib.IdleAdd(func() {
+				if br.selectedJID != nil && msg.Info.Chat.String() == br.selectedJID.String() {
+					content := br.extractContent(msg)
+					if content != "" {
+						displayMessage := content
+						if msg.Info.Chat.Server == types.GroupServer && !msg.Info.IsFromMe {
+							senderName := msg.Info.Sender.String()
+							contact, err := br.DB.GetContact(msg.Info.Sender.String())
+							if err == nil {
+								senderName = contact.DisplayName()
 							}
+							displayMessage = fmt.Sprintf("%s: %s", senderName, content)
 						}
-					})
-				}()
-				return
-			}
-
-			// Handle Audio
-			if msg.Message.GetAudioMessage() != nil {
-				br.App.AddAudio(msg.Info.IsFromMe)
-				return
-			}
-
-			// Handle Text
-			content := ""
-			if msg.Message.GetConversation() != "" {
-				content = msg.Message.GetConversation()
-			} else if msg.Message.GetExtendedTextMessage().GetText() != "" {
-				content = msg.Message.GetExtendedTextMessage().GetText()
-			}
-			
-			if content != "" {
-				displayMessage := content
-				if msg.Info.Chat.Server == types.GroupServer && !msg.Info.IsFromMe {
-					senderName := msg.Info.Sender.String()
-					contact, err := br.DB.GetContact(msg.Info.Sender.String())
-					if err == nil {
-						senderName = contact.DisplayName()
+						br.App.AddMessage(displayMessage, msg.Info.IsFromMe)
 					}
-					displayMessage = fmt.Sprintf("%s: %s", senderName, content)
 				}
-				br.App.AddMessage(displayMessage, msg.Info.IsFromMe)
-			}
-		case *backend.ReceiptEvent:
-			receipt := v.Info
-			status := "sent"
-			if receipt.Type == types.ReceiptTypeDelivered {
-				status = "delivered"
-			} else if receipt.Type == types.ReceiptTypeRead || receipt.Type == types.ReceiptTypeReadSelf {
-				status = "read"
-			}
-			
-			for _, id := range receipt.MessageIDs {
-				br.DB.UpdateMessageStatus(id, receipt.Chat.String(), status)
-			}
-		case *backend.OfflineSyncCompletedEvent:
-			fmt.Println("UI: Offline sync completed")
-		case *backend.IdentityChangeEvent:
-			fmt.Printf("UI: Identity changed for %s\n", v.Info.JID)
-		default:
-			fmt.Printf("UI received unhandled event: %T\n", evt)
+			})
 		}
+
+	case *backend.ReceiptEvent:
+		receipt := v.Info
+		status := "sent"
+		if receipt.Type == types.ReceiptTypeDelivered {
+			status = "delivered"
+		} else if receipt.Type == types.ReceiptTypeRead || receipt.Type == types.ReceiptTypeReadSelf {
+			status = "read"
+		}
+		for _, id := range receipt.MessageIDs {
+			br.DB.UpdateMessageStatus(id, receipt.Chat.String(), status)
+		}
+
+	case *backend.IdentityChangeEvent:
+		glib.IdleAdd(func() { fmt.Printf("UI: Identity changed for %s\n", v.Info.JID) })
+	}
+}
+
+func (br *Bridge) persistMessage(msg *events.Message) {
+	content := br.extractContent(msg)
+	br.DB.SaveMessage(database.Message{
+		ID:        msg.Info.ID,
+		ChatJID:   msg.Info.Chat.String(),
+		SenderJID: msg.Info.Sender.String(),
+		Content:   content,
+		Type:      "text",
+		Timestamp: msg.Info.Timestamp,
+		IsFromMe:  msg.Info.IsFromMe,
 	})
+	br.DB.UpdateContactTimestamp(msg.Info.Chat.String(), msg.Info.Timestamp)
+}
+
+func (br *Bridge) extractContent(msg *events.Message) string {
+	if msg.Message.GetConversation() != "" {
+		return msg.Message.GetConversation()
+	} else if msg.Message.GetExtendedTextMessage().GetText() != "" {
+		return msg.Message.GetExtendedTextMessage().GetText()
+	}
+	return ""
 }
