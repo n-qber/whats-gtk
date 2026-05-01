@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"whats-gtk/internal/backend"
+	"whats-gtk/internal/database"
 	"whats-gtk/internal/ui"
 
 	"github.com/gotk3/gotk3/gdk"
@@ -14,14 +15,16 @@ import (
 type Bridge struct {
 	Backend     *backend.Backend
 	App         *ui.App
+	DB          *database.AppDB
 	jids        []types.JID
 	selectedJID *types.JID
 }
 
-func NewBridge(b *backend.Backend, a *ui.App, ctx context.Context) *Bridge {
+func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Context) *Bridge {
 	br := &Bridge{
 		Backend: b,
 		App:     a,
+		DB:      db,
 	}
 	
 	a.OnChatSelected = func(index int) {
@@ -89,6 +92,26 @@ func (br *Bridge) HandleEvent(evt backend.AppEvent) {
 			fmt.Println("UI: Connected")
 		case *backend.MessageEvent:
 			msg := v.Info
+			
+			// Extract text
+			content := ""
+			if msg.Message.GetConversation() != "" {
+				content = msg.Message.GetConversation()
+			} else if msg.Message.GetExtendedTextMessage().GetText() != "" {
+				content = msg.Message.GetExtendedTextMessage().GetText()
+			}
+			
+			// Persist to DB
+			br.DB.SaveMessage(database.Message{
+				ID:        msg.Info.ID,
+				ChatJID:   msg.Info.Chat.String(),
+				SenderJID: msg.Info.Sender.String(),
+				Content:   content,
+				Type:      "text", // Simplified
+				Timestamp: msg.Info.Timestamp,
+				IsFromMe:  msg.Info.IsFromMe,
+			})
+
 			if br.selectedJID == nil || msg.Info.Chat.String() != br.selectedJID.String() {
 				return
 			}
@@ -136,16 +159,9 @@ func (br *Bridge) HandleEvent(evt backend.AppEvent) {
 				return
 			}
 
-			text := ""
-			if msg.Message.GetConversation() != "" {
-				text = msg.Message.GetConversation()
-			} else if msg.Message.GetExtendedTextMessage().GetText() != "" {
-				text = msg.Message.GetExtendedTextMessage().GetText()
-			}
-			
-			if text != "" {
+			if content != "" {
 				sender := msg.Info.Sender.String()
-				br.App.AddMessage(fmt.Sprintf("%s: %s", sender, text), msg.Info.IsFromMe)
+				br.App.AddMessage(fmt.Sprintf("%s: %s", sender, content), msg.Info.IsFromMe)
 			}
 		default:
 			fmt.Printf("UI received unhandled event: %T\n", evt)
