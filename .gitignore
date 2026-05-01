@@ -2,12 +2,8 @@
 whats-gtk
 
 # Local databases (Sensitive session data)
-store.db
-store.db-shm
-store.db-wal
-app.db
-app.db-shm
-app.db-wal
+store.db*
+app.db*
 
 # OS generated files
 .DS_Store

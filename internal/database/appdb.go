@@ -12,7 +12,7 @@ type AppDB struct {
 }
 
 func InitDB(path string) (*AppDB, error) {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", path))
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on&_journal_mode=WAL&_sync=NORMAL", path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open app db: %w", err)
 	}
