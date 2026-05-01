@@ -11,7 +11,11 @@ type ConnectedEvent struct{}
 type DisconnectedEvent struct{}
 
 type MessageEvent struct {
-	Info    *events.Message
+	Info *events.Message
+}
+
+type HistorySyncEvent struct {
+	Data *events.HistorySync
 }
 
 type ReceiptEvent struct {
@@ -33,6 +37,8 @@ func (b *Backend) registerEventHandlers() {
 			appEvt = &DisconnectedEvent{}
 		case *events.Message:
 			appEvt = &MessageEvent{Info: v}
+		case *events.HistorySync:
+			appEvt = &HistorySyncEvent{Data: v}
 		case *events.Receipt:
 			appEvt = &ReceiptEvent{Info: v}
 		case *events.Presence:

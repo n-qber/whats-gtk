@@ -103,32 +103,49 @@ func (br *Bridge) Start(ctx context.Context) {
 }
 
 func (br *Bridge) HandleEvent(evt backend.AppEvent) {
+	// 1. Persistence & Heavy Processing (Background)
+	switch v := evt.(type) {
+	case *backend.HistorySyncEvent:
+		go func() {
+			for _, conv := range v.Data.Data.GetConversations() {
+				chatJID, _ := types.ParseJID(conv.GetID())
+				for _, historyMsg := range conv.GetMessages() {
+					evt, err := br.Backend.Client.ParseWebMessage(chatJID, historyMsg.GetMessage())
+					if err == nil {
+						br.HandleEvent(&backend.MessageEvent{Info: evt})
+					}
+				}
+			}
+		}()
+		return
+
+	case *backend.MessageEvent:
+		msg := v.Info
+		content := ""
+		if msg.Message.GetConversation() != "" {
+			content = msg.Message.GetConversation()
+		} else if msg.Message.GetExtendedTextMessage().GetText() != "" {
+			content = msg.Message.GetExtendedTextMessage().GetText()
+		}
+
+		br.DB.SaveMessage(database.Message{
+			ID:        msg.Info.ID,
+			ChatJID:   msg.Info.Chat.String(),
+			SenderJID: msg.Info.Sender.String(),
+			Content:   content,
+			Type:      "text",
+			Timestamp: msg.Info.Timestamp,
+			IsFromMe:  msg.Info.IsFromMe,
+		})
+	}
+
+	// 2. UI Updates (Main Thread)
 	glib.IdleAdd(func() {
 		switch v := evt.(type) {
 		case *backend.ConnectedEvent:
 			fmt.Println("UI: Connected")
 		case *backend.MessageEvent:
 			msg := v.Info
-			
-			// Extract text
-			content := ""
-			if msg.Message.GetConversation() != "" {
-				content = msg.Message.GetConversation()
-			} else if msg.Message.GetExtendedTextMessage().GetText() != "" {
-				content = msg.Message.GetExtendedTextMessage().GetText()
-			}
-			
-			// Persist to DB
-			br.DB.SaveMessage(database.Message{
-				ID:        msg.Info.ID,
-				ChatJID:   msg.Info.Chat.String(),
-				SenderJID: msg.Info.Sender.String(),
-				Content:   content,
-				Type:      "text", // Simplified
-				Timestamp: msg.Info.Timestamp,
-				IsFromMe:  msg.Info.IsFromMe,
-			})
-
 			if br.selectedJID == nil || msg.Info.Chat.String() != br.selectedJID.String() {
 				return
 			}
@@ -176,6 +193,14 @@ func (br *Bridge) HandleEvent(evt backend.AppEvent) {
 				return
 			}
 
+			// Handle Text
+			content := ""
+			if msg.Message.GetConversation() != "" {
+				content = msg.Message.GetConversation()
+			} else if msg.Message.GetExtendedTextMessage().GetText() != "" {
+				content = msg.Message.GetExtendedTextMessage().GetText()
+			}
+			
 			if content != "" {
 				sender := msg.Info.Sender.String()
 				br.App.AddMessage(fmt.Sprintf("%s: %s", sender, content), msg.Info.IsFromMe)
