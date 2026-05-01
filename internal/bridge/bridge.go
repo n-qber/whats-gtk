@@ -78,8 +78,33 @@ func (br *Bridge) Start(ctx context.Context) {
 		return
 	}
 
-	// Fetch contacts in a background goroutine
+	// Fetch contacts and groups in a background goroutine
 	go func() {
+		addedJIDs := make(map[string]bool)
+
+		// 1. Fetch joined groups from server
+		groups, err := br.Backend.GetJoinedGroups(ctx)
+		if err == nil {
+			glib.IdleAdd(func() {
+				for _, g := range groups {
+					if addedJIDs[g.JID.String()] {
+						continue
+					}
+					br.jids = append(br.jids, g.JID)
+					br.App.AddChat(fmt.Sprintf("[G] %s", g.Name))
+					addedJIDs[g.JID.String()] = true
+					
+					// Persist to DB
+					br.DB.SaveContact(database.Contact{
+						JID:     g.JID.String(),
+						Name:    g.Name,
+						IsGroup: true,
+					})
+				}
+			})
+		}
+
+		// 2. Fetch all contacts from store
 		contacts, err := br.Backend.GetAllContacts(ctx)
 		if err != nil {
 			fmt.Printf("Failed to fetch contacts: %v\n", err)
@@ -88,6 +113,9 @@ func (br *Bridge) Start(ctx context.Context) {
 		
 		glib.IdleAdd(func() {
 			for jid, info := range contacts {
+				if addedJIDs[jid.String()] {
+					continue
+				}
 				name := info.FullName
 				if name == "" {
 					name = info.PushName
@@ -95,8 +123,23 @@ func (br *Bridge) Start(ctx context.Context) {
 				if name == "" {
 					name = jid.User
 				}
+				
+				prefix := ""
+				if jid.Server == types.GroupServer {
+					prefix = "[G] "
+				}
+				
 				br.jids = append(br.jids, jid)
-				br.App.AddChat(name)
+				br.App.AddChat(prefix + name)
+				addedJIDs[jid.String()] = true
+
+				// Persist to DB
+				br.DB.SaveContact(database.Contact{
+					JID:      jid.String(),
+					Name:     name,
+					PushName: info.PushName,
+					IsGroup:  jid.Server == types.GroupServer,
+				})
 			}
 		})
 	}()

@@ -27,6 +27,10 @@ func (b *Backend) GetAllContacts(ctx context.Context) (map[types.JID]types.Conta
 	return b.Client.Store.Contacts.GetAllContacts(ctx)
 }
 
+func (b *Backend) GetJoinedGroups(ctx context.Context) ([]*types.GroupInfo, error) {
+	return b.Client.GetJoinedGroups(ctx)
+}
+
 func (b *Backend) RevokeMessage(ctx context.Context, chat types.JID, sender types.JID, id types.MessageID) (whatsmeow.SendResponse, error) {
 	return b.Client.SendMessage(ctx, chat, b.Client.BuildRevoke(chat, sender, id))
 }
