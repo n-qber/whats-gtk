@@ -5,6 +5,9 @@ whats-gtk
 store.db*
 app.db*
 
+# Local media
+media/
+
 # OS generated files
 .DS_Store
 .DS_Store?

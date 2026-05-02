@@ -1,6 +1,9 @@
 package backend
 
 import (
+	"os"
+
+	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow/types/events"
 )
 
@@ -9,6 +12,10 @@ type AppEvent interface{}
 
 type ConnectedEvent struct{}
 type DisconnectedEvent struct{}
+
+type QREvent struct {
+	Code string
+}
 
 type MessageEvent struct {
 	Info *events.Message
@@ -32,6 +39,14 @@ type IdentityChangeEvent struct {
 	Info *events.IdentityChange
 }
 
+type PushNameEvent struct {
+	Info *events.PushName
+}
+
+type ContactEvent struct {
+	Info *events.Contact
+}
+
 func (b *Backend) registerEventHandlers() {
 	b.Client.AddEventHandler(func(evt interface{}) {
 		var appEvt AppEvent
@@ -41,6 +56,13 @@ func (b *Backend) registerEventHandlers() {
 			appEvt = &ConnectedEvent{}
 		case *events.Disconnected:
 			appEvt = &DisconnectedEvent{}
+		case *events.QR:
+			qrterminal.GenerateHalfBlock(v.Codes[0], qrterminal.L, os.Stdout)
+			appEvt = &QREvent{Code: v.Codes[0]}
+		case *events.PushName:
+			appEvt = &PushNameEvent{Info: v}
+		case *events.Contact:
+			appEvt = &ContactEvent{Info: v}
 		case *events.Message:
 			appEvt = &MessageEvent{Info: v}
 		case *events.HistorySync:

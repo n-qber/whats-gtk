@@ -23,10 +23,10 @@ func NewBackend(ctx context.Context, container *sqlstore.Container) (*Backend, e
 		return nil, fmt.Errorf("failed to get device: %w", err)
 	}
 	if device == nil {
-		return nil, fmt.Errorf("no device found in store. please pair first")
+		device = container.NewDevice()
 	}
 
-	clientLog := waLog.Stdout("Client", "WARN", true)
+	clientLog := waLog.Stdout("Client", "DEBUG", true)
 	client := whatsmeow.NewClient(device, clientLog)
 
 	b := &Backend{

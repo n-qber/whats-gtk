@@ -33,6 +33,7 @@ func (a *AppDB) createTables() error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS contacts (
 			jid TEXT PRIMARY KEY,
+			lid TEXT,
 			saved_name TEXT,
 			push_name TEXT,
 			avatar_path TEXT,
@@ -59,9 +60,13 @@ func (a *AppDB) createTables() error {
 	}
 	
 	// Migration logic: Add columns if missing
+	a.ensureColumn("contacts", "lid", "TEXT")
 	a.ensureColumn("contacts", "saved_name", "TEXT")
 	a.ensureColumn("contacts", "push_name", "TEXT")
 	a.ensureColumn("contacts", "last_message_at", "DATETIME")
+
+	// Create unique index for lid to handle mapping and prevent duplicates
+	_, _ = a.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_lid ON contacts(lid) WHERE lid IS NOT NULL")
 
 	return nil
 }
@@ -70,8 +75,11 @@ func (a *AppDB) ensureColumn(table, column, colType string) {
 	query := fmt.Sprintf("SELECT %s FROM %s LIMIT 1", column, table)
 	_, err := a.db.Exec(query)
 	if err != nil {
+		fmt.Printf("Database: Adding missing column %s to table %s\n", column, table)
 		alter := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, colType)
-		_, _ = a.db.Exec(alter)
+		if _, err := a.db.Exec(alter); err != nil {
+			fmt.Printf("Database: Failed to add column %s: %v\n", column, err)
+		}
 	}
 }
 
