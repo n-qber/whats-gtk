@@ -175,6 +175,21 @@ func (a *AppDB) GetUnresolvedPNs(limit int) ([]Contact, error) {
 	return contacts, nil
 }
 
+func (a *AppDB) GetContactByLID(lid string) (*Contact, error) {
+	query := `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at 
+	          FROM contacts 
+	          WHERE lid = ? 
+	          LIMIT 1`
+	row := a.db.QueryRow(query, lid)
+	
+	var c Contact
+	err := row.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
 func (c *Contact) DisplayName() string {
 	if c.SavedName.Valid && c.SavedName.String != "" {
 		return c.SavedName.String

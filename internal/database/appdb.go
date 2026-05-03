@@ -51,6 +51,14 @@ func (a *AppDB) createTables() error {
 			is_from_me BOOLEAN
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_jid, timestamp)`,
+		`CREATE TABLE IF NOT EXISTS reactions (
+			msg_id TEXT,
+			sender_jid TEXT,
+			reaction TEXT,
+			timestamp DATETIME,
+			PRIMARY KEY (msg_id, sender_jid)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_reactions_msg ON reactions(msg_id)`,
 	}
 
 	for _, q := range queries {
@@ -64,6 +72,14 @@ func (a *AppDB) createTables() error {
 	a.ensureColumn("contacts", "saved_name", "TEXT")
 	a.ensureColumn("contacts", "push_name", "TEXT")
 	a.ensureColumn("contacts", "last_message_at", "DATETIME")
+	a.ensureColumn("messages", "thumbnail", "BLOB")
+	a.ensureColumn("messages", "media_url", "TEXT")
+	a.ensureColumn("messages", "media_direct_path", "TEXT")
+	a.ensureColumn("messages", "media_key", "BLOB")
+	a.ensureColumn("messages", "media_mimetype", "TEXT")
+	a.ensureColumn("messages", "media_enc_sha256", "BLOB")
+	a.ensureColumn("messages", "media_sha256", "BLOB")
+	a.ensureColumn("messages", "media_length", "INTEGER")
 
 	// Create unique index for lid to handle mapping and prevent duplicates
 	_, _ = a.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_lid ON contacts(lid) WHERE lid IS NOT NULL")

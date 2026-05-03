@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
@@ -31,6 +32,37 @@ func (b *Backend) GetJoinedGroups(ctx context.Context) ([]*types.GroupInfo, erro
 	return b.Client.GetJoinedGroups(ctx)
 }
 
-func (b *Backend) RevokeMessage(ctx context.Context, chat types.JID, sender types.JID, id types.MessageID) (whatsmeow.SendResponse, error) {
-	return b.Client.SendMessage(ctx, chat, b.Client.BuildRevoke(chat, sender, id))
+func (b *Backend) SendReaction(ctx context.Context, chat types.JID, msgID types.MessageID, fromMe bool, reaction string) (whatsmeow.SendResponse, error) {
+	return b.Client.SendMessage(ctx, chat, &waProto.Message{
+		ReactionMessage: &waProto.ReactionMessage{
+			Key: &waProto.MessageKey{
+				RemoteJID: proto.String(chat.ToNonAD().String()),
+				FromMe:    proto.Bool(fromMe),
+				ID:        proto.String(msgID),
+			},
+			Text:              proto.String(reaction),
+			GroupingKey:       proto.String(reaction),
+			SenderTimestampMS: proto.Int64(time.Now().UnixMilli()),
+		},
+	})
+}
+
+
+func (b *Backend) SendImage(ctx context.Context, to types.JID, data []byte, mimetype string) (whatsmeow.SendResponse, error) {
+	resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaImage)
+	if err != nil {
+		return whatsmeow.SendResponse{}, err
+	}
+
+	return b.Client.SendMessage(ctx, to, &waProto.Message{
+		ImageMessage: &waProto.ImageMessage{
+			URL:           proto.String(resp.URL),
+			DirectPath:    proto.String(resp.DirectPath),
+			MediaKey:      resp.MediaKey,
+			Mimetype:      proto.String(mimetype),
+			FileEncSHA256: resp.FileEncSHA256,
+			FileSHA256:    resp.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))),
+		},
+	})
 }

@@ -5,7 +5,7 @@ import (
 )
 
 type PollBubble struct {
-	box *gtk.Box
+	*baseBubble
 }
 
 func NewPollBubble(question string, options []string, isSelf bool) (*PollBubble, error) {
@@ -26,16 +26,10 @@ func NewPollBubble(question string, options []string, isSelf bool) (*PollBubble,
 	voteBtn, _ := gtk.ButtonNewWithLabel("Vote")
 	box.PackStart(voteBtn, false, false, 5)
 
-	mainBox, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 0)
-	if isSelf {
-		mainBox.PackEnd(box, false, false, 10)
-	} else {
-		mainBox.PackStart(box, false, false, 10)
+	base, err := newBaseBubble("", box, isSelf, true, "", "", nil)
+	if err != nil {
+		return nil, err
 	}
 
-	return &PollBubble{box: mainBox}, nil
-}
-
-func (b *PollBubble) Widget() gtk.IWidget {
-	return b.box
+	return &PollBubble{baseBubble: base}, nil
 }

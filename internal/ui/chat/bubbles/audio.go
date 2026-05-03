@@ -5,7 +5,7 @@ import (
 )
 
 type AudioBubble struct {
-	box *gtk.Box
+	*baseBubble
 }
 
 func NewAudioBubble(isSelf bool) (*AudioBubble, error) {
@@ -18,17 +18,13 @@ func NewAudioBubble(isSelf bool) (*AudioBubble, error) {
 	slider, _ := gtk.ScaleNewWithRange(gtk.ORIENTATION_HORIZONTAL, 0, 100, 1)
 	slider.SetSizeRequest(150, -1)
 
-	if isSelf {
-		box.PackEnd(playButton, false, false, 5)
-		box.PackEnd(slider, true, true, 5)
-	} else {
-		box.PackStart(playButton, false, false, 5)
-		box.PackStart(slider, true, true, 5)
+	box.PackStart(playButton, false, false, 5)
+	box.PackStart(slider, true, true, 5)
+
+	base, err := newBaseBubble("", box, isSelf, true, "", "", nil)
+	if err != nil {
+		return nil, err
 	}
 
-	return &AudioBubble{box: box}, nil
-}
-
-func (b *AudioBubble) Widget() gtk.IWidget {
-	return b.box
+	return &AudioBubble{baseBubble: base}, nil
 }
