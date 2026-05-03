@@ -28,6 +28,7 @@ func NewChatView() (*ChatView, error) {
 	if err != nil {
 		return nil, err
 	}
+	box.SetName("chat-view-box")
 
 	headerBox, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 12)
 	hCtx, _ := headerBox.GetStyleContext()
@@ -152,8 +153,8 @@ func (cv *ChatView) addBubble(id string, b bubbles.Bubble, isCont bool) {
 	bubbleWidget := b.Widget().ToWidget()
 	row.Add(bubbleWidget)
 
-	// Context menu for reactions - Using interface{} for w to avoid type conversion panic
-	bubbleWidget.Connect("button-press-event", func(w interface{}, event *gdk.Event) bool {
+	// Context menu for reactions on the row itself
+	row.Connect("button-press-event", func(w interface{}, event *gdk.Event) bool {
 		e := gdk.EventButton{Event: event}
 		if e.Type() == gdk.EVENT_BUTTON_PRESS && e.Button() == 3 { // Right click
 			cv.showReactionMenu(id, e.Time())
@@ -164,7 +165,8 @@ func (cv *ChatView) addBubble(id string, b bubbles.Bubble, isCont bool) {
 
 	cv.MessageList.Add(row)
 	row.ShowAll()
-	bubbleWidget.ShowAll()
+	
+	cv.ScrollToBottom()
 }
 
 func (cv *ChatView) showReactionMenu(msgID string, timestamp uint32) {

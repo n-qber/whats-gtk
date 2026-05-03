@@ -95,6 +95,7 @@ func newBaseBubble(name string, content gtk.IWidget, isSelf bool, hasBubble bool
 	}
 	
 	bubbleBox.PackEnd(statusBox, false, false, 0)
+	alignmentBox.ShowAll()
 
 	return &baseBubble{
 		Box:          alignmentBox,
