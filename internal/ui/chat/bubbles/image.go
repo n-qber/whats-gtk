@@ -44,7 +44,8 @@ func NewImageBubble(name string, pixbuf *gdk.Pixbuf, thumb *gdk.Pixbuf, isSelf b
 	eventBox, _ := gtk.EventBoxNew()
 	eventBox.Add(image)
 
-	base, err := newBaseBubble(name, eventBox, isSelf, true, status, time, avatar)
+	base, err := newBaseBubble(name, "[Image]", eventBox, isSelf, true, status, time, avatar)
+
 	if err != nil {
 		return nil, err
 	}

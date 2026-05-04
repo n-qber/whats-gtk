@@ -4,6 +4,7 @@ import (
 	"github.com/gotk3/gotk3/gdk"
 	"github.com/gotk3/gotk3/glib"
 	"github.com/gotk3/gotk3/gtk"
+	"github.com/gotk3/gotk3/pango"
 )
 
 type Bubble interface {
@@ -12,19 +13,33 @@ type Bubble interface {
 	UpdateImage(pixbuf *gdk.Pixbuf)
 	SetStatus(status string)
 	SetReactions(reactions []string)
+	SetQuotedMessage(id, sender, content string)
 	IsSelf() bool
+	Sender() string
+	Content() string
+	SetOnQuotedClick(f func(id string))
 }
 
 type baseBubble struct {
-	Box          *gtk.Box
-	BubbleBox    *gtk.Box
-	StatusLabel  *gtk.Label
-	AvatarImg    *gtk.Image
-	ReactionsBox *gtk.Box
-	isSelf       bool
+	Box            *gtk.Box
+	BubbleBox      *gtk.Box
+	QuotedBox      *gtk.Box
+	QuotedEventBox *gtk.EventBox
+	StatusLabel    *gtk.Label
+	AvatarImg      *gtk.Image
+	ReactionsBox   *gtk.Box
+	isSelf         bool
+	sender         string
+	content        string
+	quotedID       string
+	onQuotedClick  func(id string)
 }
 
-func newBaseBubble(name string, content gtk.IWidget, isSelf bool, hasBubble bool, status string, time string, avatar *gdk.Pixbuf) (*baseBubble, error) {
+func (b *baseBubble) Sender() string  { return b.sender }
+func (b *baseBubble) Content() string { return b.content }
+func (b *baseBubble) SetOnQuotedClick(f func(id string)) { b.onQuotedClick = f }
+
+func newBaseBubble(name string, contentText string, content gtk.IWidget, isSelf bool, hasBubble bool, status string, time string, avatar *gdk.Pixbuf) (*baseBubble, error) {
 	alignmentBox, err := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 8)
 	if err != nil {
 		return nil, err
@@ -60,17 +75,25 @@ func newBaseBubble(name string, content gtk.IWidget, isSelf bool, hasBubble bool
 		bubbleBox.PackStart(nameLabel, false, false, 0)
 	}
 
-	bubbleBox.PackStart(content, false, false, 0)
+	quotedEventBox, _ := gtk.EventBoxNew()
+	quotedBox, _ := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 2)
+	quotedEventBox.Add(quotedBox)
+	quotedEventBox.Hide()
+	bubbleBox.PackStart(quotedEventBox, false, false, 0)
 
-	reactionsBox, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 2)
-	reactionsBox.SetHAlign(gtk.ALIGN_END)
-	rCtx, _ := reactionsBox.GetStyleContext()
-	rCtx.AddClass("reactions-container")
-	reactionsBox.SetNoShowAll(true)
-	reactionsBox.Hide()
-	bubbleBox.PackStart(reactionsBox, false, false, 0)
+	// Use Overlay for content and status
+	overlay, _ := gtk.OverlayNew()
+	
+	contentBox, _ := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
+	contentBox.PackStart(content, false, false, 0)
+	overlay.Add(contentBox)
 
 	statusBox, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 4)
+	sbc, _ := statusBox.GetStyleContext()
+	sbc.AddClass("status-overlay")
+	statusBox.SetHAlign(gtk.ALIGN_END)
+	statusBox.SetVAlign(gtk.ALIGN_END)
+	
 	timeLabel, _ := gtk.LabelNew(time)
 	tCtx, _ := timeLabel.GetStyleContext()
 	tCtx.AddClass("message-time")
@@ -78,14 +101,28 @@ func newBaseBubble(name string, content gtk.IWidget, isSelf bool, hasBubble bool
 
 	var statusLabel *gtk.Label
 	if isSelf {
-		if hasBubble {
-			bCtx.AddClass("bubble-self")
-		}
 		statusLabel, _ = gtk.LabelNew(getStatusIcon(status))
 		sCtx, _ := statusLabel.GetStyleContext()
 		sCtx.AddClass("receipt")
 		applyStatusClass(sCtx, status)
 		statusBox.PackEnd(statusLabel, false, false, 0)
+	}
+
+	overlay.AddOverlay(statusBox)
+	bubbleBox.PackStart(overlay, false, false, 0)
+
+	reactionsBox, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 2)
+	reactionsBox.SetNoShowAll(true)
+	reactionsBox.SetHAlign(gtk.ALIGN_END)
+	rCtx, _ := reactionsBox.GetStyleContext()
+	rCtx.AddClass("reactions-container")
+	reactionsBox.Hide()
+	bubbleBox.PackStart(reactionsBox, false, false, 0)
+
+	if isSelf {
+		if hasBubble {
+			bCtx.AddClass("bubble-self")
+		}
 		alignmentBox.PackEnd(bubbleBox, false, false, 0)
 	} else {
 		if hasBubble {
@@ -94,17 +131,72 @@ func newBaseBubble(name string, content gtk.IWidget, isSelf bool, hasBubble bool
 		alignmentBox.PackStart(bubbleBox, false, false, 0)
 	}
 	
-	bubbleBox.PackEnd(statusBox, false, false, 0)
 	alignmentBox.ShowAll()
+	quotedEventBox.Hide()
 
-	return &baseBubble{
-		Box:          alignmentBox,
-		BubbleBox:    bubbleBox,
-		StatusLabel:  statusLabel,
-		AvatarImg:    avatarImg,
-		ReactionsBox: reactionsBox,
-		isSelf:       isSelf,
-	}, nil
+	bb := &baseBubble{
+		Box:            alignmentBox,
+		BubbleBox:      bubbleBox,
+		QuotedBox:      quotedBox,
+		QuotedEventBox: quotedEventBox,
+		StatusLabel:    statusLabel,
+		AvatarImg:      avatarImg,
+		ReactionsBox:   reactionsBox,
+		isSelf:         isSelf,
+		sender:         name,
+		content:        contentText,
+	}
+
+	quotedEventBox.Connect("button-press-event", func(eb *gtk.EventBox, event *gdk.Event) bool {
+		if bb.onQuotedClick != nil && bb.quotedID != "" {
+			bb.onQuotedClick(bb.quotedID)
+			return true
+		}
+		return false
+	})
+
+	return bb, nil
+}
+
+func (b *baseBubble) SetQuotedMessage(id, sender, content string) {
+	b.quotedID = id
+	if id == "" {
+		glib.IdleAdd(func() {
+			qCtx, _ := b.QuotedBox.GetStyleContext()
+			qCtx.RemoveClass("quoted-message")
+			b.QuotedEventBox.Hide()
+		})
+		return
+	}
+
+	glib.IdleAdd(func() {
+		children := b.QuotedBox.GetChildren()
+		children.Foreach(func(item interface{}) {
+			b.QuotedBox.Remove(item.(gtk.IWidget))
+		})
+
+		qCtx, _ := b.QuotedBox.GetStyleContext()
+		qCtx.AddClass("quoted-message")
+
+		senderLabel, _ := gtk.LabelNew("")
+		senderLabel.SetMarkup("<b>" + sender + "</b>")
+		senderLabel.SetXAlign(0)
+		sCtx, _ := senderLabel.GetStyleContext()
+		sCtx.AddClass("quoted-sender")
+
+		contentLabel, _ := gtk.LabelNew(content)
+		contentLabel.SetXAlign(0)
+		contentLabel.SetLineWrap(true)
+		contentLabel.SetLineWrapMode(pango.WRAP_WORD_CHAR)
+		contentLabel.SetMaxWidthChars(40)
+		contentLabel.SetEllipsize(pango.ELLIPSIZE_END)
+		contentLabel.SetLines(3)
+
+		b.QuotedBox.PackStart(senderLabel, false, false, 0)
+		b.QuotedBox.PackStart(contentLabel, false, false, 0)
+		b.QuotedBox.ShowAll()
+		b.QuotedEventBox.Show()
+	})
 }
 
 func (b *baseBubble) SetReactions(reactions []string) {

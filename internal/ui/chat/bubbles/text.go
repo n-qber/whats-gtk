@@ -19,7 +19,7 @@ func NewTextBubble(name string, text string, isSelf bool, status string, time st
 	label.SetXAlign(0)
 	label.SetSelectable(true)
 
-	base, err := newBaseBubble(name, label, isSelf, true, status, time, avatar)
+	base, err := newBaseBubble(name, text, label, isSelf, true, status, time, avatar)
 	if err != nil {
 		return nil, err
 	}

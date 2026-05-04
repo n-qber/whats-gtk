@@ -80,6 +80,9 @@ func (a *AppDB) createTables() error {
 	a.ensureColumn("messages", "media_enc_sha256", "BLOB")
 	a.ensureColumn("messages", "media_sha256", "BLOB")
 	a.ensureColumn("messages", "media_length", "INTEGER")
+	a.ensureColumn("messages", "quoted_msg_id", "TEXT")
+	a.ensureColumn("messages", "quoted_msg_content", "TEXT")
+	a.ensureColumn("messages", "quoted_msg_sender", "TEXT")
 
 	// Create unique index for lid to handle mapping and prevent duplicates
 	_, _ = a.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_lid ON contacts(lid) WHERE lid IS NOT NULL")

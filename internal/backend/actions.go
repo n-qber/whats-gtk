@@ -10,7 +10,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func (b *Backend) SendText(ctx context.Context, to types.JID, text string) (whatsmeow.SendResponse, error) {
+func (b *Backend) SendText(ctx context.Context, to types.JID, text string, contextInfo *waProto.ContextInfo) (whatsmeow.SendResponse, error) {
+	if contextInfo != nil {
+		return b.Client.SendMessage(ctx, to, &waProto.Message{
+			ExtendedTextMessage: &waProto.ExtendedTextMessage{
+				Text:        proto.String(text),
+				ContextInfo: contextInfo,
+			},
+		})
+	}
 	return b.Client.SendMessage(ctx, to, &waProto.Message{
 		Conversation: proto.String(text),
 	})

@@ -74,12 +74,16 @@ func (ms *MediaService) Download(task DownloadTask) {
 func (ms *MediaService) mediaWorker() {
 	for task := range ms.mediaQueue {
 		ext := ".jpg"
-		if task.MsgType == "sticker" {
-			ext = ".webp"
+		switch task.MsgType {
+		case "sticker": ext = ".webp"
+		case "video": ext = ".mp4"
+		case "audio": ext = ".ogg"
+		case "document": ext = ".bin"
 		}
 		path := filepath.Join("media", task.ID+ext)
 		
 		if _, err := os.Stat(path); err == nil {
+			ms.persistMediaMessage(task, path)
 			if ms.onMediaDown != nil { ms.onMediaDown(task, nil, path) }
 			continue
 		}
@@ -108,6 +112,36 @@ func (ms *MediaService) mediaWorker() {
 				FileSHA256:    task.Metadata.FileSHA256,
 				FileLength:    proto.Uint64(task.Metadata.FileLength),
 			}
+		case "video":
+			downloadable = &waProto.VideoMessage{
+				URL:           proto.String(task.Metadata.URL),
+				DirectPath:    proto.String(task.Metadata.DirectPath),
+				MediaKey:      task.Metadata.MediaKey,
+				Mimetype:      proto.String(task.Metadata.Mimetype),
+				FileEncSHA256: task.Metadata.FileEncSHA256,
+				FileSHA256:    task.Metadata.FileSHA256,
+				FileLength:    proto.Uint64(task.Metadata.FileLength),
+			}
+		case "audio":
+			downloadable = &waProto.AudioMessage{
+				URL:           proto.String(task.Metadata.URL),
+				DirectPath:    proto.String(task.Metadata.DirectPath),
+				MediaKey:      task.Metadata.MediaKey,
+				Mimetype:      proto.String(task.Metadata.Mimetype),
+				FileEncSHA256: task.Metadata.FileEncSHA256,
+				FileSHA256:    task.Metadata.FileSHA256,
+				FileLength:    proto.Uint64(task.Metadata.FileLength),
+			}
+		case "document":
+			downloadable = &waProto.DocumentMessage{
+				URL:           proto.String(task.Metadata.URL),
+				DirectPath:    proto.String(task.Metadata.DirectPath),
+				MediaKey:      task.Metadata.MediaKey,
+				Mimetype:      proto.String(task.Metadata.Mimetype),
+				FileEncSHA256: task.Metadata.FileEncSHA256,
+				FileSHA256:    task.Metadata.FileSHA256,
+				FileLength:    proto.Uint64(task.Metadata.FileLength),
+			}
 		}
 
 		if downloadable == nil { continue }
@@ -121,7 +155,7 @@ func (ms *MediaService) mediaWorker() {
 				ms.onMediaDown(task, data, path)
 			}
 		} else {
-			fmt.Printf("MediaService: Download Failed: %v\n", err)
+			fmt.Printf("MediaService: Download Failed for %s: %v\n", task.ID, err)
 		}
 	}
 }

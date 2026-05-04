@@ -41,7 +41,8 @@ func NewStickerBubble(name string, pixbuf *gdk.Pixbuf, thumb *gdk.Pixbuf, isSelf
 	eventBox, _ := gtk.EventBoxNew()
 	eventBox.Add(image)
 
-	base, err := newBaseBubble(name, eventBox, isSelf, false, status, time, avatar)
+	base, err := newBaseBubble(name, "[Sticker]", eventBox, isSelf, false, status, time, avatar)
+
 	if err != nil {
 		return nil, err
 	}

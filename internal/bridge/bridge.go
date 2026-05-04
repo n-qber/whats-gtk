@@ -17,6 +17,8 @@ import (
 	"github.com/gotk3/gotk3/glib"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
+	waProto "go.mau.fi/whatsmeow/binary/proto"
+	"google.golang.org/protobuf/proto"
 )
 
 type Bridge struct {
@@ -82,7 +84,7 @@ func (br *Bridge) handlePasteImage(pixbuf *gdk.Pixbuf) {
 
 	glib.IdleAdd(func() {
 		if br.selectedJID != nil && br.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
-			br.App.ChatView.AddImage("temp_img", "", "", pixbuf, nil, true, false, "pending", now, nil)
+			br.App.ChatView.AddImage("temp_img", "", "", pixbuf, nil, true, false, "pending", now, nil, "", "", "")
 			br.App.ChatView.ScrollToBottom()
 		}
 	})
@@ -133,14 +135,30 @@ func (br *Bridge) setupServiceHandlers() {
 
 	br.Media.SetOnMediaDownloaded(func(task DownloadTask, data []byte, path string) {
 		glib.IdleAdd(func() {
-			if data == nil { data, _ = os.ReadFile(path) }
-			if data == nil { return }
-			
-			loader, lErr := gdk.PixbufLoaderNew(); if lErr != nil { return }
-			if _, err := loader.Write(data); err != nil { loader.Close(); return }
-			loader.Close(); pixbuf, _ := loader.GetPixbuf()
-			
 			if br.selectedJID != nil && br.selectedJID.ToNonAD().String() == task.ChatJID {
+				if task.MsgType == "audio" {
+					br.App.ChatView.UpdateMessageAudio(task.ID, path)
+					return
+				}
+
+				if data == nil {
+					data, _ = os.ReadFile(path)
+				}
+				if data == nil {
+					return
+				}
+
+				loader, lErr := gdk.PixbufLoaderNew()
+				if lErr != nil {
+					return
+				}
+				if _, err := loader.Write(data); err != nil {
+					loader.Close()
+					return
+				}
+				loader.Close()
+				pixbuf, _ := loader.GetPixbuf()
+
 				br.App.ChatView.UpdateMessageImage(task.ID, pixbuf)
 			}
 		})
@@ -191,30 +209,63 @@ func (br *Bridge) syncGroupIfNeeded(jid types.JID) {
 	}
 }
 
-func (br *Bridge) handleSendMessage(text string) {
+func (br *Bridge) handleSendMessage(text string, replyToID string) {
 	if br.selectedJID == nil { return }
 	targetJID := *br.selectedJID; now := time.Now().Format("15:04")
 	
+	// Get Quoted Context if any
+	var qID, qSender, qContent string
+	if replyToID != "" {
+		if qm, err := br.DB.GetMessage(replyToID); err == nil {
+			qID = qm.ID
+			qSender = qm.SenderJID
+			qContent = qm.Content
+			if qm.Type != "text" { qContent = "[" + strings.Title(qm.Type) + "]" }
+		}
+	}
+
 	glib.IdleAdd(func() {
 		if br.selectedJID != nil && br.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
 			isCont := br.lastSender == br.Backend.Device.ID.ToNonAD().String()
-			br.App.ChatView.AddMessage("temp", "", "", text, true, isCont, "pending", now, nil)
+			br.App.ChatView.AddMessage("temp", "", "", text, true, isCont, "pending", now, nil, qID, qSender, qContent)
 			br.lastSender = br.Backend.Device.ID.ToNonAD().String()
 			br.App.ChatView.ScrollToBottom()
 		}
 	})
 
 	go func() {
-		resp, err := br.Backend.SendText(br.ctx, targetJID, text); if err != nil { return }
+		var contextInfo *waProto.ContextInfo
+		if replyToID != "" {
+			if qm, err := br.DB.GetMessage(replyToID); err == nil {
+				contextInfo = &waProto.ContextInfo{
+					StanzaID:    proto.String(qm.ID),
+					Participant: proto.String(qm.SenderJID),
+					QuotedMessage: &waProto.Message{
+						Conversation: proto.String(qm.Content),
+					},
+				}
+			}
+		}
+
+		resp, err := br.Backend.SendText(br.ctx, targetJID, text, contextInfo); if err != nil { return }
 		glib.IdleAdd(func() {
 			if br.selectedJID != nil && br.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
 				br.App.ChatView.UpdateMessageStatus("temp", "sent")
 				if b, exists := br.App.ChatView.MessageRows["temp"]; exists {
 					br.App.ChatView.MessageRows[resp.ID] = b; delete(br.App.ChatView.MessageRows, "temp")
 				}
+				if r, exists := br.App.ChatView.MessageListRows["temp"]; exists {
+					br.App.ChatView.MessageListRows[resp.ID] = r; delete(br.App.ChatView.MessageListRows, "temp")
+				}
 			}
 		})
-		br.DB.SaveMessage(database.Message{ID: resp.ID, ChatJID: targetJID.ToNonAD().String(), SenderJID: br.Backend.Device.ID.ToNonAD().String(), Content: text, Type: "text", Timestamp: resp.Timestamp, Status: "sent", IsFromMe: true})
+		br.DB.SaveMessage(database.Message{
+			ID: resp.ID, ChatJID: targetJID.ToNonAD().String(), SenderJID: br.Backend.Device.ID.ToNonAD().String(), 
+			Content: text, Type: "text", Timestamp: resp.Timestamp, Status: "sent", IsFromMe: true,
+			QuotedMsgID: sql.NullString{String: qID, Valid: qID != ""},
+			QuotedMsgSender: sql.NullString{String: qSender, Valid: qSender != ""},
+			QuotedMsgContent: sql.NullString{String: qContent, Valid: qContent != ""},
+		})
 		br.DB.UpdateContactTimestamp(targetJID.ToNonAD().String(), resp.Timestamp)
 	}()
 }
@@ -264,7 +315,13 @@ func (br *Bridge) refreshMessages(jid types.JID) {
 					}
 				}
 				br.lastSender = m.SenderJID
-				if m.Type == "image" || m.Type == "sticker" {
+				qID := m.QuotedMsgID.String; qSender := m.QuotedMsgSender.String; qContent := m.QuotedMsgContent.String
+				qSenderName := qSender
+				if qSender != "" {
+					qSenderName = br.Contacts.ResolveSenderName(qSender)
+				}
+
+				if m.Type == "image" || m.Type == "sticker" || m.Type == "video" {
 					var pbImg, pbThumb *gdk.Pixbuf
 					pbThumb = br.bytesToPixbuf(m.Thumbnail)
 					
@@ -279,12 +336,29 @@ func (br *Bridge) refreshMessages(jid types.JID) {
 					}
 					
 					if m.Type == "image" {
-						br.App.ChatView.AddImage(m.ID, m.SenderJID, sName, pbImg, pbThumb, m.IsFromMe, isCont, m.Status, tStr, av)
-					} else {
-						br.App.ChatView.AddSticker(m.ID, m.SenderJID, sName, pbImg, pbThumb, m.IsFromMe, isCont, m.Status, tStr, av)
+						br.App.ChatView.AddImage(m.ID, m.SenderJID, sName, pbImg, pbThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+					} else if m.Type == "sticker" {
+						br.App.ChatView.AddSticker(m.ID, m.SenderJID, sName, pbImg, pbThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+					} else if m.Type == "video" {
+						br.App.ChatView.AddVideo(m.ID, m.SenderJID, sName, pbThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
 					}
+				} else if m.Type == "audio" {
+					br.App.ChatView.AddAudio(m.ID, m.SenderJID, sName, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+					if m.Content != "" {
+						if _, err := os.Stat(m.Content); err == nil {
+							br.App.ChatView.UpdateMessageAudio(m.ID, m.Content)
+						}
+					}
+				} else if m.Type == "document" {
+					fileName := "file"
+					if m.Content != "" && strings.HasPrefix(m.Content, "[Document: ") {
+						fileName = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Document: "), "]")
+					}
+					br.App.ChatView.AddDocument(m.ID, m.SenderJID, sName, fileName, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
 				} else {
-					br.App.ChatView.AddMessage(m.ID, m.SenderJID, sName, m.Content, m.IsFromMe, isCont, m.Status, tStr, av)
+					if m.Content != "" {
+						br.App.ChatView.AddMessage(m.ID, m.SenderJID, sName, m.Content, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+					}
 				}
 				
 				// Set reactions
@@ -390,20 +464,49 @@ func (br *Bridge) handleMessage(v *backend.MessageEvent) {
 				}
 				br.lastSender = sJID
 				
-				if msg.Message.GetImageMessage() != nil || msg.Message.GetStickerMessage() != nil {
-					var thumb []byte
-					if img := msg.Message.GetImageMessage(); img != nil { thumb = img.GetJPEGThumbnail()
-					} else { thumb = msg.Message.GetStickerMessage().GetPngThumbnail() }
-					
-					pbThumb := br.bytesToPixbuf(thumb)
-					if msg.Message.GetImageMessage() != nil {
-						br.App.ChatView.AddImage(msg.Info.ID, sJID, sName, nil, pbThumb, msg.Info.IsFromMe, isCont, "", tStr, av)
-					} else {
-						br.App.ChatView.AddSticker(msg.Info.ID, sJID, sName, nil, pbThumb, msg.Info.IsFromMe, isCont, "", tStr, av)
+				var qID, qSender, qContent string
+				var qSenderName string
+				if ci := br.extractContextInfo(msg); ci != nil && ci.GetStanzaID() != "" {
+					qID = ci.GetStanzaID()
+					qSender = ci.GetParticipant()
+					if qSender != "" {
+						qSenderName = br.Contacts.ResolveSenderName(qSender)
 					}
+					if qm := ci.GetQuotedMessage(); qm != nil {
+						if qm.GetConversation() != "" {
+							qContent = qm.GetConversation()
+						} else if qm.GetExtendedTextMessage() != nil {
+							qContent = qm.GetExtendedTextMessage().GetText()
+						} else {
+							qContent = "[Quoted Media]"
+						}
+					}
+				}
+				
+				if img := msg.Message.GetImageMessage(); img != nil {
+					pbThumb := br.bytesToPixbuf(img.GetJPEGThumbnail())
+					br.App.ChatView.AddImage(msg.Info.ID, sJID, sName, nil, pbThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+				} else if stkr := msg.Message.GetStickerMessage(); stkr != nil {
+					pbThumb := br.bytesToPixbuf(stkr.GetPngThumbnail())
+					br.App.ChatView.AddSticker(msg.Info.ID, sJID, sName, nil, pbThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+				} else if vid := msg.Message.GetVideoMessage(); vid != nil {
+					pbThumb := br.bytesToPixbuf(vid.GetJPEGThumbnail())
+					br.App.ChatView.AddVideo(msg.Info.ID, sJID, sName, pbThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+				} else if aud := msg.Message.GetAudioMessage(); aud != nil {
+					br.App.ChatView.AddAudio(msg.Info.ID, sJID, sName, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+				} else if doc := msg.Message.GetDocumentMessage(); doc != nil {
+					br.App.ChatView.AddDocument(msg.Info.ID, sJID, sName, doc.GetFileName(), msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+				} else if poll := msg.Message.GetPollCreationMessage(); poll != nil {
+					var opts []string
+					for _, o := range poll.GetOptions() {
+						opts = append(opts, o.GetOptionName())
+					}
+					br.App.ChatView.AddPoll(msg.Info.ID, sJID, sName, poll.GetName(), opts, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
 				} else {
 					content := br.extractContent(msg)
-					if content != "" { br.App.ChatView.AddMessage(msg.Info.ID, sJID, sName, content, msg.Info.IsFromMe, isCont, "", tStr, av) }
+					if content != "" {
+						br.App.ChatView.AddMessage(msg.Info.ID, sJID, sName, content, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+					}
 				}
 				br.App.ChatView.ScrollToBottom()
 			}
@@ -533,10 +636,15 @@ func (br *Bridge) resolveJID(jid types.JID) types.JID {
 }
 
 func (br *Bridge) persistMessage(msg *events.Message) {
+	if msg.Message.GetReactionMessage() != nil || 
+	   msg.Message.GetProtocolMessage() != nil ||
+	   msg.Message.GetSenderKeyDistributionMessage() != nil {
+		return
+	}
+
 	msgType := "text"; content := br.extractContent(msg); var thumb []byte
 	var metadata database.Message
 
-	// ... (media extraction remains same)
 	if img := msg.Message.GetImageMessage(); img != nil {
 		msgType = "image"; thumb = img.GetJPEGThumbnail()
 		metadata.MediaURL = sql.NullString{String: img.GetURL(), Valid: img.GetURL() != ""}
@@ -573,6 +681,35 @@ func (br *Bridge) persistMessage(msg *events.Message) {
 		metadata.MediaEncSHA256 = doc.GetFileEncSHA256()
 		metadata.MediaSHA256 = doc.GetFileSHA256()
 		metadata.MediaLength = sql.NullInt64{Int64: int64(doc.GetFileLength()), Valid: true}
+	} else if aud := msg.Message.GetAudioMessage(); aud != nil {
+		msgType = "audio"
+		metadata.MediaURL = sql.NullString{String: aud.GetURL(), Valid: aud.GetURL() != ""}
+		metadata.MediaDirectPath = sql.NullString{String: aud.GetDirectPath(), Valid: aud.GetDirectPath() != ""}
+		metadata.MediaKey = aud.GetMediaKey()
+		metadata.MediaMimetype = sql.NullString{String: aud.GetMimetype(), Valid: aud.GetMimetype() != ""}
+		metadata.MediaEncSHA256 = aud.GetFileEncSHA256()
+		metadata.MediaSHA256 = aud.GetFileSHA256()
+		metadata.MediaLength = sql.NullInt64{Int64: int64(aud.GetFileLength()), Valid: true}
+	}
+
+	// Check if file already exists on disk
+	if msgType != "text" {
+		ext := ".jpg"
+		switch msgType {
+		case "sticker": ext = ".webp"
+		case "video": ext = ".mp4"
+		case "audio": ext = ".ogg"
+		case "document": ext = ".bin"
+		}
+		path := filepath.Join("media", msg.Info.ID+ext)
+		if _, err := os.Stat(path); err == nil {
+			content = path
+		}
+	}
+
+	// Only save if it has content or is a known media type
+	if content == "" && msgType == "text" {
+		return
 	}
 
 	if (msgType == "image" || msgType == "sticker" || msgType == "video") && len(thumb) == 0 {
@@ -587,6 +724,36 @@ func (br *Bridge) persistMessage(msg *events.Message) {
 	metadata.ID = msg.Info.ID; metadata.ChatJID = chatJID; metadata.SenderJID = senderJID
 	metadata.Content = content; metadata.Type = msgType; metadata.Timestamp = msg.Info.Timestamp
 	metadata.IsFromMe = msg.Info.IsFromMe; metadata.Thumbnail = thumb
+
+	// Extract Quoted Message Context
+	if ci := br.extractContextInfo(msg); ci != nil && ci.GetStanzaID() != "" {
+		metadata.QuotedMsgID = sql.NullString{String: ci.GetStanzaID(), Valid: true}
+		metadata.QuotedMsgSender = sql.NullString{String: ci.GetParticipant(), Valid: ci.GetParticipant() != ""}
+		
+		// Extract quoted content (this is simplified, might need more types)
+		quotedContent := ""
+		if qm := ci.GetQuotedMessage(); qm != nil {
+			if qm.GetConversation() != "" {
+				quotedContent = qm.GetConversation()
+			} else if qm.GetExtendedTextMessage() != nil {
+				quotedContent = qm.GetExtendedTextMessage().GetText()
+			} else if qm.GetImageMessage() != nil {
+				quotedContent = "[Image]"
+				if qm.GetImageMessage().GetCaption() != "" { quotedContent += ": " + qm.GetImageMessage().GetCaption() }
+			} else if qm.GetVideoMessage() != nil {
+				quotedContent = "[Video]"
+				if qm.GetVideoMessage().GetCaption() != "" { quotedContent += ": " + qm.GetVideoMessage().GetCaption() }
+			} else if qm.GetAudioMessage() != nil {
+				quotedContent = "[Audio]"
+			} else if qm.GetStickerMessage() != nil {
+				quotedContent = "[Sticker]"
+			} else if qm.GetDocumentMessage() != nil {
+				quotedContent = "[Document]"
+				if qm.GetDocumentMessage().GetFileName() != "" { quotedContent += ": " + qm.GetDocumentMessage().GetFileName() }
+			}
+		}
+		metadata.QuotedMsgContent = sql.NullString{String: quotedContent, Valid: quotedContent != ""}
+	}
 	
 	br.DB.SaveMessage(metadata)
 	br.DB.UpdateContactTimestamp(chatJID, msg.Info.Timestamp)
@@ -599,8 +766,61 @@ func (br *Bridge) persistMessage(msg *events.Message) {
 	}
 }
 
+func (br *Bridge) extractContextInfo(msg *events.Message) *waProto.ContextInfo {
+	if etm := msg.Message.GetExtendedTextMessage(); etm != nil {
+		return etm.GetContextInfo()
+	}
+	if img := msg.Message.GetImageMessage(); img != nil {
+		return img.GetContextInfo()
+	}
+	if vid := msg.Message.GetVideoMessage(); vid != nil {
+		return vid.GetContextInfo()
+	}
+	if aud := msg.Message.GetAudioMessage(); aud != nil {
+		return aud.GetContextInfo()
+	}
+	if doc := msg.Message.GetDocumentMessage(); doc != nil {
+		return doc.GetContextInfo()
+	}
+	if stkr := msg.Message.GetStickerMessage(); stkr != nil {
+		return stkr.GetContextInfo()
+	}
+	return nil
+}
+
 func (br *Bridge) extractContent(msg *events.Message) string {
-	if msg.Message.GetConversation() != "" { return msg.Message.GetConversation() }
-	if msg.Message.GetExtendedTextMessage().GetText() != "" { return msg.Message.GetExtendedTextMessage().GetText() }
+	if msg.Message.GetConversation() != "" {
+		return msg.Message.GetConversation()
+	}
+	if msg.Message.GetExtendedTextMessage().GetText() != "" {
+		return msg.Message.GetExtendedTextMessage().GetText()
+	}
+	if msg.Message.GetImageMessage().GetCaption() != "" {
+		return msg.Message.GetImageMessage().GetCaption()
+	}
+	if msg.Message.GetVideoMessage().GetCaption() != "" {
+		return msg.Message.GetVideoMessage().GetCaption()
+	}
+	if msg.Message.GetDocumentMessage().GetCaption() != "" {
+		return msg.Message.GetDocumentMessage().GetCaption()
+	}
+
+	// Placeholder for unimplemented types to avoid empty bubbles
+	if msg.Message.GetAudioMessage() != nil {
+		return "[Audio Message]"
+	}
+	if msg.Message.GetDocumentMessage() != nil {
+		return fmt.Sprintf("[Document: %s]", msg.Message.GetDocumentMessage().GetFileName())
+	}
+	if msg.Message.GetPollCreationMessage() != nil {
+		return fmt.Sprintf("[Poll: %s]", msg.Message.GetPollCreationMessage().GetName())
+	}
+	if msg.Message.GetContactMessage() != nil {
+		return fmt.Sprintf("[Contact: %s]", msg.Message.GetContactMessage().GetDisplayName())
+	}
+	if msg.Message.GetLocationMessage() != nil {
+		return "[Location]"
+	}
+
 	return ""
 }

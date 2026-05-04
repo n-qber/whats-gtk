@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/database"
@@ -20,21 +21,26 @@ import (
 )
 
 type ContactService struct {
-	Backend     *backend.Backend
-	DB          *database.AppDB
-	ctx         context.Context
-	avatarCache map[string]*gdk.Pixbuf
-	avatarQueue chan string
-	onAvatarSet func(jid string, pixbuf *gdk.Pixbuf)
+	Backend      *backend.Backend
+	DB           *database.AppDB
+	ctx          context.Context
+	avatarCache  map[string]*gdk.Pixbuf
+	avatarQueue  chan string
+	pendingFetch map[string]bool
+	failedFetch  map[string]time.Time
+	onAvatarSet  func(jid string, pixbuf *gdk.Pixbuf)
+	mutex        sync.Mutex
 }
 
 func NewContactService(b *backend.Backend, db *database.AppDB, ctx context.Context) *ContactService {
 	cs := &ContactService{
-		Backend:     b,
-		DB:          db,
-		ctx:         ctx,
-		avatarCache: make(map[string]*gdk.Pixbuf),
-		avatarQueue: make(chan string, 500),
+		Backend:      b,
+		DB:           db,
+		ctx:          ctx,
+		avatarCache:  make(map[string]*gdk.Pixbuf),
+		avatarQueue:  make(chan string, 500),
+		pendingFetch: make(map[string]bool),
+		failedFetch:  make(map[string]time.Time),
 	}
 	go cs.avatarWorker()
 	return cs
@@ -46,13 +52,30 @@ func (cs *ContactService) SetOnAvatarSet(f func(jid string, pixbuf *gdk.Pixbuf))
 
 func (cs *ContactService) avatarWorker() {
 	for jStr := range cs.avatarQueue {
+		cs.mutex.Lock()
 		if _, exists := cs.avatarCache[jStr]; exists {
+			cs.pendingFetch[jStr] = false
+			cs.mutex.Unlock()
 			continue
 		}
+		cs.mutex.Unlock()
+		
 		jid, _ := types.ParseJID(jStr)
+		// Rate limit/politeness sleep
 		time.Sleep(1 * time.Second)
+		
 		info, err := cs.Backend.Client.GetProfilePictureInfo(cs.ctx, jid, &whatsmeow.GetProfilePictureParams{Preview: true})
-		if err == nil && info != nil && info.URL != "" {
+		
+		cs.mutex.Lock()
+		if err != nil {
+			cs.failedFetch[jStr] = time.Now()
+			cs.pendingFetch[jStr] = false
+			cs.mutex.Unlock()
+			continue
+		}
+		cs.mutex.Unlock()
+
+		if info != nil && info.URL != "" {
 			resp, err := http.Get(info.URL)
 			if err == nil {
 				defer resp.Body.Close()
@@ -66,7 +89,9 @@ func (cs *ContactService) avatarWorker() {
 					loader.Close()
 					pixbuf, _ := loader.GetPixbuf()
 					if pixbuf != nil {
+						cs.mutex.Lock()
 						cs.avatarCache[jStr] = pixbuf
+						cs.mutex.Unlock()
 						if cs.onAvatarSet != nil {
 							cs.onAvatarSet(jStr, pixbuf)
 						}
@@ -74,13 +99,26 @@ func (cs *ContactService) avatarWorker() {
 				})
 			}
 		}
+		cs.mutex.Lock()
+		cs.pendingFetch[jStr] = false
+		cs.mutex.Unlock()
 	}
 }
 
 func (cs *ContactService) GetAvatar(j string) *gdk.Pixbuf {
+	cs.mutex.Lock()
+	defer cs.mutex.Unlock()
+
 	if pix, exists := cs.avatarCache[j]; exists {
 		return pix
 	}
+	
+	if lastFail, exists := cs.failedFetch[j]; exists {
+		if time.Since(lastFail) < 1*time.Hour {
+			return nil
+		}
+	}
+
 	if c, err := cs.DB.GetContact(j); err == nil && c.AvatarPath != "" {
 		if _, err := os.Stat(c.AvatarPath); err == nil {
 			if data, err := os.ReadFile(c.AvatarPath); err == nil {
@@ -95,9 +133,14 @@ func (cs *ContactService) GetAvatar(j string) *gdk.Pixbuf {
 			}
 		}
 	}
-	select {
-	case cs.avatarQueue <- j:
-	default:
+
+	if !cs.pendingFetch[j] {
+		cs.pendingFetch[j] = true
+		select {
+		case cs.avatarQueue <- j:
+		default:
+			cs.pendingFetch[j] = false
+		}
 	}
 	return nil
 }
