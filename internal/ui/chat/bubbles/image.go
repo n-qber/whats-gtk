@@ -12,7 +12,7 @@ type ImageBubble struct {
 }
 func NewImageBubble(name string, tex, thumb *gdk.Texture, isSelf bool, status, time string, avatar *gdk.Texture, realW, realH int) (*ImageBubble, error) {
 	picture := gtk.NewPicture()
-	picture.SetContentFit(gtk.ContentFitScaleDown)
+	picture.SetContentFit(gtk.ContentFitCover)
 	picture.SetCanShrink(true)
 
 	displayTex := tex
@@ -28,9 +28,11 @@ func NewImageBubble(name string, tex, thumb *gdk.Texture, isSelf bool, status, t
 			w, h = float64(realW), float64(realH)
 		}
 
-		if w > 300 {
-			h = (300 / w) * h
-			w = 300
+		if w > 300 || h > 300 {
+			ratio := 300.0 / w
+			if h > w { ratio = 300.0 / h }
+			w *= ratio
+			h *= ratio
 		}
 		picture.SetSizeRequest(int(w), int(h))
 	}
@@ -62,9 +64,11 @@ func (ib *ImageBubble) UpdateImage(tex *gdk.Texture) {
 	if tex != nil {
 		ib.picture.SetPaintable(tex)
 		w, h := float64(tex.Width()), float64(tex.Height())
-		if w > 300 {
-			h = (300 / w) * h
-			w = 300
+		if w > 300 || h > 300 {
+			ratio := 300.0 / w
+			if h > w { ratio = 300.0 / h }
+			w *= ratio
+			h *= ratio
 		}
 		ib.picture.SetSizeRequest(int(w), int(h))
 	}

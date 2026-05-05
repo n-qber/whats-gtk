@@ -11,7 +11,7 @@ type StickerBubble struct {
 }
 func NewStickerBubble(name string, pixbuf, thumb *gdk.Texture, isSelf bool, status, time string, avatar *gdk.Texture, realW, realH int) (*StickerBubble, error) {
 	picture := gtk.NewPicture()
-	picture.SetContentFit(gtk.ContentFitScaleDown)
+	picture.SetContentFit(gtk.ContentFitCover)
 	picture.SetCanShrink(true)
 
 	displayTex := pixbuf
