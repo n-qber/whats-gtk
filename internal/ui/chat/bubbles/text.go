@@ -1,20 +1,19 @@
 package bubbles
 
 import (
-	"github.com/gotk3/gotk3/gdk"
-	"github.com/gotk3/gotk3/gtk"
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+	"github.com/diamondburned/gotk4/pkg/pango"
 )
 
 type TextBubble struct {
 	*baseBubble
 }
 
-func NewTextBubble(name string, text string, isSelf bool, status string, time string, avatar *gdk.Pixbuf) (*TextBubble, error) {
-	label, err := gtk.LabelNew(text)
-	if err != nil {
-		return nil, err
-	}
-	label.SetLineWrap(true)
+func NewTextBubble(name, text string, isSelf bool, status, time string, avatar *gdk.Texture) (*TextBubble, error) {
+	label := gtk.NewLabel(text)
+	label.SetWrap(true)
+	label.SetWrapMode(pango.WrapWordChar)
 	label.SetMaxWidthChars(60)
 	label.SetXAlign(0)
 	label.SetSelectable(true)

@@ -8,7 +8,7 @@ import (
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/database"
 
-	"github.com/gotk3/gotk3/gdk"
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"google.golang.org/protobuf/proto"
@@ -40,7 +40,7 @@ type DownloadTask struct {
 	Metadata   *MediaMetadata
 	SenderName string
 	TimeStr    string
-	Avatar     *gdk.Pixbuf
+	Avatar     *gdk.Texture
 	IsCont     bool
 }
 

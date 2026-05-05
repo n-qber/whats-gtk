@@ -1,13 +1,13 @@
 package chat
 
 import (
-	"fmt"
 	"whats-gtk/internal/ui/chat/bubbles"
 
-	"github.com/gotk3/gotk3/gdk"
-	"github.com/gotk3/gotk3/glib"
-	"github.com/gotk3/gotk3/gtk"
-	"github.com/gotk3/gotk3/pango"
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/glib/v2"
+	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+	"github.com/diamondburned/gotk4/pkg/pango"
+	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 )
 
 type ChatView struct {
@@ -16,12 +16,12 @@ type ChatView struct {
 	MessageScrolledWindow *gtk.ScrolledWindow
 	MessageEntry          *gtk.Entry
 	ChatHeaderLabel       *gtk.Label
-	ChatHeaderImage       *gtk.Image
+	ChatHeaderImage       *adw.Avatar
 	MessageRows           map[string]bubbles.Bubble
-	BubblesByJID          map[string][]bubbles.Bubble
 	MessageListRows       map[string]*gtk.ListBoxRow
+	BubblesByJID          map[string][]bubbles.Bubble
 	OnSendMessage         func(text string, replyToID string)
-	OnPasteImage          func(pixbuf *gdk.Pixbuf)
+	OnPasteImage          func(tex *gdk.Texture)
 	OnDownloadMedia       func(id string)
 	OnSendReaction        func(id, emoji string)
 	AudioPlayer           *AudioPlayer
@@ -33,52 +33,52 @@ type ChatView struct {
 }
 
 func NewChatView() (*ChatView, error) {
-	box, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
-	if err != nil {
-		return nil, err
-	}
+	box := gtk.NewBox(gtk.OrientationVertical, 0)
 	box.SetName("chat-view-box")
 
-	headerBox, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 12)
-	hCtx, _ := headerBox.GetStyleContext()
-	hCtx.AddClass("chat-header")
+	header := adw.NewHeaderBar()
+	
+	headerLabel := gtk.NewLabel("Select a chat")
+	headerLabel.AddCSSClass("chat-header-name")
+	header.SetTitleWidget(headerLabel)
+	
+	headerAvatar := adw.NewAvatar(32, "", true)
+	header.PackStart(headerAvatar)
+	
+	box.Append(header)
 
-	headerImage, _ := gtk.ImageNew()
-	hiCtx, _ := headerImage.GetStyleContext()
-	hiCtx.AddClass("avatar")
-
-	headerLabel, _ := gtk.LabelNew("Select a chat")
-	hlCtx, _ := headerLabel.GetStyleContext()
-	hlCtx.AddClass("chat-header-name")
-
-	headerBox.PackStart(headerImage, false, false, 0)
-	headerBox.PackStart(headerLabel, false, false, 0)
-	box.PackStart(headerBox, false, false, 0)
-
-	messageList, _ := gtk.ListBoxNew()
+	messageList := gtk.NewListBox()
 	messageList.SetName("message-list")
-	scrolledMsg, _ := gtk.ScrolledWindowNew(nil, nil)
-	scrolledMsg.Add(messageList)
-	box.PackStart(scrolledMsg, true, true, 0)
+	messageList.SetSelectionMode(gtk.SelectionNone)
 
-	replyPreviewBox, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 5)
-	rpCtx, _ := replyPreviewBox.GetStyleContext()
-	rpCtx.AddClass("reply-preview")
-	replyLabel, _ := gtk.LabelNew("")
+	scrolledMsg := gtk.NewScrolledWindow()
+	scrolledMsg.SetVExpand(true)
+	scrolledMsg.SetChild(messageList)
+	box.Append(scrolledMsg)
+
+	replyPreviewBox := gtk.NewBox(gtk.OrientationHorizontal, 5)
+	replyPreviewBox.AddCSSClass("reply-preview")
+	replyLabel := gtk.NewLabel("")
 	replyLabel.SetXAlign(0)
-	replyLabel.SetEllipsize(pango.ELLIPSIZE_END)
-	closeReplyBtn, _ := gtk.ButtonNewFromIconName("window-close-symbolic", gtk.ICON_SIZE_BUTTON)
-	replyPreviewBox.PackStart(replyLabel, true, true, 10)
-	replyPreviewBox.PackStart(closeReplyBtn, false, false, 5)
+	replyLabel.SetEllipsize(pango.EllipsizeEnd)
+	closeReplyBtn := gtk.NewButtonFromIconName("window-close-symbolic")
+	replyPreviewBox.Append(replyLabel)
+	replyPreviewBox.Append(closeReplyBtn)
 	replyPreviewBox.Hide()
-	box.PackStart(replyPreviewBox, false, false, 0)
+	box.Append(replyPreviewBox)
 
-	inputBox, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 5)
-	messageEntry, _ := gtk.EntryNew()
-	sendButton, _ := gtk.ButtonNewWithLabel("Send")
-	inputBox.PackStart(messageEntry, true, true, 5)
-	inputBox.PackStart(sendButton, false, false, 5)
-	box.PackStart(inputBox, false, false, 5)
+	inputBox := gtk.NewBox(gtk.OrientationHorizontal, 5)
+	inputBox.SetMarginTop(6)
+	inputBox.SetMarginBottom(6)
+	inputBox.SetMarginStart(6)
+	inputBox.SetMarginEnd(6)
+	
+	messageEntry := gtk.NewEntry()
+	messageEntry.SetHExpand(true)
+	sendButton := gtk.NewButtonWithLabel("Send")
+	inputBox.Append(messageEntry)
+	inputBox.Append(sendButton)
+	box.Append(inputBox)
 
 	cv := &ChatView{
 		Box:                   box,
@@ -86,44 +86,40 @@ func NewChatView() (*ChatView, error) {
 		MessageScrolledWindow: scrolledMsg,
 		MessageEntry:          messageEntry,
 		ChatHeaderLabel:       headerLabel,
-		ChatHeaderImage:       headerImage,
+		ChatHeaderImage:       headerAvatar,
 		MessageRows:           make(map[string]bubbles.Bubble),
-		BubblesByJID:          make(map[string][]bubbles.Bubble),
 		MessageListRows:       make(map[string]*gtk.ListBoxRow),
+		BubblesByJID:          make(map[string][]bubbles.Bubble),
 		AudioPlayer:           NewAudioPlayer(),
 		ReplyPreviewBox:       replyPreviewBox,
 		ReplyPreviewLabel:     replyLabel,
 	}
 
-	closeReplyBtn.Connect("clicked", func() {
+	closeReplyBtn.ConnectClicked(func() {
 		cv.CancelReply()
 	})
 
-	messageEntry.Connect("key-press-event", func(entry *gtk.Entry, event *gdk.Event) bool {
-		keyEvent := gdk.EventKey{Event: event}
-		if keyEvent.State()&gdk.CONTROL_MASK != 0 && keyEvent.KeyVal() == gdk.KEY_v {
-			clipboard, _ := gtk.ClipboardGet(gdk.SELECTION_CLIPBOARD)
-			pixbuf, _ := clipboard.WaitForImage()
-			if pixbuf != nil && cv.OnPasteImage != nil {
-				cv.OnPasteImage(pixbuf)
-				return true // Stop standard paste
-			}
-		}
-		return false
-	})
-
 	sendMsg := func() {
-		text, _ := messageEntry.GetText()
+		text := messageEntry.Text()
 		if text != "" && cv.OnSendMessage != nil {
 			cv.OnSendMessage(text, cv.ReplyToID)
 			cv.CancelReply()
 			messageEntry.SetText("")
 		}
 	}
-	messageEntry.Connect("activate", sendMsg)
-	sendButton.Connect("clicked", sendMsg)
+
+	messageEntry.ConnectActivate(sendMsg)
+	sendButton.ConnectClicked(sendMsg)
 
 	return cv, nil
+}
+
+func (cv *ChatView) SetHeader(name string, tex *gdk.Texture) {
+	cv.ChatHeaderLabel.SetText(name)
+	cv.ChatHeaderImage.SetText(name)
+	if tex != nil {
+		cv.ChatHeaderImage.SetCustomImage(tex)
+	}
 }
 
 func (cv *ChatView) SetReplyTo(id, sender, content string) {
@@ -131,7 +127,7 @@ func (cv *ChatView) SetReplyTo(id, sender, content string) {
 	cv.ReplyToSender = sender
 	cv.ReplyToContent = content
 	cv.ReplyPreviewLabel.SetMarkup("Replying to <b>" + sender + "</b>: " + content)
-	cv.ReplyPreviewBox.ShowAll()
+	cv.ReplyPreviewBox.Show()
 	cv.MessageEntry.GrabFocus()
 }
 
@@ -142,16 +138,7 @@ func (cv *ChatView) CancelReply() {
 	cv.ReplyPreviewBox.Hide()
 }
 
-func (cv *ChatView) SetHeader(name string, pixbuf *gdk.Pixbuf) {
-	cv.ChatHeaderLabel.SetText(name)
-	if pixbuf != nil {
-		bubbles.ApplyCircularAvatar(cv.ChatHeaderImage, pixbuf, 40)
-	} else {
-		cv.ChatHeaderImage.Clear()
-	}
-}
-
-func (cv *ChatView) AddMessage(id, jid, name string, text string, isSelf bool, isCont bool, status, tStr string, av *gdk.Pixbuf, qID, qSender, qContent string) {
+func (cv *ChatView) AddMessage(id, jid, name, text string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string) {
 	bubble, err := bubbles.NewTextBubble(name, text, isSelf, status, tStr, av)
 	if err == nil {
 		bubble.SetQuotedMessage(qID, qSender, qContent)
@@ -159,82 +146,40 @@ func (cv *ChatView) AddMessage(id, jid, name string, text string, isSelf bool, i
 	}
 }
 
-func (cv *ChatView) AddImage(id, jid, name string, pixbuf, thumb *gdk.Pixbuf, isSelf bool, isCont bool, status, tStr string, av *gdk.Pixbuf, qID, qSender, qContent string) {
-	bubble, err := bubbles.NewImageBubble(name, pixbuf, thumb, isSelf, status, tStr, av)
+func (cv *ChatView) AddImage(id, jid, name string, tex, thumb *gdk.Texture, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
+	bubble, err := bubbles.NewImageBubble(name, tex, thumb, isSelf, status, tStr, av, w, h)
 	if err == nil {
 		bubble.SetQuotedMessage(qID, qSender, qContent)
-		bubble.OnDownloadRequest = func() {
-			if cv.OnDownloadMedia != nil { cv.OnDownloadMedia(id) }
-		}
 		cv.registerBubble(id, jid, bubble, isCont)
 	}
 }
 
-
-func (cv *ChatView) AddSticker(id, jid, name string, pixbuf, thumb *gdk.Pixbuf, isSelf bool, isCont bool, status, tStr string, av *gdk.Pixbuf, qID, qSender, qContent string) {
-	bubble, err := bubbles.NewStickerBubble(name, pixbuf, thumb, isSelf, status, tStr, av)
+func (cv *ChatView) AddSticker(id, jid, name string, tex, thumb *gdk.Texture, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
+	bubble, err := bubbles.NewStickerBubble(name, tex, thumb, isSelf, status, tStr, av, w, h)
 	if err == nil {
 		bubble.SetQuotedMessage(qID, qSender, qContent)
-		bubble.OnDownloadRequest = func() {
-			if cv.OnDownloadMedia != nil { cv.OnDownloadMedia(id) }
-		}
 		cv.registerBubble(id, jid, bubble, isCont)
 	}
 }
 
-func (cv *ChatView) AddAudio(id, jid, name string, isSelf bool, isCont bool, status, tStr string, av *gdk.Pixbuf, qID, qSender, qContent string) {
+func (cv *ChatView) AddAudio(id, jid, name string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string) {
 	bubble, err := bubbles.NewAudioBubble(name, isSelf, status, tStr, av)
 	if err == nil {
 		bubble.SetQuotedMessage(qID, qSender, qContent)
-		bubble.OnDownloadRequest = func() {
-			if cv.OnDownloadMedia != nil { cv.OnDownloadMedia(id) }
-		}
-		bubble.OnPlayRequest = func() {
-			if path := bubble.AudioPath(); path != "" {
-				glib.IdleAdd(func() {
-					bubble.SetPlaying(true)
-				})
-				err := cv.AudioPlayer.Play(path, func() {
-					glib.IdleAdd(func() {
-						bubble.SetPlaying(false)
-					})
-				})
-				if err != nil {
-					fmt.Printf("ChatView: Playback failed: %v\n", err)
-					glib.IdleAdd(func() {
-						bubble.SetPlaying(false)
-					})
-				}
-			}
-		}
-		bubble.OnStopRequest = func() {
-			cv.AudioPlayer.Stop()
-		}
 		cv.registerBubble(id, jid, bubble, isCont)
 	}
 }
 
-func (cv *ChatView) UpdateMessageAudio(id string, path string) {
-	if b, ok := cv.MessageRows[id]; ok {
-		if ab, ok := b.(*bubbles.AudioBubble); ok {
-			ab.SetAudioPath(path)
-		}
-	}
-}
-
-func (cv *ChatView) AddVideo(id, jid, name string, thumb *gdk.Pixbuf, isSelf bool, isCont bool, status, tStr string, av *gdk.Pixbuf, qID, qSender, qContent string) {
+func (cv *ChatView) AddVideo(id, jid, name string, thumb *gdk.Texture, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
 	// For now, video uses image bubble with thumbnail
-	bubble, err := bubbles.NewImageBubble(name, nil, thumb, isSelf, status, tStr, av)
+	bubble, err := bubbles.NewImageBubble(name, nil, thumb, isSelf, status, tStr, av, w, h)
 	if err == nil {
 		bubble.SetQuotedMessage(qID, qSender, qContent)
-		bubble.OnDownloadRequest = func() {
-			if cv.OnDownloadMedia != nil { cv.OnDownloadMedia(id) }
-		}
 		cv.registerBubble(id, jid, bubble, isCont)
 	}
 }
 
-func (cv *ChatView) AddDocument(id, jid, name string, fileName string, isSelf bool, isCont bool, status, tStr string, av *gdk.Pixbuf, qID, qSender, qContent string) {
+func (cv *ChatView) AddDocument(id, jid, name, fileName string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string) {
 	bubble, err := bubbles.NewTextBubble(name, "[File: "+fileName+"]", isSelf, status, tStr, av)
 	if err == nil {
 		bubble.SetQuotedMessage(qID, qSender, qContent)
@@ -242,7 +187,7 @@ func (cv *ChatView) AddDocument(id, jid, name string, fileName string, isSelf bo
 	}
 }
 
-func (cv *ChatView) AddPoll(id, jid, name string, question string, options []string, isSelf bool, isCont bool, status, tStr string, av *gdk.Pixbuf, qID, qSender, qContent string) {
+func (cv *ChatView) AddPoll(id, jid, name, question string, options []string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string) {
 	bubble, err := bubbles.NewPollBubble(name, question, options, isSelf, status, tStr, av)
 	if err == nil {
 		bubble.SetQuotedMessage(qID, qSender, qContent)
@@ -262,88 +207,74 @@ func (cv *ChatView) registerBubble(id, jid string, b bubbles.Bubble, isCont bool
 		cv.ScrollToMessage(quotedID)
 	})
 
+	b.SetOnReplyRequest(func() {
+		sender := b.Sender()
+		if sender == "" { sender = "Unknown" }
+		cv.SetReplyTo(id, sender, b.Content())
+	})
+
+	b.SetOnReactionRequest(func(emoji string) {
+		if cv.OnSendReaction != nil {
+			cv.OnSendReaction(id, emoji)
+		}
+	})
+
 	cv.addBubble(id, b, isCont)
 }
 
 func (cv *ChatView) ScrollToMessage(id string) {
 	if row, ok := cv.MessageListRows[id]; ok {
 		glib.IdleAdd(func() {
-			adj := cv.MessageScrolledWindow.GetVAdjustment()
-			alloc := row.GetAllocation()
-			adj.SetValue(float64(alloc.GetY()))
+			adj := cv.MessageScrolledWindow.VAdjustment()
+			// In GTK4 we can use row.TranslateCoordinates to get position
+			// or just use SelectRow and let the adjustment handle it if possible.
+			// Better way:
 			cv.MessageList.SelectRow(row)
+			
+			// Force scroll to row
 			row.GrabFocus()
+			
+			// Get root coordinates of the row relative to the listbox
+			_, y, _ := row.TranslateCoordinates(cv.MessageList, 0, 0)
+			adj.SetValue(y)
 		})
 	}
 }
+func (cv *ChatView) showContextMenu(id string, b bubbles.Bubble) {
+	// In GTK4, we use PopoverMenu or a simpler approach
+	// [TODO: Implement GTK4 context menu]
+}
 
 func (cv *ChatView) addBubble(id string, b bubbles.Bubble, isCont bool) {
-	row, _ := gtk.ListBoxRowNew()
-	rCtx, _ := row.GetStyleContext()
-	rCtx.AddClass("message-row")
+	row := gtk.NewListBoxRow()
+	row.AddCSSClass("message-row")
 	if isCont {
-		rCtx.AddClass("message-row-connected")
+		row.AddCSSClass("message-row-connected")
 	}
 
-	bubbleWidget := b.Widget().ToWidget()
-	row.Add(bubbleWidget)
+	row.SetChild(b.Widget())
 
-	// Context menu for reactions on the row itself
-	row.Connect("button-press-event", func(w interface{}, event *gdk.Event) bool {
-		e := gdk.EventButton{Event: event}
-		if e.Type() == gdk.EVENT_BUTTON_PRESS && e.Button() == 3 { // Right click
-			cv.showContextMenu(id, e.Time(), b)
-			return true
-		}
-		return false
+	click := gtk.NewGestureClick()
+	click.SetButton(3) // Right click
+	click.ConnectPressed(func(n int, x, y float64) {
+		cv.showContextMenu(id, b)
 	})
+	row.AddController(click)
 
 	if id != "" {
 		cv.MessageListRows[id] = row
 	}
 
-	cv.MessageList.Add(row)
-	row.ShowAll()
-	
-	cv.ScrollToBottom()
-}
-
-func (cv *ChatView) showContextMenu(msgID string, timestamp uint32, bubble bubbles.Bubble) {
-	menu, _ := gtk.MenuNew()
-	
-	replyItem, _ := gtk.MenuItemNewWithLabel("Reply")
-	replyItem.Connect("activate", func() {
-		sender := bubble.Sender()
-		if sender == "" { sender = "Unknown" }
-		cv.SetReplyTo(msgID, sender, bubble.Content())
+	cv.MessageList.Append(row)
+	glib.IdleAdd(func() {
+		cv.ScrollToBottom()
 	})
-	menu.Append(replyItem)
-
-	reactItem, _ := gtk.MenuItemNewWithLabel("React...")
-	reactSub, _ := gtk.MenuNew()
-	
-	emojis := []string{"👍", "❤️", "😂", "😮", "😢", "🙏"}
-	for _, e := range emojis {
-		item, _ := gtk.MenuItemNewWithLabel(e)
-		item.Connect("activate", func() {
-			if cv.OnSendReaction != nil {
-				cv.OnSendReaction(msgID, e)
-			}
-		})
-		reactSub.Append(item)
-	}
-	
-	reactItem.SetSubmenu(reactSub)
-	menu.Append(reactItem)
-
-	menu.ShowAll()
-	menu.PopupAtPointer(nil)
 }
 
 func (cv *ChatView) ScrollToBottom() {
 	glib.IdleAdd(func() {
-		adj := cv.MessageScrolledWindow.GetVAdjustment()
-		adj.SetValue(adj.GetUpper() - adj.GetPageSize())
+		adj := cv.MessageScrolledWindow.VAdjustment()
+		adj.SetValue(adj.Upper() - adj.PageSize())
 	})
 }
 
@@ -353,23 +284,31 @@ func (cv *ChatView) UpdateMessageStatus(id, status string) {
 	}
 }
 
-func (cv *ChatView) UpdateMessageImage(id string, pixbuf *gdk.Pixbuf) {
-	if bubble, exists := cv.MessageRows[id]; exists {
-		glib.IdleAdd(func() { bubble.UpdateImage(pixbuf) })
-	}
-}
-
 func (cv *ChatView) UpdateMessageReactions(id string, reactions []string) {
 	if bubble, exists := cv.MessageRows[id]; exists {
 		glib.IdleAdd(func() { bubble.SetReactions(reactions) })
 	}
 }
 
-func (cv *ChatView) SetAvatar(jid string, pixbuf *gdk.Pixbuf) {
-	if blist, exists := cv.BubblesByJID[jid]; exists {
+func (cv *ChatView) UpdateMessageImage(id string, tex *gdk.Texture) {
+	if bubble, exists := cv.MessageRows[id]; exists {
+		glib.IdleAdd(func() { bubble.UpdateImage(tex) })
+	}
+}
+
+func (cv *ChatView) UpdateMessageAudio(id, path string) {
+	if b, ok := cv.MessageRows[id]; ok {
+		if ab, ok := b.(*bubbles.AudioBubble); ok {
+			ab.SetAudioPath(path)
+		}
+	}
+}
+
+func (cv *ChatView) SetAvatar(jid string, tex *gdk.Texture) {
+	if bubbles, exists := cv.BubblesByJID[jid]; exists {
 		glib.IdleAdd(func() {
-			for _, b := range blist {
-				b.UpdateAvatar(pixbuf)
+			for _, b := range bubbles {
+				b.UpdateAvatar(tex)
 			}
 		})
 	}
@@ -379,7 +318,13 @@ func (cv *ChatView) Clear() {
 	cv.MessageRows = make(map[string]bubbles.Bubble)
 	cv.BubblesByJID = make(map[string][]bubbles.Bubble)
 	cv.MessageListRows = make(map[string]*gtk.ListBoxRow)
-	children := cv.MessageList.GetChildren()
-	children.Foreach(func(item interface{}) { cv.MessageList.Remove(item.(gtk.IWidget)) })
-	cv.MessageList.ShowAll()
+	
+	for {
+		child := cv.MessageList.FirstChild()
+		if child == nil {
+			break
+		}
+		cv.MessageList.Remove(child)
+	}
 }
+

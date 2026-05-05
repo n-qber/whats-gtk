@@ -1,52 +1,53 @@
 package bubbles
 
 import (
-	"github.com/gotk3/gotk3/gdk"
-	"github.com/gotk3/gotk3/gtk"
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
 type AudioBubble struct {
 	*baseBubble
+	playButton        *gtk.Button
+	slider            *gtk.Scale
+	audioPath         string
+	isPlaying         bool
 	OnDownloadRequest func()
 	OnPlayRequest     func()
 	OnStopRequest     func()
-	audioPath         string
-	playButton        *gtk.Button
-	isPlaying         bool
 }
 
-func NewAudioBubble(name string, isSelf bool, status string, time string, avatar *gdk.Pixbuf) (*AudioBubble, error) {
-	box, err := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 10)
-	if err != nil {
-		return nil, err
-	}
-
-	playButton, _ := gtk.ButtonNew()
-	playButton.SetRelief(gtk.RELIEF_NONE)
-	pbCtx, _ := playButton.GetStyleContext()
-	pbCtx.AddClass("audio-play-button")
+func NewAudioBubble(name string, isSelf bool, status, time string, avatar *gdk.Texture) (*AudioBubble, error) {
+	box := gtk.NewBox(gtk.OrientationHorizontal, 10)
 	
-	playImg, _ := gtk.ImageNewFromIconName("media-playback-start", gtk.ICON_SIZE_LARGE_TOOLBAR)
-	playButton.SetImage(playImg)
-	playButton.SetAlwaysShowImage(true)
+	playButton := gtk.NewButton()
+	playButton.SetHasFrame(false)
+	playButton.AddCSSClass("audio-play-button")
+	
+	playImg := gtk.NewImageFromIconName("media-playback-start")
+	playImg.SetPixelSize(32)
+	playButton.SetChild(playImg)
 
-	slider, _ := gtk.ScaleNewWithRange(gtk.ORIENTATION_HORIZONTAL, 0, 100, 1)
+	slider := gtk.NewScaleWithRange(gtk.OrientationHorizontal, 0, 100, 1)
 	slider.SetDrawValue(false)
-	sCtx, _ := slider.GetStyleContext()
-	sCtx.AddClass("audio-slider")
+	slider.AddCSSClass("audio-slider")
+	slider.SetHExpand(true)
 	slider.SetSizeRequest(200, -1)
 
-	box.PackStart(playButton, false, false, 0)
-	box.PackStart(slider, true, true, 5)
+	box.Append(playButton)
+	box.Append(slider)
 
 	base, err := newBaseBubble(name, "[Audio]", box, isSelf, true, status, time, avatar)
 	if err != nil {
 		return nil, err
 	}
 
-	ab := &AudioBubble{baseBubble: base, playButton: playButton}
-	
-	playButton.Connect("clicked", func() {
+	ab := &AudioBubble{
+		baseBubble: base,
+		playButton: playButton,
+		slider:     slider,
+	}
+
+	playButton.ConnectClicked(func() {
 		if ab.audioPath == "" {
 			if ab.OnDownloadRequest != nil {
 				ab.OnDownloadRequest()
@@ -67,9 +68,7 @@ func NewAudioBubble(name string, isSelf bool, status string, time string, avatar
 	return ab, nil
 }
 
-func (ab *AudioBubble) AudioPath() string {
-	return ab.audioPath
-}
+func (ab *AudioBubble) AudioPath() string { return ab.audioPath }
 
 func (ab *AudioBubble) SetAudioPath(path string) {
 	ab.audioPath = path
@@ -81,7 +80,8 @@ func (ab *AudioBubble) SetPlaying(playing bool) {
 	if playing {
 		icon = "media-playback-pause"
 	}
-	img, _ := gtk.ImageNewFromIconName(icon, gtk.ICON_SIZE_LARGE_TOOLBAR)
-	ab.playButton.SetImage(img)
+	
+	if img, ok := ab.playButton.Child().(*gtk.Image); ok {
+		img.SetFromIconName(icon)
+	}
 }
-

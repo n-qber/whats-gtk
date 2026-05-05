@@ -1,38 +1,19 @@
 package bubbles
 
 import (
-	"github.com/gotk3/gotk3/gdk"
-	"github.com/gotk3/gotk3/gtk"
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
 type PollBubble struct {
 	*baseBubble
 }
 
-func NewPollBubble(name string, question string, options []string, isSelf bool, status string, time string, avatar *gdk.Pixbuf) (*PollBubble, error) {
-	box, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 5)
+func NewPollBubble(name, question string, options []string, isSelf bool, status, time string, avatar *gdk.Texture) (*PollBubble, error) {
+	label := gtk.NewLabel("[Poll] " + question)
+	base, err := newBaseBubble(name, question, label, isSelf, true, status, time, avatar)
 	if err != nil {
 		return nil, err
 	}
-
-	label, _ := gtk.LabelNew(question)
-	label.SetXAlign(0)
-	label.SetMarkup("<b>" + question + "</b>")
-	box.PackStart(label, false, false, 2)
-
-	for _, opt := range options {
-		btn, _ := gtk.CheckButtonNewWithLabel(opt)
-		box.PackStart(btn, false, false, 0)
-	}
-
-	voteBtn, _ := gtk.ButtonNewWithLabel("Vote")
-	box.PackStart(voteBtn, false, false, 5)
-
-	base, err := newBaseBubble(name, question, box, isSelf, true, status, time, avatar)
-	if err != nil {
-		return nil, err
-	}
-
 	return &PollBubble{baseBubble: base}, nil
 }
-

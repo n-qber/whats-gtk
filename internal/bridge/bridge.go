@@ -13,8 +13,9 @@ import (
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/ui"
 
-	"github.com/gotk3/gotk3/gdk"
-	"github.com/gotk3/gotk3/glib"
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
+	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -35,6 +36,7 @@ type Bridge struct {
 	sidebarMutex  sync.Mutex
 	isSyncing     bool
 	lastGroupSync map[string]time.Time
+	searchSerial  int
 }
 
 func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Context) *Bridge {
@@ -77,22 +79,25 @@ func (br *Bridge) handleSendReaction(id, emoji string) {
 	}()
 }
 
-func (br *Bridge) handlePasteImage(pixbuf *gdk.Pixbuf) {
+func (br *Bridge) handlePasteImage(tex *gdk.Texture) {
 	if br.selectedJID == nil { return }
 	targetJID := *br.selectedJID
 	now := time.Now().Format("15:04")
 
 	glib.IdleAdd(func() {
 		if br.selectedJID != nil && br.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
-			br.App.ChatView.AddImage("temp_img", "", "", pixbuf, nil, true, false, "pending", now, nil, "", "", "")
+			br.App.ChatView.AddImage("temp_img", "", "", tex, nil, true, false, "pending", now, nil, "", "", "", int(tex.Width()), int(tex.Height()))
 			br.App.ChatView.ScrollToBottom()
 		}
 	})
 
 	go func() {
-		// Convert pixbuf to jpeg via temp file
+		// Convert texture to bytes via pixbuf
+		pixbuf := gdk.PixbufGetFromTexture(tex)
+		if pixbuf == nil { return }
+		
 		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("paste_%d.jpg", time.Now().UnixNano()))
-		err := pixbuf.SaveJPEG(tmpPath, 80)
+		err := pixbuf.Savev(tmpPath, "jpeg", nil, nil)
 		if err != nil {
 			fmt.Printf("Bridge: Failed to save temp image: %v\n", err)
 			return
@@ -100,7 +105,10 @@ func (br *Bridge) handlePasteImage(pixbuf *gdk.Pixbuf) {
 		defer os.Remove(tmpPath)
 
 		data, err := os.ReadFile(tmpPath)
-		if err != nil { return }
+		if err != nil {
+			fmt.Printf("Bridge: Failed to read temp image: %v\n", err)
+			return
+		}
 
 		resp, err := br.Backend.SendImage(br.ctx, targetJID, data, "image/jpeg")
 		if err != nil {
@@ -114,6 +122,9 @@ func (br *Bridge) handlePasteImage(pixbuf *gdk.Pixbuf) {
 				if b, exists := br.App.ChatView.MessageRows["temp_img"]; exists {
 					br.App.ChatView.MessageRows[resp.ID] = b; delete(br.App.ChatView.MessageRows, "temp_img")
 				}
+				if r, exists := br.App.ChatView.MessageListRows["temp_img"]; exists {
+					br.App.ChatView.MessageListRows[resp.ID] = r; delete(br.App.ChatView.MessageListRows, "temp_img")
+				}
 			}
 		})
 
@@ -123,14 +134,17 @@ func (br *Bridge) handlePasteImage(pixbuf *gdk.Pixbuf) {
 		br.DB.SaveMessage(database.Message{
 			ID: resp.ID, ChatJID: targetJID.ToNonAD().String(), SenderJID: br.Backend.Device.ID.ToNonAD().String(),
 			Content: path, Type: "image", Timestamp: resp.Timestamp, Status: "sent", IsFromMe: true,
+			MediaWidth: sql.NullInt64{Int64: int64(tex.Width()), Valid: true},
+			MediaHeight: sql.NullInt64{Int64: int64(tex.Height()), Valid: true},
 		})
 		br.DB.UpdateContactTimestamp(targetJID.ToNonAD().String(), resp.Timestamp)
 	}()
 }
 
 func (br *Bridge) setupServiceHandlers() {
-	br.Contacts.SetOnAvatarSet(func(jid string, pixbuf *gdk.Pixbuf) {
-		br.App.ChatView.SetAvatar(jid, pixbuf)
+	br.Contacts.SetOnAvatarSet(func(jid string, tex *gdk.Texture) {
+		br.App.ChatView.SetAvatar(jid, tex)
+		br.App.Sidebar.SetAvatar(jid, tex)
 	})
 
 	br.Media.SetOnMediaDownloaded(func(task DownloadTask, data []byte, path string) {
@@ -141,25 +155,11 @@ func (br *Bridge) setupServiceHandlers() {
 					return
 				}
 
-				if data == nil {
-					data, _ = os.ReadFile(path)
-				}
-				if data == nil {
-					return
-				}
+				pixbuf, _ := gdkpixbuf.NewPixbufFromFile(path)
+				if pixbuf == nil { return }
+				tex := gdk.NewTextureForPixbuf(pixbuf)
 
-				loader, lErr := gdk.PixbufLoaderNew()
-				if lErr != nil {
-					return
-				}
-				if _, err := loader.Write(data); err != nil {
-					loader.Close()
-					return
-				}
-				loader.Close()
-				pixbuf, _ := loader.GetPixbuf()
-
-				br.App.ChatView.UpdateMessageImage(task.ID, pixbuf)
+				br.App.ChatView.UpdateMessageImage(task.ID, tex)
 			}
 		})
 	})
@@ -172,12 +172,15 @@ func (br *Bridge) handleChatSelected(jidStr string) {
 	if contact, err := br.DB.GetContact(jid.String()); err == nil {
 		headerName := contact.DisplayName()
 		if jid.Server == types.GroupServer { headerName = "[G] " + headerName }
-		br.App.ChatView.SetHeader(headerName, nil)
+		br.App.ChatView.SetHeader(headerName, br.Contacts.GetAvatar(jid.String()))
 	} else {
-		br.App.ChatView.SetHeader(jid.String(), nil)
+		br.App.ChatView.SetHeader(jid.String(), br.Contacts.GetAvatar(jid.String()))
 	}
 
 	br.refreshMessages(jid)
+	
+	// Mark as read
+	go br.Backend.MarkRead(br.ctx, jid, []string{}, types.JID{}, time.Now())
 
 	if strings.HasSuffix(jid.String(), "@lid") && !br.isSyncing {
 		go br.Contacts.ResolveLIDMapping(jid.String())
@@ -227,6 +230,7 @@ func (br *Bridge) handleSendMessage(text string, replyToID string) {
 	glib.IdleAdd(func() {
 		if br.selectedJID != nil && br.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
 			isCont := br.lastSender == br.Backend.Device.ID.ToNonAD().String()
+			// For own messages, name is empty but avatar should show if available
 			br.App.ChatView.AddMessage("temp", "", "", text, true, isCont, "pending", now, nil, qID, qSender, qContent)
 			br.lastSender = br.Backend.Device.ID.ToNonAD().String()
 			br.App.ChatView.ScrollToBottom()
@@ -271,12 +275,30 @@ func (br *Bridge) handleSendMessage(text string, replyToID string) {
 }
 
 func (br *Bridge) handleSearch(t string) {
+	br.sidebarMutex.Lock()
+	br.searchSerial++
+	serial := br.searchSerial
+	br.sidebarMutex.Unlock()
+
 	go func() {
 		var c []database.Contact
-		if t == "" {
-			c, _ = br.DB.GetAllContacts(100)
+		var err error
+		if strings.TrimSpace(t) == "" {
+			c, err = br.DB.GetAllContacts(100)
 		} else {
-			c, _ = br.DB.SearchContacts(t, 100)
+			c, err = br.DB.SearchContacts(t, 200)
+		}
+		
+		br.sidebarMutex.Lock()
+		if serial != br.searchSerial {
+			br.sidebarMutex.Unlock()
+			return
+		}
+		br.sidebarMutex.Unlock()
+
+		if err != nil {
+			fmt.Printf("Bridge: Search failed: %v\n", err)
+			return
 		}
 		br.refreshSidebar(c)
 	}()
@@ -307,7 +329,7 @@ func (br *Bridge) refreshMessages(jid types.JID) {
 			if br.selectedJID == nil || br.selectedJID.ToNonAD().String() != jid.ToNonAD().String() { return }
 			br.App.ChatView.Clear(); br.lastSender = "" 
 			for _, m := range msgs {
-				tStr := m.Timestamp.Format("15:04"); sName := ""; var av *gdk.Pixbuf; isCont := m.SenderJID == br.lastSender
+				tStr := m.Timestamp.Format("15:04"); sName := ""; var av *gdk.Texture; isCont := m.SenderJID == br.lastSender
 				if jid.Server == types.GroupServer && !m.IsFromMe {
 					if !isCont {
 						sName = br.Contacts.ResolveSenderName(m.SenderJID)
@@ -322,25 +344,24 @@ func (br *Bridge) refreshMessages(jid types.JID) {
 				}
 
 				if m.Type == "image" || m.Type == "sticker" || m.Type == "video" {
-					var pbImg, pbThumb *gdk.Pixbuf
-					pbThumb = br.bytesToPixbuf(m.Thumbnail)
+					var texImg, texThumb *gdk.Texture
+					texThumb = br.bytesToTexture(m.Thumbnail)
 					
 					if _, err := os.Stat(m.Content); err == nil {
-						data, _ := os.ReadFile(m.Content)
-						loader, lErr := gdk.PixbufLoaderNew()
-						if lErr == nil {
-							if _, err := loader.Write(data); err == nil {
-								loader.Close(); pbImg, _ = loader.GetPixbuf()
-							} else { loader.Close() }
+						pixbuf, _ := gdkpixbuf.NewPixbufFromFile(m.Content)
+						if pixbuf != nil {
+							texImg = gdk.NewTextureForPixbuf(pixbuf)
 						}
 					}
 					
+					mW := int(m.MediaWidth.Int64); mH := int(m.MediaHeight.Int64)
+
 					if m.Type == "image" {
-						br.App.ChatView.AddImage(m.ID, m.SenderJID, sName, pbImg, pbThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+						br.App.ChatView.AddImage(m.ID, m.SenderJID, sName, texImg, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
 					} else if m.Type == "sticker" {
-						br.App.ChatView.AddSticker(m.ID, m.SenderJID, sName, pbImg, pbThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+						br.App.ChatView.AddSticker(m.ID, m.SenderJID, sName, texImg, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
 					} else if m.Type == "video" {
-						br.App.ChatView.AddVideo(m.ID, m.SenderJID, sName, pbThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+						br.App.ChatView.AddVideo(m.ID, m.SenderJID, sName, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
 					}
 				} else if m.Type == "audio" {
 					br.App.ChatView.AddAudio(m.ID, m.SenderJID, sName, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
@@ -385,13 +406,18 @@ func (br *Bridge) Start(ctx context.Context) {
 }
 
 func (br *Bridge) refreshSidebar(contacts []database.Contact) {
-	br.sidebarMutex.Lock(); defer br.sidebarMutex.Unlock()
 	glib.IdleAdd(func() {
 		br.App.Sidebar.ClearChats()
 		for _, c := range contacts {
 			prefix := ""
-			if c.IsGroup { prefix = "[G] " }
+			if c.IsGroup.Valid && c.IsGroup.Bool { prefix = "[G] " }
 			br.App.Sidebar.AddChat(c.JID, prefix+c.DisplayName())
+			
+			// ONLY load if we already have it in cache/disk. 
+			// Do NOT trigger network fetch for every search result.
+			if tex := br.Contacts.GetAvatarNoFetch(c.JID); tex != nil {
+				br.App.Sidebar.SetAvatar(c.JID, tex)
+			}
 		}
 	})
 }
@@ -420,7 +446,7 @@ func (br *Bridge) handleHistorySync(v *backend.HistorySyncEvent) {
 	go func() {
 		for _, conv := range v.Data.Data.GetConversations() {
 			chatJID, _ := types.ParseJID(conv.GetID()); chatJID = chatJID.ToNonAD()
-			br.DB.SaveContact(database.Contact{JID: chatJID.String(), IsGroup: chatJID.Server == types.GroupServer})
+			br.DB.SaveContact(database.Contact{JID: chatJID.String(), IsGroup: sql.NullBool{Bool: chatJID.Server == types.GroupServer, Valid: true}})
 			for _, hMsg := range conv.GetMessages() {
 				pMsg, err := br.Backend.Client.ParseWebMessage(chatJID, hMsg.GetMessage())
 				if err == nil {
@@ -450,7 +476,7 @@ func (br *Bridge) handleMessage(v *backend.MessageEvent) {
 		glib.IdleAdd(func() {
 			br.App.Sidebar.MoveChatToTop(jid)
 			if br.selectedJID != nil && resolvedChat.ToNonAD().String() == br.selectedJID.ToNonAD().String() {
-				tStr := msg.Info.Timestamp.Format("15:04"); sName := ""; var av *gdk.Pixbuf; isG := msg.Info.Chat.Server == types.GroupServer
+				tStr := msg.Info.Timestamp.Format("15:04"); sName := ""; var av *gdk.Texture; isG := msg.Info.Chat.Server == types.GroupServer
 				
 				resolvedSender := br.resolveJID(msg.Info.Sender)
 				sJID := resolvedSender.ToNonAD().String()
@@ -483,15 +509,19 @@ func (br *Bridge) handleMessage(v *backend.MessageEvent) {
 					}
 				}
 				
+				var mW, mH int
 				if img := msg.Message.GetImageMessage(); img != nil {
-					pbThumb := br.bytesToPixbuf(img.GetJPEGThumbnail())
-					br.App.ChatView.AddImage(msg.Info.ID, sJID, sName, nil, pbThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+					mW = int(img.GetWidth()); mH = int(img.GetHeight())
+					texThumb := br.bytesToTexture(img.GetJPEGThumbnail())
+					br.App.ChatView.AddImage(msg.Info.ID, sJID, sName, nil, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
 				} else if stkr := msg.Message.GetStickerMessage(); stkr != nil {
-					pbThumb := br.bytesToPixbuf(stkr.GetPngThumbnail())
-					br.App.ChatView.AddSticker(msg.Info.ID, sJID, sName, nil, pbThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+					mW = int(stkr.GetWidth()); mH = int(stkr.GetHeight())
+					texThumb := br.bytesToTexture(stkr.GetPngThumbnail())
+					br.App.ChatView.AddSticker(msg.Info.ID, sJID, sName, nil, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
 				} else if vid := msg.Message.GetVideoMessage(); vid != nil {
-					pbThumb := br.bytesToPixbuf(vid.GetJPEGThumbnail())
-					br.App.ChatView.AddVideo(msg.Info.ID, sJID, sName, pbThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+					mW = int(vid.GetWidth()); mH = int(vid.GetHeight())
+					texThumb := br.bytesToTexture(vid.GetJPEGThumbnail())
+					br.App.ChatView.AddVideo(msg.Info.ID, sJID, sName, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
 				} else if aud := msg.Message.GetAudioMessage(); aud != nil {
 					br.App.ChatView.AddAudio(msg.Info.ID, sJID, sName, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
 				} else if doc := msg.Message.GetDocumentMessage(); doc != nil {
@@ -559,15 +589,14 @@ func (br *Bridge) handleDownloadMedia(id string) {
 	})
 }
 
-func (br *Bridge) bytesToPixbuf(data []byte) *gdk.Pixbuf {
+func (br *Bridge) bytesToTexture(data []byte) *gdk.Texture {
 	if len(data) == 0 { return nil }
-	loader, err := gdk.PixbufLoaderNew()
-	if err != nil { return nil }
-	defer loader.Close()
-	_, err = loader.Write(data)
-	if err != nil { return nil }
-	pix, _ := loader.GetPixbuf()
-	return pix
+	loader := gdkpixbuf.NewPixbufLoader()
+	loader.Write(data)
+	loader.Close()
+	pix := loader.Pixbuf()
+	if pix == nil { return nil }
+	return gdk.NewTextureForPixbuf(pix)
 }
 
 func (br *Bridge) handleConnected() {
@@ -602,20 +631,33 @@ func (br *Bridge) handleContact(v *backend.ContactEvent) {
 	if v.Info.Action != nil {
 		jid := v.Info.JID.ToNonAD().String(); pnJID := v.Info.Action.GetPnJID()
 		if pnJID != "" && strings.HasSuffix(jid, "@lid") { br.DB.MergeLID(pnJID+"@s.whatsapp.net", jid) }
-		br.DB.SaveContact(database.Contact{JID: jid, SavedName: sql.NullString{String: v.Info.Action.GetFullName(), Valid: v.Info.Action.GetFullName() != ""}, PushName: v.Info.Action.GetFirstName()})
+		br.DB.SaveContact(database.Contact{JID: jid, SavedName: sql.NullString{String: v.Info.Action.GetFullName(), Valid: v.Info.Action.GetFullName() != ""}, PushName: sql.NullString{String: v.Info.Action.GetFirstName(), Valid: v.Info.Action.GetFirstName() != ""}})
 	}
 }
 
 func (br *Bridge) handlePushName(v *backend.PushNameEvent) {
-	br.DB.SaveContact(database.Contact{JID: v.Info.JID.ToNonAD().String(), PushName: v.Info.NewPushName})
+	br.DB.SaveContact(database.Contact{JID: v.Info.JID.ToNonAD().String(), PushName: sql.NullString{String: v.Info.NewPushName, Valid: v.Info.NewPushName != ""}})
 }
 
 func (br *Bridge) persistMediaMessage(msg *events.Message, msgType, path string) {
 	chatJID := msg.Info.Chat.ToNonAD().String(); senderJID := msg.Info.Sender.ToNonAD().String()
 	var thumb []byte
-	if img := msg.Message.GetImageMessage(); img != nil { thumb = img.GetJPEGThumbnail()
-	} else if stkr := msg.Message.GetStickerMessage(); stkr != nil { thumb = stkr.GetPngThumbnail() }
-	br.DB.SaveMessage(database.Message{ID: msg.Info.ID, ChatJID: chatJID, SenderJID: senderJID, Content: path, Type: msgType, Timestamp: msg.Info.Timestamp, IsFromMe: msg.Info.IsFromMe, Thumbnail: thumb})
+	var width, height int64
+	if img := msg.Message.GetImageMessage(); img != nil { 
+		thumb = img.GetJPEGThumbnail()
+		width = int64(img.GetWidth())
+		height = int64(img.GetHeight())
+	} else if stkr := msg.Message.GetStickerMessage(); stkr != nil { 
+		thumb = stkr.GetPngThumbnail() 
+		width = int64(stkr.GetWidth())
+		height = int64(stkr.GetHeight())
+	}
+	br.DB.SaveMessage(database.Message{
+		ID: msg.Info.ID, ChatJID: chatJID, SenderJID: senderJID, Content: path, Type: msgType, 
+		Timestamp: msg.Info.Timestamp, IsFromMe: msg.Info.IsFromMe, Thumbnail: thumb,
+		MediaWidth: sql.NullInt64{Int64: width, Valid: width > 0},
+		MediaHeight: sql.NullInt64{Int64: height, Valid: height > 0},
+	})
 	br.DB.UpdateContactTimestamp(chatJID, msg.Info.Timestamp)
 }
 
@@ -654,6 +696,8 @@ func (br *Bridge) persistMessage(msg *events.Message) {
 		metadata.MediaEncSHA256 = img.GetFileEncSHA256()
 		metadata.MediaSHA256 = img.GetFileSHA256()
 		metadata.MediaLength = sql.NullInt64{Int64: int64(img.GetFileLength()), Valid: true}
+		metadata.MediaWidth = sql.NullInt64{Int64: int64(img.GetWidth()), Valid: true}
+		metadata.MediaHeight = sql.NullInt64{Int64: int64(img.GetHeight()), Valid: true}
 	} else if stkr := msg.Message.GetStickerMessage(); stkr != nil {
 		msgType = "sticker"; thumb = stkr.GetPngThumbnail()
 		metadata.MediaURL = sql.NullString{String: stkr.GetURL(), Valid: stkr.GetURL() != ""}
@@ -663,6 +707,8 @@ func (br *Bridge) persistMessage(msg *events.Message) {
 		metadata.MediaEncSHA256 = stkr.GetFileEncSHA256()
 		metadata.MediaSHA256 = stkr.GetFileSHA256()
 		metadata.MediaLength = sql.NullInt64{Int64: int64(stkr.GetFileLength()), Valid: true}
+		metadata.MediaWidth = sql.NullInt64{Int64: int64(stkr.GetWidth()), Valid: true}
+		metadata.MediaHeight = sql.NullInt64{Int64: int64(stkr.GetHeight()), Valid: true}
 	} else if vid := msg.Message.GetVideoMessage(); vid != nil {
 		msgType = "video"; thumb = vid.GetJPEGThumbnail()
 		metadata.MediaURL = sql.NullString{String: vid.GetURL(), Valid: vid.GetURL() != ""}
@@ -672,6 +718,8 @@ func (br *Bridge) persistMessage(msg *events.Message) {
 		metadata.MediaEncSHA256 = vid.GetFileEncSHA256()
 		metadata.MediaSHA256 = vid.GetFileSHA256()
 		metadata.MediaLength = sql.NullInt64{Int64: int64(vid.GetFileLength()), Valid: true}
+		metadata.MediaWidth = sql.NullInt64{Int64: int64(vid.GetWidth()), Valid: true}
+		metadata.MediaHeight = sql.NullInt64{Int64: int64(vid.GetHeight()), Valid: true}
 	} else if doc := msg.Message.GetDocumentMessage(); doc != nil {
 		msgType = "document"; thumb = doc.GetJPEGThumbnail()
 		metadata.MediaURL = sql.NullString{String: doc.GetURL(), Valid: doc.GetURL() != ""}
@@ -762,7 +810,7 @@ func (br *Bridge) persistMessage(msg *events.Message) {
 		pushName := msg.Info.PushName; fullName := ""
 		contactInfo, err := br.Backend.Client.Store.Contacts.GetContact(br.ctx, msg.Info.Sender)
 		if err == nil && contactInfo.Found { if pushName == "" { pushName = contactInfo.PushName }; fullName = contactInfo.FullName }
-		if pushName != "" || fullName != "" { br.DB.SaveContact(database.Contact{JID: senderJID, SavedName: sql.NullString{String: fullName, Valid: fullName != ""}, PushName: pushName}) }
+		if pushName != "" || fullName != "" { br.DB.SaveContact(database.Contact{JID: senderJID, SavedName: sql.NullString{String: fullName, Valid: fullName != ""}, PushName: sql.NullString{String: pushName, Valid: pushName != ""}}) }
 	}
 }
 

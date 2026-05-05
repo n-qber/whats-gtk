@@ -1,16 +1,19 @@
 package bubbles
 
 import (
-	"github.com/gotk3/gotk3/gdk"
-	"github.com/gotk3/gotk3/glib"
-	"github.com/gotk3/gotk3/gtk"
-	"github.com/gotk3/gotk3/pango"
+	"strings"
+
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/glib/v2"
+	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+	"github.com/diamondburned/gotk4/pkg/pango"
+	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 )
 
 type Bubble interface {
-	Widget() gtk.IWidget
-	UpdateAvatar(pixbuf *gdk.Pixbuf)
-	UpdateImage(pixbuf *gdk.Pixbuf)
+	Widget() gtk.Widgetter
+	UpdateAvatar(tex *gdk.Texture)
+	UpdateImage(tex *gdk.Texture)
 	SetStatus(status string)
 	SetReactions(reactions []string)
 	SetQuotedMessage(id, sender, content string)
@@ -18,143 +21,237 @@ type Bubble interface {
 	Sender() string
 	Content() string
 	SetOnQuotedClick(f func(id string))
+	SetOnReplyRequest(f func())
+	SetOnReactionRequest(f func(emoji string))
 }
 
 type baseBubble struct {
 	Box            *gtk.Box
 	BubbleBox      *gtk.Box
 	QuotedBox      *gtk.Box
-	QuotedEventBox *gtk.EventBox
+	QuotedEventBox *gtk.GestureClick
 	StatusLabel    *gtk.Label
-	AvatarImg      *gtk.Image
+	AvatarImg      *adw.Avatar
 	ReactionsBox   *gtk.Box
+	ReactionsBtn   *gtk.Button
 	isSelf         bool
 	sender         string
 	content        string
 	quotedID       string
 	onQuotedClick  func(id string)
+	onReplyRequest func()
+	onReactionRequest func(emoji string)
 }
 
 func (b *baseBubble) Sender() string  { return b.sender }
 func (b *baseBubble) Content() string { return b.content }
 func (b *baseBubble) SetOnQuotedClick(f func(id string)) { b.onQuotedClick = f }
+func (b *baseBubble) SetOnReplyRequest(f func()) { b.onReplyRequest = f }
+func (b *baseBubble) SetOnReactionRequest(f func(emoji string)) { b.onReactionRequest = f }
+func (b *baseBubble) IsSelf() bool { return b.isSelf }
+func (b *baseBubble) Widget() gtk.Widgetter { return b.Box }
 
-func newBaseBubble(name string, contentText string, content gtk.IWidget, isSelf bool, hasBubble bool, status string, time string, avatar *gdk.Pixbuf) (*baseBubble, error) {
-	alignmentBox, err := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 8)
-	if err != nil {
-		return nil, err
-	}
-
-	var avatarImg *gtk.Image
+func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSelf bool, hasBubble bool, status string, time string, avatar *gdk.Texture) (*baseBubble, error) {
+	alignmentBox := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	
+	var avatarImg *adw.Avatar
 	if !isSelf {
-		avatarImg, _ = gtk.ImageNew()
-		if avatar != nil {
-			ApplyCircularAvatar(avatarImg, avatar, 36)
-		} else {
-			avatarImg.SetSizeRequest(36, 36)
+		cleanName := name
+		if idx := strings.Index(name, " <span"); idx != -1 {
+			cleanName = name[:idx]
 		}
-		avatarImg.SetVAlign(gtk.ALIGN_START)
+		avatarImg = adw.NewAvatar(36, cleanName, true)
+		if avatar != nil {
+			avatarImg.SetCustomImage(avatar)
+		}
+		avatarImg.SetVAlign(gtk.AlignStart)
 		if name == "" {
 			avatarImg.SetOpacity(0)
 		}
-		alignmentBox.PackStart(avatarImg, false, false, 0)
+		alignmentBox.Append(avatarImg)
 	}
 
-	bubbleBox, _ := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 2)
-	bCtx, _ := bubbleBox.GetStyleContext()
+	bubbleBox := gtk.NewBox(gtk.OrientationVertical, 2)
 	if hasBubble {
-		bCtx.AddClass("message-bubble")
+		bubbleBox.AddCSSClass("message-bubble")
+		if isSelf {
+			bubbleBox.AddCSSClass("bubble-self")
+			bubbleBox.SetHAlign(gtk.AlignEnd)
+		} else {
+			bubbleBox.AddCSSClass("bubble-other")
+			bubbleBox.SetHAlign(gtk.AlignStart)
+		}
 	}
 
 	if name != "" && !isSelf {
-		nameLabel, _ := gtk.LabelNew("")
+		nameLabel := gtk.NewLabel("")
 		nameLabel.SetMarkup(name)
-		nCtx, _ := nameLabel.GetStyleContext()
-		nCtx.AddClass("message-sender-name")
+		nameLabel.AddCSSClass("message-sender-name")
 		nameLabel.SetXAlign(0)
-		bubbleBox.PackStart(nameLabel, false, false, 0)
+		bubbleBox.Append(nameLabel)
 	}
 
-	quotedEventBox, _ := gtk.EventBoxNew()
-	quotedBox, _ := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 2)
-	quotedEventBox.Add(quotedBox)
-	quotedEventBox.Hide()
-	bubbleBox.PackStart(quotedEventBox, false, false, 0)
-
-	// Use Overlay for content and status
-	overlay, _ := gtk.OverlayNew()
+	quotedBox := gtk.NewBox(gtk.OrientationVertical, 2)
+	quotedBox.SetFocusable(true)
+	quotedBox.Hide()
 	
-	contentBox, _ := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
-	contentBox.PackStart(content, false, false, 0)
-	overlay.Add(contentBox)
-
-	statusBox, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 4)
-	sbc, _ := statusBox.GetStyleContext()
-	sbc.AddClass("status-overlay")
-	statusBox.SetHAlign(gtk.ALIGN_END)
-	statusBox.SetVAlign(gtk.ALIGN_END)
+	click := gtk.NewGestureClick()
+	quotedBox.AddController(click)
 	
-	timeLabel, _ := gtk.LabelNew(time)
-	tCtx, _ := timeLabel.GetStyleContext()
-	tCtx.AddClass("message-time")
-	statusBox.PackEnd(timeLabel, false, false, 0)
+	bubbleBox.Append(quotedBox)
+
+	statusBox := gtk.NewBox(gtk.OrientationHorizontal, 4)
+	statusBox.AddCSSClass("status-overlay")
+	statusBox.SetHAlign(gtk.AlignEnd)
+	statusBox.SetVAlign(gtk.AlignEnd)
+	statusBox.SetCanTarget(false)
+	
+	timeLabel := gtk.NewLabel(time)
+	timeLabel.AddCSSClass("message-time")
+	statusBox.Append(timeLabel)
 
 	var statusLabel *gtk.Label
 	if isSelf {
-		statusLabel, _ = gtk.LabelNew(getStatusIcon(status))
-		sCtx, _ := statusLabel.GetStyleContext()
-		sCtx.AddClass("receipt")
-		applyStatusClass(sCtx, status)
-		statusBox.PackEnd(statusLabel, false, false, 0)
+		statusLabel = gtk.NewLabel(getStatusIcon(status))
+		statusLabel.AddCSSClass("receipt")
+		applyStatusClass(statusLabel, status)
+		statusBox.Append(statusLabel)
 	}
 
-	overlay.AddOverlay(statusBox)
-	bubbleBox.PackStart(overlay, false, false, 0)
-
-	reactionsBox, _ := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 2)
-	reactionsBox.SetNoShowAll(true)
-	reactionsBox.SetHAlign(gtk.ALIGN_END)
-	rCtx, _ := reactionsBox.GetStyleContext()
-	rCtx.AddClass("reactions-container")
-	reactionsBox.Hide()
-	bubbleBox.PackStart(reactionsBox, false, false, 0)
-
-	if isSelf {
-		if hasBubble {
-			bCtx.AddClass("bubble-self")
-		}
-		alignmentBox.PackEnd(bubbleBox, false, false, 0)
-	} else {
-		if hasBubble {
-			bCtx.AddClass("bubble-other")
-		}
-		alignmentBox.PackStart(bubbleBox, false, false, 0)
-	}
+	isPhoto := contentText == "[Image]" || contentText == "[Video]"
 	
-	alignmentBox.ShowAll()
-	quotedEventBox.Hide()
-
-	bb := &baseBubble{
-		Box:            alignmentBox,
-		BubbleBox:      bubbleBox,
-		QuotedBox:      quotedBox,
-		QuotedEventBox: quotedEventBox,
-		StatusLabel:    statusLabel,
-		AvatarImg:      avatarImg,
-		ReactionsBox:   reactionsBox,
-		isSelf:         isSelf,
-		sender:         name,
-		content:        contentText,
+	if isPhoto {
+		overlay := gtk.NewOverlay()
+		overlay.SetChild(content)
+		statusBox.SetMarginEnd(6)
+		statusBox.SetMarginBottom(4)
+		overlay.AddOverlay(statusBox)
+		bubbleBox.Append(overlay)
+	} else {
+		contentStatusBox := gtk.NewBox(gtk.OrientationHorizontal, 8)
+		contentStatusBox.SetVAlign(gtk.AlignEnd)
+		if l, ok := content.(*gtk.Label); ok {
+			l.SetHExpand(false)
+			l.SetXAlign(0)
+			l.SetWrap(true)
+			l.SetWrapMode(pango.WrapWordChar)
+		}
+		contentStatusBox.Append(content)
+		contentStatusBox.Append(statusBox)
+		bubbleBox.Append(contentStatusBox)
 	}
 
-	quotedEventBox.Connect("button-press-event", func(eb *gtk.EventBox, event *gdk.Event) bool {
-		if bb.onQuotedClick != nil && bb.quotedID != "" {
-			bb.onQuotedClick(bb.quotedID)
-			return true
+	reactionsBox := gtk.NewBox(gtk.OrientationHorizontal, 2)
+	reactionsBox.SetHAlign(gtk.AlignEnd)
+	reactionsBox.AddCSSClass("reactions-container")
+	reactionsBox.Hide()
+	reactionsBox.SetCanTarget(false)
+	
+	finalBox := gtk.NewBox(gtk.OrientationVertical, 0)
+	finalBox.Append(bubbleBox)
+	finalBox.Append(reactionsBox)
+
+	doubleClick := gtk.NewGestureClick()
+	doubleClick.SetButton(1)
+	finalBox.AddController(doubleClick)
+
+	reactionsBtn := gtk.NewButtonFromIconName("face-smile-symbolic")
+	reactionsBtn.SetHasFrame(false)
+	reactionsBtn.SetOpacity(0) // Start hidden via opacity to keep it clickable
+	reactionsBtn.AddCSSClass("message-reactions-btn")
+	reactionsBtn.SetCanTarget(true)
+	
+	hover := gtk.NewEventControllerMotion()
+	alignmentBox.AddController(hover)
+
+	var bb *baseBubble
+
+	popover := gtk.NewPopover()
+	hbox := gtk.NewBox(gtk.OrientationHorizontal, 5)
+	hbox.SetMarginTop(6); hbox.SetMarginBottom(6); hbox.SetMarginStart(6); hbox.SetMarginEnd(6)
+	
+	emojis := []string{"👍", "❤️", "😂", "😮", "😢", "🙏"}
+	for _, e := range emojis {
+		btn := gtk.NewButtonWithLabel(e)
+		btn.SetHasFrame(false)
+		btn.ConnectClicked(func() {
+			if bb != nil && bb.onReactionRequest != nil { bb.onReactionRequest(e) }
+			popover.Popdown()
+		})
+		hbox.Append(btn)
+	}
+	plusBtn := gtk.NewButtonFromIconName("list-add-symbolic")
+	plusBtn.SetHasFrame(false)
+	plusBtn.ConnectClicked(func() {
+		popover.Popdown()
+		fullPopover := gtk.NewPopover()
+		fullPopover.SetParent(reactionsBtn)
+		flowBox := gtk.NewFlowBox()
+		flowBox.SetMaxChildrenPerLine(8)
+		allEmojis := []string{
+			"👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "✨", 
+			"👏", "🎉", "✅", "❌", "💯", "🚀", "💡", "👀",
+			"🤣", "😍", "😭", "😊", "🥳", "🤔", "🙄", "😱",
 		}
-		return false
+		for _, e := range allEmojis {
+			btn := gtk.NewButtonWithLabel(e)
+			btn.SetHasFrame(false)
+			btn.ConnectClicked(func() {
+				if bb != nil && bb.onReactionRequest != nil { bb.onReactionRequest(e) }
+				fullPopover.Popdown()
+			})
+			flowBox.Append(btn)
+		}
+		scrolled := gtk.NewScrolledWindow()
+		scrolled.SetSizeRequest(240, 200)
+		scrolled.SetChild(flowBox)
+		fullPopover.SetChild(scrolled)
+		fullPopover.Popup()
+	})
+	hbox.Append(plusBtn)
+	popover.SetChild(hbox)
+	popover.SetParent(reactionsBtn)
+
+	bb = &baseBubble{
+		Box:          alignmentBox,
+		BubbleBox:    bubbleBox,
+		QuotedBox:    quotedBox,
+		StatusLabel:  statusLabel,
+		AvatarImg:    avatarImg,
+		ReactionsBox: reactionsBox,
+		ReactionsBtn: reactionsBtn,
+		isSelf:       isSelf,
+		sender:       name,
+		content:      contentText,
+	}
+
+	hover.ConnectEnter(func(x, y float64) { reactionsBtn.SetOpacity(1) })
+	hover.ConnectLeave(func() { if !popover.Visible() { reactionsBtn.SetOpacity(0) } })
+
+	reactionsBtn.ConnectClicked(func() {
+		popover.Popup()
 	})
 
+	doubleClick.ConnectPressed(func(n int, x, y float64) {
+		if n == 2 && bb.onReplyRequest != nil { bb.onReplyRequest() }
+	})
+
+	click.ConnectPressed(func(n int, x, y float64) {
+		if bb.onQuotedClick != nil && bb.quotedID != "" { bb.onQuotedClick(bb.quotedID) }
+	})
+
+	if isSelf {
+		alignmentBox.Prepend(reactionsBtn)
+		alignmentBox.Append(finalBox)
+		alignmentBox.SetHAlign(gtk.AlignEnd)
+	} else {
+		alignmentBox.Append(finalBox)
+		alignmentBox.Append(reactionsBtn)
+		alignmentBox.SetHAlign(gtk.AlignStart)
+	}
+
+	alignmentBox.Show()
+	quotedBox.Hide()
 	return bb, nil
 }
 
@@ -162,114 +259,87 @@ func (b *baseBubble) SetQuotedMessage(id, sender, content string) {
 	b.quotedID = id
 	if id == "" {
 		glib.IdleAdd(func() {
-			qCtx, _ := b.QuotedBox.GetStyleContext()
-			qCtx.RemoveClass("quoted-message")
-			b.QuotedEventBox.Hide()
+			b.QuotedBox.RemoveCSSClass("quoted-message")
+			b.QuotedBox.Hide()
 		})
 		return
 	}
-
 	glib.IdleAdd(func() {
-		children := b.QuotedBox.GetChildren()
-		children.Foreach(func(item interface{}) {
-			b.QuotedBox.Remove(item.(gtk.IWidget))
-		})
-
-		qCtx, _ := b.QuotedBox.GetStyleContext()
-		qCtx.AddClass("quoted-message")
-
-		senderLabel, _ := gtk.LabelNew("")
+		for {
+			child := b.QuotedBox.FirstChild()
+			if child == nil { break }
+			b.QuotedBox.Remove(child)
+		}
+		b.QuotedBox.AddCSSClass("quoted-message")
+		senderLabel := gtk.NewLabel("")
 		senderLabel.SetMarkup("<b>" + sender + "</b>")
 		senderLabel.SetXAlign(0)
-		sCtx, _ := senderLabel.GetStyleContext()
-		sCtx.AddClass("quoted-sender")
-
-		contentLabel, _ := gtk.LabelNew(content)
+		senderLabel.AddCSSClass("quoted-sender")
+		contentLabel := gtk.NewLabel(content)
 		contentLabel.SetXAlign(0)
-		contentLabel.SetLineWrap(true)
-		contentLabel.SetLineWrapMode(pango.WRAP_WORD_CHAR)
+		contentLabel.SetWrap(true)
+		contentLabel.SetWrapMode(pango.WrapWordChar)
 		contentLabel.SetMaxWidthChars(40)
-		contentLabel.SetEllipsize(pango.ELLIPSIZE_END)
+		contentLabel.SetEllipsize(pango.EllipsizeEnd)
 		contentLabel.SetLines(3)
-
-		b.QuotedBox.PackStart(senderLabel, false, false, 0)
-		b.QuotedBox.PackStart(contentLabel, false, false, 0)
-		b.QuotedBox.ShowAll()
-		b.QuotedEventBox.Show()
+		b.QuotedBox.Append(senderLabel)
+		b.QuotedBox.Append(contentLabel)
+		b.QuotedBox.Show()
 	})
 }
 
 func (b *baseBubble) SetReactions(reactions []string) {
 	glib.IdleAdd(func() {
-		children := b.ReactionsBox.GetChildren()
-		children.Foreach(func(item interface{}) {
-			b.ReactionsBox.Remove(item.(gtk.IWidget))
-		})
-
+		for {
+			child := b.ReactionsBox.FirstChild()
+			if child == nil { break }
+			b.ReactionsBox.Remove(child)
+		}
 		if len(reactions) == 0 {
 			b.ReactionsBox.Hide()
 			return
 		}
-
 		b.ReactionsBox.Show()
 		for _, r := range reactions {
-			label, _ := gtk.LabelNew(r)
-			lCtx, _ := label.GetStyleContext()
-			lCtx.AddClass("reaction-badge")
-			b.ReactionsBox.PackStart(label, false, false, 0)
+			label := gtk.NewLabel(r)
+			label.AddCSSClass("reaction-badge")
+			b.ReactionsBox.Append(label)
 		}
-		b.ReactionsBox.ShowAll()
 	})
 }
 
-func (b *baseBubble) UpdateAvatar(pixbuf *gdk.Pixbuf) {
-	if b.AvatarImg != nil && pixbuf != nil {
-		ApplyCircularAvatar(b.AvatarImg, pixbuf, 36)
-	}
+func (b *baseBubble) UpdateAvatar(tex *gdk.Texture) {
+	if b.AvatarImg != nil && tex != nil { b.AvatarImg.SetCustomImage(tex) }
 }
 
-func (b *baseBubble) UpdateImage(pixbuf *gdk.Pixbuf) {}
+func (b *baseBubble) UpdateImage(tex *gdk.Texture) {}
 
 func (b *baseBubble) SetStatus(status string) {
 	if b.StatusLabel != nil {
 		b.StatusLabel.SetText(getStatusIcon(status))
-		sCtx, _ := b.StatusLabel.GetStyleContext()
-		sCtx.RemoveClass("receipt-sent")
-		sCtx.RemoveClass("receipt-delivered")
-		sCtx.RemoveClass("receipt-read")
-		sCtx.RemoveClass("receipt-pending")
-		applyStatusClass(sCtx, status)
+		b.StatusLabel.RemoveCSSClass("receipt-sent")
+		b.StatusLabel.RemoveCSSClass("receipt-delivered")
+		b.StatusLabel.RemoveCSSClass("receipt-read")
+		b.StatusLabel.RemoveCSSClass("receipt-pending")
+		applyStatusClass(b.StatusLabel, status)
 	}
 }
-
-func (b *baseBubble) Widget() gtk.IWidget { return b.Box }
-
-func (b *baseBubble) IsSelf() bool { return b.isSelf }
 
 func getStatusIcon(status string) string {
 	switch status {
-	case "read":
-		return "✓✓"
-	case "delivered":
-		return "✓✓"
-	case "sent":
-		return "✓"
-	case "pending":
-		return "🕒"
-	default:
-		return ""
+	case "read": return "✓✓"
+	case "delivered": return "✓✓"
+	case "sent": return "✓"
+	case "pending": return "🕒"
+	default: return ""
 	}
 }
 
-func applyStatusClass(sCtx *gtk.StyleContext, status string) {
+func applyStatusClass(l *gtk.Label, status string) {
 	switch status {
-	case "read":
-		sCtx.AddClass("receipt-read")
-	case "delivered":
-		sCtx.AddClass("receipt-delivered")
-	case "sent":
-		sCtx.AddClass("receipt-sent")
-	case "pending":
-		sCtx.AddClass("receipt-pending")
+	case "read": l.AddCSSClass("receipt-read")
+	case "delivered": l.AddCSSClass("receipt-delivered")
+	case "sent": l.AddCSSClass("receipt-sent")
+	case "pending": l.AddCSSClass("receipt-pending")
 	}
 }

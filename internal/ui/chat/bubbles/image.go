@@ -1,58 +1,55 @@
 package bubbles
 
 import (
-	"github.com/gotk3/gotk3/gdk"
-	"github.com/gotk3/gotk3/gtk"
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
 type ImageBubble struct {
 	*baseBubble
-	image             *gtk.Image
+	picture           *gtk.Picture
 	OnDownloadRequest func()
 }
+func NewImageBubble(name string, tex, thumb *gdk.Texture, isSelf bool, status, time string, avatar *gdk.Texture, realW, realH int) (*ImageBubble, error) {
+	picture := gtk.NewPicture()
+	picture.SetContentFit(gtk.ContentFitScaleDown)
+	picture.SetCanShrink(true)
 
-func NewImageBubble(name string, pixbuf *gdk.Pixbuf, thumb *gdk.Pixbuf, isSelf bool, status string, time string, avatar *gdk.Pixbuf) (*ImageBubble, error) {
-	image, err := gtk.ImageNew()
+	displayTex := tex
+	if displayTex == nil && thumb != nil {
+		displayTex = thumb
+	}
+
+	if displayTex != nil {
+		picture.SetPaintable(displayTex)
+
+		w, h := float64(displayTex.Width()), float64(displayTex.Height())
+		if realW > 0 && realH > 0 {
+			w, h = float64(realW), float64(realH)
+		}
+
+		if w > 300 {
+			h = (300 / w) * h
+			w = 300
+		}
+		picture.SetSizeRequest(int(w), int(h))
+	}
+
+
+	picture.AddCSSClass("message-image")
+
+	click := gtk.NewGestureClick()
+	picture.AddController(click)
+
+	base, err := newBaseBubble(name, "[Image]", picture, isSelf, true, status, time, avatar)
+
 	if err != nil {
 		return nil, err
 	}
 
-	displayPixbuf := pixbuf
-	isThumbnail := false
-	if displayPixbuf == nil && thumb != nil {
-		displayPixbuf = thumb
-		isThumbnail = true
-	}
+	ib := &ImageBubble{baseBubble: base, picture: picture}
 
-	if displayPixbuf != nil {
-		w := displayPixbuf.GetWidth(); h := displayPixbuf.GetHeight()
-		if w > 300 { h = int(float64(h) * 300.0 / float64(w)); w = 300 }
-		resized, _ := displayPixbuf.ScaleSimple(w, h, gdk.INTERP_BILINEAR)
-		image.SetFromPixbuf(resized)
-	} else {
-		image.SetFromIconName("image-missing", gtk.ICON_SIZE_DIALOG)
-		image.SetSizeRequest(200, 150)
-		isThumbnail = true
-	}
-
-	iCtx, _ := image.GetStyleContext()
-	iCtx.AddClass("message-image")
-	if isThumbnail {
-		iCtx.AddClass("message-image-thumbnail")
-	}
-
-	eventBox, _ := gtk.EventBoxNew()
-	eventBox.Add(image)
-
-	base, err := newBaseBubble(name, "[Image]", eventBox, isSelf, true, status, time, avatar)
-
-	if err != nil {
-		return nil, err
-	}
-
-	ib := &ImageBubble{baseBubble: base, image: image}
-
-	eventBox.Connect("button-press-event", func() {
+	click.ConnectPressed(func(n int, x, y float64) {
 		if ib.OnDownloadRequest != nil {
 			ib.OnDownloadRequest()
 		}
@@ -61,14 +58,14 @@ func NewImageBubble(name string, pixbuf *gdk.Pixbuf, thumb *gdk.Pixbuf, isSelf b
 	return ib, nil
 }
 
-func (ib *ImageBubble) UpdateImage(pixbuf *gdk.Pixbuf) {
-	if pixbuf != nil {
-		w := pixbuf.GetWidth(); h := pixbuf.GetHeight()
-		if w > 300 { h = int(float64(h) * 300.0 / float64(w)); w = 300 }
-		resized, _ := pixbuf.ScaleSimple(w, h, gdk.INTERP_BILINEAR)
-		ib.image.SetFromPixbuf(resized)
-		
-		iCtx, _ := ib.image.GetStyleContext()
-		iCtx.RemoveClass("message-image-thumbnail")
+func (ib *ImageBubble) UpdateImage(tex *gdk.Texture) {
+	if tex != nil {
+		ib.picture.SetPaintable(tex)
+		w, h := float64(tex.Width()), float64(tex.Height())
+		if w > 300 {
+			h = (300 / w) * h
+			w = 300
+		}
+		ib.picture.SetSizeRequest(int(w), int(h))
 	}
 }

@@ -24,6 +24,12 @@ func (b *Backend) SendText(ctx context.Context, to types.JID, text string, conte
 	})
 }
 
+func (b *Backend) MarkRead(ctx context.Context, jid types.JID, ids []string, sender types.JID, timestamp time.Time) error {
+	mids := make([]types.MessageID, len(ids))
+	for i, id := range ids { mids[i] = types.MessageID(id) }
+	return b.Client.MarkRead(ctx, mids, timestamp, jid, sender)
+}
+
 func (b *Backend) GetChats(ctx context.Context) ([]types.JID, error) {
 	return nil, nil
 }

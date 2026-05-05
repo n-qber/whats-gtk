@@ -14,8 +14,9 @@ import (
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/database"
 
-	"github.com/gotk3/gotk3/gdk"
-	"github.com/gotk3/gotk3/glib"
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
+	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 )
@@ -24,11 +25,11 @@ type ContactService struct {
 	Backend      *backend.Backend
 	DB           *database.AppDB
 	ctx          context.Context
-	avatarCache  map[string]*gdk.Pixbuf
+	avatarCache  map[string]*gdk.Texture
 	avatarQueue  chan string
 	pendingFetch map[string]bool
 	failedFetch  map[string]time.Time
-	onAvatarSet  func(jid string, pixbuf *gdk.Pixbuf)
+	onAvatarSet  func(jid string, tex *gdk.Texture)
 	mutex        sync.Mutex
 }
 
@@ -37,7 +38,7 @@ func NewContactService(b *backend.Backend, db *database.AppDB, ctx context.Conte
 		Backend:      b,
 		DB:           db,
 		ctx:          ctx,
-		avatarCache:  make(map[string]*gdk.Pixbuf),
+		avatarCache:  make(map[string]*gdk.Texture),
 		avatarQueue:  make(chan string, 500),
 		pendingFetch: make(map[string]bool),
 		failedFetch:  make(map[string]time.Time),
@@ -46,7 +47,7 @@ func NewContactService(b *backend.Backend, db *database.AppDB, ctx context.Conte
 	return cs
 }
 
-func (cs *ContactService) SetOnAvatarSet(f func(jid string, pixbuf *gdk.Pixbuf)) {
+func (cs *ContactService) SetOnAvatarSet(f func(jid string, tex *gdk.Texture)) {
 	cs.onAvatarSet = f
 }
 
@@ -61,7 +62,6 @@ func (cs *ContactService) avatarWorker() {
 		cs.mutex.Unlock()
 		
 		jid, _ := types.ParseJID(jStr)
-		// Rate limit/politeness sleep
 		time.Sleep(1 * time.Second)
 		
 		info, err := cs.Backend.Client.GetProfilePictureInfo(cs.ctx, jid, &whatsmeow.GetProfilePictureParams{Preview: true})
@@ -82,18 +82,16 @@ func (cs *ContactService) avatarWorker() {
 				data, _ := io.ReadAll(resp.Body)
 				path := filepath.Join("media", "avatar_"+jid.ToNonAD().String()+".jpg")
 				os.WriteFile(path, data, 0644)
-				cs.DB.SaveContact(database.Contact{JID: jid.ToNonAD().String(), AvatarPath: path})
+				cs.DB.SaveContact(database.Contact{JID: jid.ToNonAD().String(), AvatarPath: sql.NullString{String: path, Valid: true}})
 				glib.IdleAdd(func() {
-					loader, _ := gdk.PixbufLoaderNew()
-					loader.Write(data)
-					loader.Close()
-					pixbuf, _ := loader.GetPixbuf()
+					pixbuf, _ := gdkpixbuf.NewPixbufFromFile(path)
 					if pixbuf != nil {
+						tex := gdk.NewTextureForPixbuf(pixbuf)
 						cs.mutex.Lock()
-						cs.avatarCache[jStr] = pixbuf
+						cs.avatarCache[jStr] = tex
 						cs.mutex.Unlock()
 						if cs.onAvatarSet != nil {
-							cs.onAvatarSet(jStr, pixbuf)
+							cs.onAvatarSet(jStr, tex)
 						}
 					}
 				})
@@ -105,35 +103,33 @@ func (cs *ContactService) avatarWorker() {
 	}
 }
 
-func (cs *ContactService) GetAvatar(j string) *gdk.Pixbuf {
+func (cs *ContactService) GetAvatarNoFetch(j string) *gdk.Texture {
 	cs.mutex.Lock()
 	defer cs.mutex.Unlock()
 
-	if pix, exists := cs.avatarCache[j]; exists {
-		return pix
-	}
-	
-	if lastFail, exists := cs.failedFetch[j]; exists {
-		if time.Since(lastFail) < 1*time.Hour {
-			return nil
-		}
+	if tex, exists := cs.avatarCache[j]; exists {
+		return tex
 	}
 
-	if c, err := cs.DB.GetContact(j); err == nil && c.AvatarPath != "" {
-		if _, err := os.Stat(c.AvatarPath); err == nil {
-			if data, err := os.ReadFile(c.AvatarPath); err == nil {
-				loader, _ := gdk.PixbufLoaderNew()
-				loader.Write(data)
-				loader.Close()
-				pix, _ := loader.GetPixbuf()
-				if pix != nil {
-					cs.avatarCache[j] = pix
-					return pix
-				}
+	if c, err := cs.DB.GetContact(j); err == nil && c.AvatarPath.Valid && c.AvatarPath.String != "" {
+		if _, err := os.Stat(c.AvatarPath.String); err == nil {
+			pixbuf, _ := gdkpixbuf.NewPixbufFromFile(c.AvatarPath.String)
+			if pixbuf != nil {
+				tex := gdk.NewTextureForPixbuf(pixbuf)
+				cs.avatarCache[j] = tex
+				return tex
 			}
 		}
 	}
+	return nil
+}
 
+func (cs *ContactService) GetAvatar(j string) *gdk.Texture {
+	if tex := cs.GetAvatarNoFetch(j); tex != nil {
+		return tex
+	}
+
+	cs.mutex.Lock()
 	if !cs.pendingFetch[j] {
 		cs.pendingFetch[j] = true
 		select {
@@ -142,6 +138,7 @@ func (cs *ContactService) GetAvatar(j string) *gdk.Pixbuf {
 			cs.pendingFetch[j] = false
 		}
 	}
+	cs.mutex.Unlock()
 	return nil
 }
 
@@ -154,11 +151,10 @@ func (cs *ContactService) ResolveSenderName(j string) string {
 		if c.SavedName.Valid && c.SavedName.String != "" {
 			return c.SavedName.String
 		}
-		if c.PushName != "" {
-			return cs.formatNonAddedName(j, c.PushName)
+		if c.PushName.Valid && c.PushName.String != "" {
+			return cs.formatNonAddedName(j, c.PushName.String)
 		}
 	}
-	// Fallback to store
 	jidObj, _ := types.ParseJID(j)
 	if info, err := cs.Backend.Client.Store.Contacts.GetContact(cs.ctx, jidObj); err == nil && info.Found {
 		if info.FullName != "" {
@@ -166,7 +162,7 @@ func (cs *ContactService) ResolveSenderName(j string) string {
 			return info.FullName
 		}
 		if info.PushName != "" {
-			cs.DB.SaveContact(database.Contact{JID: j, PushName: info.PushName})
+			cs.DB.SaveContact(database.Contact{JID: j, PushName: sql.NullString{String: info.PushName, Valid: true}})
 			return cs.formatNonAddedName(j, info.PushName)
 		}
 	}
@@ -210,13 +206,13 @@ func (cs *ContactService) Sync(ctx context.Context) {
 	groups, err := cs.Backend.GetJoinedGroups(ctx)
 	if err == nil {
 		for _, g := range groups {
-			cs.DB.SaveContact(database.Contact{JID: g.JID.ToNonAD().String(), SavedName: sql.NullString{String: g.Name, Valid: g.Name != ""}, IsGroup: true})
+			cs.DB.SaveContact(database.Contact{JID: g.JID.ToNonAD().String(), SavedName: sql.NullString{String: g.Name, Valid: g.Name != ""}, IsGroup: sql.NullBool{Bool: true, Valid: true}})
 		}
 	}
 	contacts, err := cs.Backend.GetAllContacts(ctx)
 	if err == nil {
 		for j, i := range contacts {
-			cs.DB.SaveContact(database.Contact{JID: j.ToNonAD().String(), SavedName: sql.NullString{String: i.FullName, Valid: i.FullName != ""}, PushName: i.PushName, IsGroup: j.Server == types.GroupServer})
+			cs.DB.SaveContact(database.Contact{JID: j.ToNonAD().String(), SavedName: sql.NullString{String: i.FullName, Valid: i.FullName != ""}, PushName: sql.NullString{String: i.PushName, Valid: i.PushName != ""}, IsGroup: sql.NullBool{Bool: j.Server == types.GroupServer, Valid: true}})
 		}
 	}
 }
@@ -228,21 +224,16 @@ func (cs *ContactService) HealContacts(ctx context.Context) {
 	}
 	for i := 0; i < len(contacts); i += 10 {
 		end := i + 10
-		if end > len(contacts) {
-			end = len(contacts)
-		}
+		if end > len(contacts) { end = len(contacts) }
 		batch := contacts[i:end]
 		jids := make([]types.JID, 0)
 		for _, c := range batch {
-			j, _ := types.ParseJID(c.JID)
-			jids = append(jids, j)
+			j, _ := types.ParseJID(c.JID); jids = append(jids, j)
 		}
 		resp, err := cs.Backend.Client.GetUserInfo(cs.ctx, jids)
 		if err == nil {
 			for jid, info := range resp {
-				if !info.LID.IsEmpty() {
-					cs.DB.MergeLID(jid.ToNonAD().String(), info.LID.ToNonAD().String())
-				}
+				if !info.LID.IsEmpty() { cs.DB.MergeLID(jid.ToNonAD().String(), info.LID.ToNonAD().String()) }
 			}
 		}
 		time.Sleep(10 * time.Second)

@@ -12,7 +12,7 @@ type AppDB struct {
 }
 
 func InitDB(path string) (*AppDB, error) {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on&_journal_mode=WAL&_sync=NORMAL", path))
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on&_journal_mode=WAL&_sync=NORMAL&_parse_time=true", path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open app db: %w", err)
 	}
@@ -80,6 +80,8 @@ func (a *AppDB) createTables() error {
 	a.ensureColumn("messages", "media_enc_sha256", "BLOB")
 	a.ensureColumn("messages", "media_sha256", "BLOB")
 	a.ensureColumn("messages", "media_length", "INTEGER")
+	a.ensureColumn("messages", "media_width", "INTEGER")
+	a.ensureColumn("messages", "media_height", "INTEGER")
 	a.ensureColumn("messages", "quoted_msg_id", "TEXT")
 	a.ensureColumn("messages", "quoted_msg_content", "TEXT")
 	a.ensureColumn("messages", "quoted_msg_sender", "TEXT")

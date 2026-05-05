@@ -1,57 +1,64 @@
 package sidebar
 
 import (
-	"github.com/gotk3/gotk3/gtk"
+	"strings"
+
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 )
 
 type Sidebar struct {
 	Box            *gtk.Box
-	SearchEntry    *gtk.Entry
-	ChatList       *gtk.ListBox
-	ChatRows       map[string]*gtk.ListBoxRow
+	ListBox        *gtk.ListBox
+	SearchEntry    *gtk.SearchEntry
 	OnChatSelected func(jid string)
 	OnSearch       func(text string)
+	
+	chatRows       map[string]*adw.ActionRow
+	chatAvatars    map[string]*adw.Avatar
 }
 
 func NewSidebar() (*Sidebar, error) {
-	box, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
-	if err != nil {
-		return nil, err
-	}
-	box.SetSizeRequest(300, -1)
+	box := gtk.NewBox(gtk.OrientationVertical, 0)
+	
+	searchEntry := gtk.NewSearchEntry()
+	searchEntry.SetMarginTop(6)
+	searchEntry.SetMarginBottom(6)
+	searchEntry.SetMarginStart(6)
+	searchEntry.SetMarginEnd(6)
+	
+	box.Append(searchEntry)
 
-	searchEntry, _ := gtk.EntryNew()
-	searchEntry.SetPlaceholderText("Search or start new chat")
-	box.PackStart(searchEntry, false, false, 5)
-
-	chatList, _ := gtk.ListBoxNew()
-	scrolledChat, _ := gtk.ScrolledWindowNew(nil, nil)
-	scrolledChat.Add(chatList)
-	box.PackStart(scrolledChat, true, true, 0)
+	scrolled := gtk.NewScrolledWindow()
+	scrolled.SetVExpand(true)
+	
+	listBox := gtk.NewListBox()
+	listBox.AddCSSClass("navigation-sidebar")
+	scrolled.SetChild(listBox)
+	
+	box.Append(scrolled)
 
 	s := &Sidebar{
 		Box:         box,
+		ListBox:     listBox,
 		SearchEntry: searchEntry,
-		ChatList:    chatList,
-		ChatRows:    make(map[string]*gtk.ListBoxRow),
+		chatRows:    make(map[string]*adw.ActionRow),
+		chatAvatars: make(map[string]*adw.Avatar),
 	}
 
-	chatList.Connect("row-selected", func() {
-		row := chatList.GetSelectedRow()
-		if row != nil && s.OnChatSelected != nil {
-			for jid, r := range s.ChatRows {
-				if r.Native() == row.Native() {
-					s.OnChatSelected(jid)
-					break
-				}
-			}
+	searchEntry.ConnectSearchChanged(func() {
+		if s.OnSearch != nil {
+			s.OnSearch(searchEntry.Text())
 		}
 	})
 
-	searchEntry.Connect("changed", func() {
-		text, _ := searchEntry.GetText()
-		if s.OnSearch != nil {
-			s.OnSearch(text)
+	listBox.ConnectRowSelected(func(row *gtk.ListBoxRow) {
+		if row == nil { return }
+		// Extract JID from row name or other mapping
+		// For now we use row.Name() as JID
+		if s.OnChatSelected != nil {
+			s.OnChatSelected(row.Name())
 		}
 	})
 
@@ -59,33 +66,60 @@ func NewSidebar() (*Sidebar, error) {
 }
 
 func (s *Sidebar) AddChat(jid, name string) {
-	row, _ := gtk.ListBoxRowNew()
-	label, _ := gtk.LabelNew(name)
-	label.SetXAlign(0)
-	label.SetMarginStart(12)
-	label.SetMarginEnd(12)
-	label.SetMarginTop(6)
-	label.SetMarginBottom(6)
-	lCtx, _ := label.GetStyleContext()
-	lCtx.AddClass("sidebar-name")
-	row.Add(label)
-	s.ChatList.Add(row)
-	s.ChatRows[jid] = row
-	row.ShowAll()
-}
-
-func (s *Sidebar) MoveChatToTop(jid string) {
-	if row, exists := s.ChatRows[jid]; exists {
-		s.ChatList.Remove(row)
-		s.ChatList.Insert(row, 0)
+	if _, exists := s.chatRows[jid]; exists {
+		return
 	}
+
+	row := adw.NewActionRow()
+	row.SetTitle(name)
+	row.SetName(jid)
+	
+	// Clean name for initials (remove [G] and unread count)
+	cleanName := name
+	if idx := strings.Index(name, "] "); idx != -1 { cleanName = name[idx+2:] }
+	if idx := strings.Index(cleanName, ") "); idx != -1 { cleanName = cleanName[idx+2:] }
+
+	avatar := adw.NewAvatar(32, cleanName, true)
+	row.AddPrefix(avatar)
+	
+	s.chatRows[jid] = row
+	s.chatAvatars[jid] = avatar
+	
+	// We need to wrap it in a ListBoxRow to set the name for lookup
+	lbRow := gtk.NewListBoxRow()
+	lbRow.SetChild(row)
+	lbRow.SetName(jid)
+	
+	s.ListBox.Append(lbRow)
 }
 
 func (s *Sidebar) ClearChats() {
-	s.ChatRows = make(map[string]*gtk.ListBoxRow)
-	children := s.ChatList.GetChildren()
-	children.Foreach(func(item interface{}) {
-		s.ChatList.Remove(item.(gtk.IWidget))
-	})
-	s.ChatList.ShowAll()
+	s.chatRows = make(map[string]*adw.ActionRow)
+	s.chatAvatars = make(map[string]*adw.Avatar)
+	for {
+		child := s.ListBox.FirstChild()
+		if child == nil {
+			break
+		}
+		s.ListBox.Remove(child)
+	}
+}
+
+func (s *Sidebar) MoveChatToTop(jid string) {
+	// [TODO: Implement Move to top logic]
+}
+
+func (s *Sidebar) SetAvatar(jid string, tex *gdk.Texture) {
+	// Normalize JID for lookup
+	jid = strings.Split(jid, ".")[0] // Handle potential .AD suffixes
+	if avatar, exists := s.chatAvatars[jid]; exists {
+		avatar.SetCustomImage(tex)
+	} else {
+		// Try search by Name if JID didn't match exactly
+		for j, av := range s.chatAvatars {
+			if strings.HasPrefix(j, jid) || strings.HasPrefix(jid, j) {
+				av.SetCustomImage(tex)
+			}
+		}
+	}
 }
