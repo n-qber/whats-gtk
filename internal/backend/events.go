@@ -1,9 +1,6 @@
 package backend
 
 import (
-	"os"
-
-	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow/types/events"
 )
 
@@ -57,7 +54,6 @@ func (b *Backend) registerEventHandlers() {
 		case *events.Disconnected:
 			appEvt = &DisconnectedEvent{}
 		case *events.QR:
-			qrterminal.GenerateHalfBlock(v.Codes[0], qrterminal.L, os.Stdout)
 			appEvt = &QREvent{Code: v.Codes[0]}
 		case *events.PushName:
 			appEvt = &PushNameEvent{Info: v}

@@ -14,6 +14,7 @@ type Bubble interface {
 	Widget() gtk.Widgetter
 	UpdateAvatar(tex *gdk.Texture)
 	UpdateImage(tex *gdk.Texture)
+	UpdateDocument(path string)
 	SetStatus(status string)
 	SetReactions(reactions []string)
 	SetQuotedMessage(id, sender, content string)
@@ -148,6 +149,7 @@ func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSel
 	reactionsBox.SetCanTarget(false)
 	
 	finalBox := gtk.NewBox(gtk.OrientationVertical, 0)
+	finalBox.SetFocusable(false)
 	finalBox.Append(bubbleBox)
 	finalBox.Append(reactionsBox)
 
@@ -313,6 +315,7 @@ func (b *baseBubble) UpdateAvatar(tex *gdk.Texture) {
 }
 
 func (b *baseBubble) UpdateImage(tex *gdk.Texture) {}
+func (b *baseBubble) UpdateDocument(path string) {}
 
 func (b *baseBubble) SetStatus(status string) {
 	if b.StatusLabel != nil {

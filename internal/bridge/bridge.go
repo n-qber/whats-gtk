@@ -16,6 +16,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
+	"github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -154,6 +155,10 @@ func (br *Bridge) setupServiceHandlers() {
 					br.App.ChatView.UpdateMessageAudio(task.ID, path)
 					return
 				}
+				if task.MsgType == "document" {
+					br.App.ChatView.UpdateMessageDocument(task.ID, path)
+					return
+				}
 
 				pixbuf, _ := gdkpixbuf.NewPixbufFromFile(path)
 				if pixbuf == nil { return }
@@ -189,6 +194,8 @@ func (br *Bridge) handleChatSelected(jidStr string) {
 	if jid.Server == types.GroupServer {
 		br.syncGroupIfNeeded(jid)
 	}
+
+	br.App.ChatView.FocusEntry()
 }
 
 func (br *Bridge) syncGroupIfNeeded(jid types.JID) {
@@ -352,6 +359,9 @@ func (br *Bridge) refreshMessages(jid types.JID) {
 						if pixbuf != nil {
 							texImg = gdk.NewTextureForPixbuf(pixbuf)
 						}
+					} else if m.Type == "sticker" {
+						// Auto-download missing stickers
+						go br.handleDownloadMedia(m.ID)
 					}
 					
 					mW := int(m.MediaWidth.Int64); mH := int(m.MediaHeight.Int64)
@@ -376,6 +386,11 @@ func (br *Bridge) refreshMessages(jid types.JID) {
 						fileName = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Document: "), "]")
 					}
 					br.App.ChatView.AddDocument(m.ID, m.SenderJID, sName, fileName, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+					if m.Content != "" && !strings.HasPrefix(m.Content, "[Document: ") {
+						if _, err := os.Stat(m.Content); err == nil {
+							br.App.ChatView.UpdateMessageDocument(m.ID, m.Content)
+						}
+					}
 				} else {
 					if m.Content != "" {
 						br.App.ChatView.AddMessage(m.ID, m.SenderJID, sName, m.Content, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
@@ -407,18 +422,22 @@ func (br *Bridge) Start(ctx context.Context) {
 
 func (br *Bridge) refreshSidebar(contacts []database.Contact) {
 	glib.IdleAdd(func() {
+		br.App.Sidebar.SetRefreshing(true)
 		br.App.Sidebar.ClearChats()
 		for _, c := range contacts {
 			prefix := ""
 			if c.IsGroup.Valid && c.IsGroup.Bool { prefix = "[G] " }
 			br.App.Sidebar.AddChat(c.JID, prefix+c.DisplayName())
 			
-			// ONLY load if we already have it in cache/disk. 
-			// Do NOT trigger network fetch for every search result.
 			if tex := br.Contacts.GetAvatarNoFetch(c.JID); tex != nil {
 				br.App.Sidebar.SetAvatar(c.JID, tex)
 			}
 		}
+		
+		if br.selectedJID != nil {
+			br.App.Sidebar.SelectChat(br.selectedJID.ToNonAD().String())
+		}
+		br.App.Sidebar.SetRefreshing(false)
 	})
 }
 
@@ -430,6 +449,8 @@ func (br *Bridge) HandleEvent(evt backend.AppEvent) {
 		br.handleMessage(v)
 	case *backend.ConnectedEvent:
 		br.handleConnected()
+	case *backend.QREvent:
+		br.handleQR(v)
 	case *backend.OfflineSyncCompletedEvent:
 		br.handleOfflineSyncCompleted()
 	case *backend.ReceiptEvent:
@@ -518,6 +539,8 @@ func (br *Bridge) handleMessage(v *backend.MessageEvent) {
 					mW = int(stkr.GetWidth()); mH = int(stkr.GetHeight())
 					texThumb := br.bytesToTexture(stkr.GetPngThumbnail())
 					br.App.ChatView.AddSticker(msg.Info.ID, sJID, sName, nil, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
+					// Auto-download stickers
+					go br.handleDownloadMedia(msg.Info.ID)
 				} else if vid := msg.Message.GetVideoMessage(); vid != nil {
 					mW = int(vid.GetWidth()); mH = int(vid.GetHeight())
 					texThumb := br.bytesToTexture(vid.GetJPEGThumbnail())
@@ -599,7 +622,31 @@ func (br *Bridge) bytesToTexture(data []byte) *gdk.Texture {
 	return gdk.NewTextureForPixbuf(pix)
 }
 
+func (br *Bridge) handleQR(v *backend.QREvent) {
+	png, err := qrcode.Encode(v.Code, qrcode.Medium, 256)
+	if err != nil {
+		fmt.Printf("Bridge: Failed to generate QR code: %v\n", err)
+		return
+	}
+
+	loader := gdkpixbuf.NewPixbufLoader()
+	loader.Write(png)
+	loader.Close()
+	pix := loader.Pixbuf()
+	if pix == nil {
+		return
+	}
+	tex := gdk.NewTextureForPixbuf(pix)
+
+	glib.IdleAdd(func() {
+		br.App.ShowQRCode(tex)
+	})
+}
+
 func (br *Bridge) handleConnected() {
+	glib.IdleAdd(func() {
+		br.App.HideQRCode()
+	})
 	go func() {
 		br.Contacts.Sync(br.ctx)
 		c, _ := br.DB.GetAllContacts(200)

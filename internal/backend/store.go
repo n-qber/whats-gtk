@@ -10,7 +10,7 @@ import (
 )
 
 func InitStore(ctx context.Context, dbPath string) (*sqlstore.Container, error) {
-	dbLog := waLog.Stdout("Database", "DEBUG", true)
+	dbLog := waLog.Stdout("Database", "WARN", true)
 	container, err := sqlstore.New(ctx, "sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on", dbPath), dbLog)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to store: %w", err)

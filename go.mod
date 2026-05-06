@@ -7,7 +7,7 @@ require (
 	github.com/diamondburned/gotk4/pkg v0.3.2-0.20250703063411-16654385f59a
 	github.com/faiface/beep v1.1.0
 	github.com/mattn/go-sqlite3 v1.14.44
-	github.com/mdp/qrterminal/v3 v3.2.1
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	go.mau.fi/whatsmeow v0.0.0-20260427122815-7514259253a7
 	google.golang.org/protobuf v1.36.11
 )
@@ -40,7 +40,5 @@ require (
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/term v0.42.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
-	rsc.io/qr v0.2.0 // indirect
 )

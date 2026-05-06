@@ -26,7 +26,7 @@ func NewBackend(ctx context.Context, container *sqlstore.Container) (*Backend, e
 		device = container.NewDevice()
 	}
 
-	clientLog := waLog.Stdout("Client", "DEBUG", true)
+	clientLog := waLog.Stdout("Client", "WARN", true)
 	client := whatsmeow.NewClient(device, clientLog)
 
 	b := &Backend{

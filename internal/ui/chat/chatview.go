@@ -128,7 +128,9 @@ func (cv *ChatView) SetReplyTo(id, sender, content string) {
 	cv.ReplyToContent = content
 	cv.ReplyPreviewLabel.SetMarkup("Replying to <b>" + sender + "</b>: " + content)
 	cv.ReplyPreviewBox.Show()
-	cv.MessageEntry.GrabFocus()
+	glib.IdleAdd(func() {
+		cv.MessageEntry.GrabFocus()
+	})
 }
 
 func (cv *ChatView) CancelReply() {
@@ -149,6 +151,11 @@ func (cv *ChatView) AddMessage(id, jid, name, text string, isSelf, isCont bool, 
 func (cv *ChatView) AddImage(id, jid, name string, tex, thumb *gdk.Texture, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
 	bubble, err := bubbles.NewImageBubble(name, tex, thumb, isSelf, status, tStr, av, w, h)
 	if err == nil {
+		bubble.OnDownloadRequest = func() {
+			if cv.OnDownloadMedia != nil {
+				cv.OnDownloadMedia(id)
+			}
+		}
 		bubble.SetQuotedMessage(qID, qSender, qContent)
 		cv.registerBubble(id, jid, bubble, isCont)
 	}
@@ -157,6 +164,11 @@ func (cv *ChatView) AddImage(id, jid, name string, tex, thumb *gdk.Texture, isSe
 func (cv *ChatView) AddSticker(id, jid, name string, tex, thumb *gdk.Texture, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
 	bubble, err := bubbles.NewStickerBubble(name, tex, thumb, isSelf, status, tStr, av, w, h)
 	if err == nil {
+		bubble.OnDownloadRequest = func() {
+			if cv.OnDownloadMedia != nil {
+				cv.OnDownloadMedia(id)
+			}
+		}
 		bubble.SetQuotedMessage(qID, qSender, qContent)
 		cv.registerBubble(id, jid, bubble, isCont)
 	}
@@ -165,6 +177,11 @@ func (cv *ChatView) AddSticker(id, jid, name string, tex, thumb *gdk.Texture, is
 func (cv *ChatView) AddAudio(id, jid, name string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string) {
 	bubble, err := bubbles.NewAudioBubble(name, isSelf, status, tStr, av)
 	if err == nil {
+		bubble.OnDownloadRequest = func() {
+			if cv.OnDownloadMedia != nil {
+				cv.OnDownloadMedia(id)
+			}
+		}
 		bubble.SetQuotedMessage(qID, qSender, qContent)
 		cv.registerBubble(id, jid, bubble, isCont)
 	}
@@ -174,14 +191,24 @@ func (cv *ChatView) AddVideo(id, jid, name string, thumb *gdk.Texture, isSelf, i
 	// For now, video uses image bubble with thumbnail
 	bubble, err := bubbles.NewImageBubble(name, nil, thumb, isSelf, status, tStr, av, w, h)
 	if err == nil {
+		bubble.OnDownloadRequest = func() {
+			if cv.OnDownloadMedia != nil {
+				cv.OnDownloadMedia(id)
+			}
+		}
 		bubble.SetQuotedMessage(qID, qSender, qContent)
 		cv.registerBubble(id, jid, bubble, isCont)
 	}
 }
 
 func (cv *ChatView) AddDocument(id, jid, name, fileName string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string) {
-	bubble, err := bubbles.NewTextBubble(name, "[File: "+fileName+"]", isSelf, status, tStr, av)
+	bubble, err := bubbles.NewDocumentBubble(name, fileName, isSelf, status, tStr, av)
 	if err == nil {
+		bubble.OnDownloadRequest = func() {
+			if cv.OnDownloadMedia != nil {
+				cv.OnDownloadMedia(id)
+			}
+		}
 		bubble.SetQuotedMessage(qID, qSender, qContent)
 		cv.registerBubble(id, jid, bubble, isCont)
 	}
@@ -247,6 +274,7 @@ func (cv *ChatView) showContextMenu(id string, b bubbles.Bubble) {
 
 func (cv *ChatView) addBubble(id string, b bubbles.Bubble, isCont bool) {
 	row := gtk.NewListBoxRow()
+	row.SetFocusable(false)
 	row.AddCSSClass("message-row")
 	if isCont {
 		row.AddCSSClass("message-row-connected")
@@ -296,6 +324,12 @@ func (cv *ChatView) UpdateMessageImage(id string, tex *gdk.Texture) {
 	}
 }
 
+func (cv *ChatView) UpdateMessageDocument(id, path string) {
+	if bubble, exists := cv.MessageRows[id]; exists {
+		glib.IdleAdd(func() { bubble.UpdateDocument(path) })
+	}
+}
+
 func (cv *ChatView) UpdateMessageAudio(id, path string) {
 	if b, ok := cv.MessageRows[id]; ok {
 		if ab, ok := b.(*bubbles.AudioBubble); ok {
@@ -326,5 +360,11 @@ func (cv *ChatView) Clear() {
 		}
 		cv.MessageList.Remove(child)
 	}
+}
+
+func (cv *ChatView) FocusEntry() {
+	glib.IdleAdd(func() {
+		cv.MessageEntry.GrabFocus()
+	})
 }
 
