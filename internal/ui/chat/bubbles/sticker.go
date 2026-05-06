@@ -7,8 +7,10 @@ import (
 
 type StickerBubble struct {
 	*baseBubble
-	picture *gtk.Picture
+	picture           *gtk.Picture
+	OnDownloadRequest func()
 }
+
 func NewStickerBubble(name string, pixbuf, thumb *gdk.Texture, isSelf bool, status, time string, avatar *gdk.Texture, realW, realH int) (*StickerBubble, error) {
 	picture := gtk.NewPicture()
 	picture.SetContentFit(gtk.ContentFitCover)
@@ -38,12 +40,23 @@ func NewStickerBubble(name string, pixbuf, thumb *gdk.Texture, isSelf bool, stat
 
 	picture.AddCSSClass("message-sticker")
 
+	click := gtk.NewGestureClick()
+	picture.AddController(click)
 
 	base, err := newBaseBubble(name, "[Sticker]", picture, isSelf, false, status, time, avatar)
 	if err != nil {
 		return nil, err
 	}
-	return &StickerBubble{baseBubble: base, picture: picture}, nil
+
+	sb := &StickerBubble{baseBubble: base, picture: picture}
+
+	click.ConnectPressed(func(n int, x, y float64) {
+		if sb.OnDownloadRequest != nil {
+			sb.OnDownloadRequest()
+		}
+	})
+
+	return sb, nil
 }
 
 func (sb *StickerBubble) UpdateImage(tex *gdk.Texture) {

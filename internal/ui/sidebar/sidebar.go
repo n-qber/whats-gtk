@@ -17,6 +17,7 @@ type Sidebar struct {
 	
 	chatRows       map[string]*adw.ActionRow
 	chatAvatars    map[string]*adw.Avatar
+	isRefreshing   bool
 }
 
 func NewSidebar() (*Sidebar, error) {
@@ -54,15 +55,27 @@ func NewSidebar() (*Sidebar, error) {
 	})
 
 	listBox.ConnectRowSelected(func(row *gtk.ListBoxRow) {
-		if row == nil { return }
-		// Extract JID from row name or other mapping
-		// For now we use row.Name() as JID
+		if row == nil || s.isRefreshing { return }
 		if s.OnChatSelected != nil {
 			s.OnChatSelected(row.Name())
 		}
 	})
 
 	return s, nil
+}
+
+func (s *Sidebar) SetRefreshing(refreshing bool) {
+	s.isRefreshing = refreshing
+}
+
+func (s *Sidebar) SelectChat(jid string) {
+	if row, ok := s.chatRows[jid]; ok {
+		if lbRow, ok := row.Parent().(*gtk.ListBoxRow); ok {
+			s.isRefreshing = true
+			s.ListBox.SelectRow(lbRow)
+			s.isRefreshing = false
+		}
+	}
 }
 
 func (s *Sidebar) AddChat(jid, name string) {

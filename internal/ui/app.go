@@ -13,6 +13,8 @@ type App struct {
 	Window   *adw.ApplicationWindow
 	Sidebar  *sidebar.Sidebar
 	ChatView *chat.ChatView
+	QRDialog *gtk.Window
+	QRImage  *gtk.Image
 }
 
 func NewApp(app *adw.Application) (*App, error) {
@@ -133,3 +135,40 @@ func loadCSS() {
 }
 
 func (a *App) Show() { a.Window.Present() }
+
+func (a *App) ShowQRCode(tex *gdk.Texture) {
+	if a.QRDialog == nil {
+		a.QRDialog = gtk.NewWindow()
+		a.QRDialog.SetTitle("Scan QR Code")
+		a.QRDialog.SetTransientFor(&a.Window.Window)
+		a.QRDialog.SetModal(true)
+		a.QRDialog.SetResizable(false)
+
+		box := gtk.NewBox(gtk.OrientationVertical, 10)
+		box.SetMarginBottom(20)
+		box.SetMarginTop(20)
+		box.SetMarginStart(20)
+		box.SetMarginEnd(20)
+
+		label := gtk.NewLabel("Scan this QR code with WhatsApp on your phone")
+		box.Append(label)
+
+		a.QRImage = gtk.NewImage()
+		a.QRImage.SetPixelSize(256)
+		a.QRImage.SetFromPaintable(tex)
+		box.Append(a.QRImage)
+
+		a.QRDialog.SetChild(box)
+	} else {
+		a.QRImage.SetFromPaintable(tex)
+	}
+	a.QRDialog.Present()
+}
+
+func (a *App) HideQRCode() {
+	if a.QRDialog != nil {
+		a.QRDialog.Destroy()
+		a.QRDialog = nil
+		a.QRImage = nil
+	}
+}

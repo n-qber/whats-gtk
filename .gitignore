@@ -1,9 +1,14 @@
 # Binaries
 whats-gtk
+whats-gtk-old
 
 # Local databases (Sensitive session data)
 store.db*
 app.db*
+*.sync-conflict-*
+
+# Syncthing
+.stfolder/
 
 # Local media
 media/
