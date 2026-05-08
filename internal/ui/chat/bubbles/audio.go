@@ -96,3 +96,7 @@ func (ab *AudioBubble) SetPlaying(playing bool) {
 	}
 	ab.playImg.SetFromIconName(icon)
 }
+
+func (ab *AudioBubble) SetProgress(progress float64) {
+	ab.slider.SetValue(progress)
+}

@@ -20,15 +20,19 @@ type AudioPlayer struct {
 	sampleRate  beep.SampleRate
 	ctrl        *beep.Ctrl
 	OnStop      func()
+	OnProgress  func(current, total time.Duration)
 	currentPath string
 	isTemp      bool
+	done        chan bool
 }
 
 func NewAudioPlayer() *AudioPlayer {
-	return &AudioPlayer{}
+	return &AudioPlayer{
+		done: make(chan bool),
+	}
 }
 
-func (ap *AudioPlayer) Play(path string, onStop func()) error {
+func (ap *AudioPlayer) Play(path string, onStop func(), onProgress func(c, t time.Duration)) error {
 	ap.Stop()
 
 	var streamer beep.StreamSeekCloser
@@ -97,6 +101,7 @@ func (ap *AudioPlayer) Play(path string, onStop func()) error {
 	}
 
 	ap.OnStop = onStop
+	ap.OnProgress = onProgress
 	ap.currentPath = path
 	ap.isTemp = isTempWav
 
@@ -112,8 +117,11 @@ func (ap *AudioPlayer) Play(path string, onStop func()) error {
 		ap.sampleRate = format.SampleRate
 	}
 
+	totalDuration := format.SampleRate.D(streamer.Len())
+
 	resampled := beep.Resample(4, format.SampleRate, ap.sampleRate, streamer)
 	ap.ctrl = &beep.Ctrl{Streamer: beep.Seq(resampled, beep.Callback(func() {
+		ap.done <- true
 		streamer.Close()
 		f.Close()
 		ap.cleanup()
@@ -124,11 +132,32 @@ func (ap *AudioPlayer) Play(path string, onStop func()) error {
 
 	speaker.Play(ap.ctrl)
 
+	// Start progress reporter
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if ap.ctrl == nil || ap.ctrl.Paused {
+					continue
+				}
+				if ap.OnProgress != nil {
+					current := format.SampleRate.D(streamer.Position())
+					ap.OnProgress(current, totalDuration)
+				}
+			case <-ap.done:
+				return
+			}
+		}
+	}()
+
 	return nil
 }
 
 func (ap *AudioPlayer) Stop() {
 	if ap.ctrl != nil {
+		ap.done <- true
 		speaker.Clear()
 		ap.ctrl = nil
 		ap.cleanup()

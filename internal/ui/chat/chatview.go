@@ -3,6 +3,7 @@ package chat
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"whats-gtk/internal/ui/chat/bubbles"
 
@@ -195,7 +196,15 @@ func (cv *ChatView) AddAudio(id, jid, name string, isSelf, isCont bool, status, 
 			err := cv.AudioPlayer.Play(bubble.AudioPath(), func() {
 				glib.IdleAdd(func() {
 					bubble.SetPlaying(false)
+					bubble.SetProgress(0)
 				})
+			}, func(current, total time.Duration) {
+				if total > 0 {
+					progress := float64(current) / float64(total) * 100
+					glib.IdleAdd(func() {
+						bubble.SetProgress(progress)
+					})
+				}
 			})
 			if err != nil {
 				fmt.Printf("ChatView: Audio play error: %v\n", err)
