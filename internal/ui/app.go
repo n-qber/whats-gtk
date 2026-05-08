@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"whats-gtk/internal/ui/chat"
 	"whats-gtk/internal/ui/sidebar"
 
@@ -15,6 +16,8 @@ type App struct {
 	ChatView           *chat.ChatView
 	QRDialog           *gtk.Window
 	QRImage            *gtk.Image
+	ZoomLevel          float64
+	ZoomCSSProvider    *gtk.CSSProvider
 	OnKeyPressed       func(key string, mods gdk.ModifierType) bool
 	OnModifiersChanged func(mods gdk.ModifierType)
 }
@@ -43,14 +46,33 @@ func NewApp(app *adw.Application) (*App, error) {
 	window.SetContent(splitView)
 
 	a := &App{
-		Window:   window,
-		Sidebar:  s,
-		ChatView: cv,
+		Window:          window,
+		Sidebar:         s,
+		ChatView:        cv,
+		ZoomLevel:       1.0,
+		ZoomCSSProvider: gtk.NewCSSProvider(),
 	}
+
+	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), a.ZoomCSSProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
 	keyCtrl := gtk.NewEventControllerKey()
 	keyCtrl.ConnectKeyPressed(func(keyval uint, keycode uint, state gdk.ModifierType) bool {
 		keyName := gdk.KeyvalName(keyval)
+		
+		if state&gdk.ControlMask != 0 {
+			switch keyName {
+			case "plus", "equal", "KP_Add":
+				a.Zoom(0.1)
+				return true
+			case "minus", "underscore", "KP_Subtract":
+				a.Zoom(-0.1)
+				return true
+			case "0", "KP_0":
+				a.ResetZoom()
+				return true
+			}
+		}
+
 		if keyName == "Control_L" || keyName == "Control_R" {
 			if a.OnModifiersChanged != nil {
 				a.OnModifiersChanged(state | gdk.ControlMask)
@@ -233,4 +255,24 @@ func (a *App) HideQRCode() {
 		a.QRDialog = nil
 		a.QRImage = nil
 	}
+}
+
+func (a *App) Zoom(delta float64) {
+	a.ZoomLevel += delta
+	if a.ZoomLevel < 0.5 {
+		a.ZoomLevel = 0.5
+	} else if a.ZoomLevel > 3.0 {
+		a.ZoomLevel = 3.0
+	}
+	a.applyZoom()
+}
+
+func (a *App) ResetZoom() {
+	a.ZoomLevel = 1.0
+	a.applyZoom()
+}
+
+func (a *App) applyZoom() {
+	css := "window { font-size: " + fmt.Sprintf("%.1f", a.ZoomLevel*10) + "pt; }"
+	a.ZoomCSSProvider.LoadFromData(css)
 }
