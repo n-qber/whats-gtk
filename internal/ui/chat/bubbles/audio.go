@@ -13,9 +13,11 @@ type AudioBubble struct {
 	audioPath         string
 	isPlaying         bool
 	isDownloading     bool
+	isSeeking         bool
 	OnDownloadRequest func()
 	OnPlayRequest     func()
 	OnStopRequest     func()
+	OnSeekRequest     func(percent float64)
 }
 
 func NewAudioBubble(name string, isSelf bool, status, time string, avatar *gdk.Texture) (*AudioBubble, error) {
@@ -73,6 +75,27 @@ func NewAudioBubble(name string, isSelf bool, status, time string, avatar *gdk.T
 		}
 	})
 
+	// Detect when user starts/ends dragging to avoid feedback loops
+	press := gtk.NewGestureClick()
+	press.ConnectPressed(func(n int, x, y float64) {
+		ab.isSeeking = true
+	})
+	slider.AddController(press)
+
+	slider.ConnectValueChanged(func() {
+		if ab.isSeeking && ab.OnSeekRequest != nil {
+			ab.OnSeekRequest(ab.slider.Value())
+		}
+	})
+
+	// Use another gesture or signal to detect when dragging ends
+	// In GTK4, we can use release or just check isSeeking
+	release := gtk.NewGestureClick()
+	release.ConnectReleased(func(n int, x, y float64) {
+		ab.isSeeking = false
+	})
+	slider.AddController(release)
+
 	return ab, nil
 }
 
@@ -98,5 +121,7 @@ func (ab *AudioBubble) SetPlaying(playing bool) {
 }
 
 func (ab *AudioBubble) SetProgress(progress float64) {
-	ab.slider.SetValue(progress)
+	if !ab.isSeeking {
+		ab.slider.SetValue(progress)
+	}
 }
