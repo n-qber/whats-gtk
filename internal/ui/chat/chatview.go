@@ -18,7 +18,7 @@ type ChatView struct {
 	Box                   *gtk.Box
 	MessageList           *gtk.ListBox
 	MessageScrolledWindow *gtk.ScrolledWindow
-	MessageEntry          *gtk.Entry
+	MessageInput          *gtk.TextView
 	ChatHeaderLabel       *gtk.Label
 	ChatHeaderImage       *adw.Avatar
 	MessageRows           map[string]bubbles.Bubble
@@ -77,10 +77,23 @@ func NewChatView() (*ChatView, error) {
 	inputBox.SetMarginStart(6)
 	inputBox.SetMarginEnd(6)
 	
-	messageEntry := gtk.NewEntry()
-	messageEntry.SetHExpand(true)
+	inputScrolled := gtk.NewScrolledWindow()
+	inputScrolled.SetMinContentHeight(36)
+	inputScrolled.SetMaxContentHeight(200)
+	inputScrolled.SetPropagateNaturalHeight(true)
+	inputScrolled.SetHExpand(true)
+	inputScrolled.AddCSSClass("message-input-scrolled")
+
+	messageInput := gtk.NewTextView()
+	messageInput.SetWrapMode(gtk.WrapWordChar)
+	messageInput.SetAcceptsTab(false)
+	messageInput.AddCSSClass("message-input-view")
+	inputScrolled.SetChild(messageInput)
+
 	sendButton := gtk.NewButtonWithLabel("Send")
-	inputBox.Append(messageEntry)
+	sendButton.SetVAlign(gtk.AlignEnd)
+
+	inputBox.Append(inputScrolled)
 	inputBox.Append(sendButton)
 	box.Append(inputBox)
 
@@ -88,7 +101,7 @@ func NewChatView() (*ChatView, error) {
 		Box:                   box,
 		MessageList:           messageList,
 		MessageScrolledWindow: scrolledMsg,
-		MessageEntry:          messageEntry,
+		MessageInput:          messageInput,
 		ChatHeaderLabel:       headerLabel,
 		ChatHeaderImage:       headerAvatar,
 		MessageRows:           make(map[string]bubbles.Bubble),
@@ -104,15 +117,26 @@ func NewChatView() (*ChatView, error) {
 	})
 
 	sendMsg := func() {
-		text := messageEntry.Text()
+		buffer := messageInput.Buffer()
+		start, end := buffer.Bounds()
+		text := buffer.Text(start, end, false)
 		if text != "" && cv.OnSendMessage != nil {
 			cv.OnSendMessage(text, cv.ReplyToID)
 			cv.CancelReply()
-			messageEntry.SetText("")
+			buffer.SetText("")
 		}
 	}
 
-	messageEntry.ConnectActivate(sendMsg)
+	keyCtrl := gtk.NewEventControllerKey()
+	keyCtrl.ConnectKeyPressed(func(keyval uint, keycode uint, state gdk.ModifierType) bool {
+		if keyval == gdk.KEY_Return && (state&gdk.ShiftMask == 0) {
+			sendMsg()
+			return true
+		}
+		return false
+	})
+	messageInput.AddController(keyCtrl)
+
 	sendButton.ConnectClicked(sendMsg)
 
 	return cv, nil
@@ -146,9 +170,7 @@ func (cv *ChatView) SetReplyTo(id, sender, content string) {
 
 	cv.ReplyPreviewLabel.SetMarkup("Replying to <b>" + markupSender + "</b>: " + glib.MarkupEscapeText(content))
 	cv.ReplyPreviewBox.Show()
-	glib.IdleAdd(func() {
-		cv.MessageEntry.GrabFocus()
-	})
+	cv.FocusEntry()
 }
 
 func (cv *ChatView) CancelReply() {
@@ -408,7 +430,9 @@ func (cv *ChatView) Clear() {
 
 func (cv *ChatView) FocusEntry() {
 	glib.IdleAdd(func() {
-		cv.MessageEntry.GrabFocus()
+		if cv.MessageInput != nil {
+			cv.MessageInput.GrabFocus()
+		}
 	})
 }
 

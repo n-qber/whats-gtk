@@ -89,6 +89,42 @@ func (s *Sidebar) SelectIndex(index int) {
 	}
 }
 
+func (s *Sidebar) SelectOffset(offset int) {
+	selected := s.ListBox.SelectedRow()
+	var newIdx int
+	if selected == nil {
+		if offset > 0 {
+			newIdx = 0
+		} else {
+			return
+		}
+	} else {
+		count := 0
+		currentIdx := -1
+		
+		// In GTK4, we can iterate rows more easily or just use RowAtIndex in a loop
+		for {
+			row := s.ListBox.RowAtIndex(count)
+			if row == nil {
+				break
+			}
+			if row == selected {
+				currentIdx = count
+			}
+			count++
+		}
+
+		if currentIdx == -1 {
+			return
+		}
+		newIdx = (currentIdx + offset) % count
+		if newIdx < 0 {
+			newIdx = count + newIdx
+		}
+	}
+	s.SelectIndex(newIdx)
+}
+
 func (s *Sidebar) ClearSelection() {
 	s.isRefreshing = true
 	s.ListBox.SelectRow(nil)

@@ -209,6 +209,18 @@ func (br *Bridge) setupUIHandlers() {
 			}
 		})
 	})
+
+	// Ctrl+Tab and Ctrl+Shift+Tab for next/prev chat
+	br.Input.Register("Control+Tab", func() {
+		glib.IdleAdd(func() {
+			br.App.Sidebar.SelectOffset(1)
+		})
+	})
+	br.Input.Register("Control+Shift+Tab", func() {
+		glib.IdleAdd(func() {
+			br.App.Sidebar.SelectOffset(-1)
+		})
+	})
 }
 
 func (br *Bridge) handleKeyPressed(key string, mods gdk.ModifierType) bool {
