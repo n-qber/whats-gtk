@@ -10,11 +10,12 @@ import (
 )
 
 type App struct {
-	Window   *adw.ApplicationWindow
-	Sidebar  *sidebar.Sidebar
-	ChatView *chat.ChatView
-	QRDialog *gtk.Window
-	QRImage  *gtk.Image
+	Window       *adw.ApplicationWindow
+	Sidebar      *sidebar.Sidebar
+	ChatView     *chat.ChatView
+	QRDialog     *gtk.Window
+	QRImage      *gtk.Image
+	OnKeyPressed func(key string, mods gdk.ModifierType) bool
 }
 
 func NewApp(app *adw.Application) (*App, error) {
@@ -40,11 +41,23 @@ func NewApp(app *adw.Application) (*App, error) {
 	splitView.SetContent(cv.Box)
 	window.SetContent(splitView)
 
-	return &App{
+	a := &App{
 		Window:   window,
 		Sidebar:  s,
 		ChatView: cv,
-	}, nil
+	}
+
+	keyCtrl := gtk.NewEventControllerKey()
+	keyCtrl.ConnectKeyPressed(func(keyval uint, keycode uint, state gdk.ModifierType) bool {
+		if a.OnKeyPressed != nil {
+			keyName := gdk.KeyvalName(keyval)
+			return a.OnKeyPressed(keyName, state)
+		}
+		return false
+	})
+	window.AddController(keyCtrl)
+
+	return a, nil
 }
 
 func loadCSS() {
