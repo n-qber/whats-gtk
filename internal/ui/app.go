@@ -67,8 +67,8 @@ func NewApp(app *adw.Application) (*App, error) {
 			case "minus", "underscore", "KP_Subtract":
 				a.Zoom(-0.1)
 				return true
-			case "0", "KP_0":
-				a.ResetZoom()
+			case "space":
+				a.Sidebar.SearchEntry.GrabFocus()
 				return true
 			}
 		}
