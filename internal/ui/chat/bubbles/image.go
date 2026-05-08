@@ -8,12 +8,36 @@ import (
 type ImageBubble struct {
 	*baseBubble
 	picture           *gtk.Picture
+	placeholder       *gtk.Box
 	OnDownloadRequest func()
 }
+
 func NewImageBubble(name string, tex, thumb *gdk.Texture, isSelf bool, status, time string, avatar *gdk.Texture, realW, realH int) (*ImageBubble, error) {
+	overlay := gtk.NewOverlay()
+
 	picture := gtk.NewPicture()
 	picture.SetContentFit(gtk.ContentFitCover)
 	picture.SetCanShrink(true)
+	picture.AddCSSClass("message-image")
+
+	placeholder := gtk.NewBox(gtk.OrientationVertical, 0)
+	placeholder.AddCSSClass("image-placeholder")
+	placeholder.SetSizeRequest(200, 150)
+	placeholder.SetHAlign(gtk.AlignCenter)
+	placeholder.SetVAlign(gtk.AlignCenter)
+	placeholder.SetHExpand(false)
+	placeholder.SetVExpand(false)
+	
+	downloadIcon := gtk.NewImageFromIconName("folder-download-symbolic")
+	downloadIcon.SetPixelSize(48)
+	downloadIcon.SetVAlign(gtk.AlignCenter)
+	downloadIcon.SetHAlign(gtk.AlignCenter)
+	placeholder.Append(downloadIcon)
+
+	overlay.SetChild(picture)
+	overlay.AddOverlay(placeholder)
+	overlay.SetHAlign(gtk.AlignStart)
+	overlay.SetVAlign(gtk.AlignStart)
 
 	displayTex := tex
 	if displayTex == nil && thumb != nil {
@@ -21,6 +45,7 @@ func NewImageBubble(name string, tex, thumb *gdk.Texture, isSelf bool, status, t
 	}
 
 	if displayTex != nil {
+		placeholder.Hide()
 		picture.SetPaintable(displayTex)
 
 		w, h := float64(displayTex.Width()), float64(displayTex.Height())
@@ -35,21 +60,21 @@ func NewImageBubble(name string, tex, thumb *gdk.Texture, isSelf bool, status, t
 			h *= ratio
 		}
 		picture.SetSizeRequest(int(w), int(h))
+	} else {
+		picture.Hide()
+		placeholder.Show()
 	}
 
-
-	picture.AddCSSClass("message-image")
-
 	click := gtk.NewGestureClick()
-	picture.AddController(click)
+	overlay.AddController(click)
 
-	base, err := newBaseBubble(name, "[Image]", picture, isSelf, true, status, time, avatar)
+	base, err := newBaseBubble(name, "[Image]", overlay, isSelf, true, status, time, avatar)
 
 	if err != nil {
 		return nil, err
 	}
 
-	ib := &ImageBubble{baseBubble: base, picture: picture}
+	ib := &ImageBubble{baseBubble: base, picture: picture, placeholder: placeholder}
 
 	click.ConnectPressed(func(n int, x, y float64) {
 		if ib.OnDownloadRequest != nil {
@@ -62,6 +87,8 @@ func NewImageBubble(name string, tex, thumb *gdk.Texture, isSelf bool, status, t
 
 func (ib *ImageBubble) UpdateImage(tex *gdk.Texture) {
 	if tex != nil {
+		ib.placeholder.Hide()
+		ib.picture.Show()
 		ib.picture.SetPaintable(tex)
 		w, h := float64(tex.Width()), float64(tex.Height())
 		if w > 300 || h > 300 {

@@ -44,6 +44,10 @@ type ContactEvent struct {
 	Info *events.Contact
 }
 
+type MediaRetryEvent struct {
+	Info *events.MediaRetry
+}
+
 func (b *Backend) registerEventHandlers() {
 	b.Client.AddEventHandler(func(evt interface{}) {
 		var appEvt AppEvent
@@ -71,8 +75,13 @@ func (b *Backend) registerEventHandlers() {
 			appEvt = &OfflineSyncCompletedEvent{}
 		case *events.IdentityChange:
 			appEvt = &IdentityChangeEvent{Info: v}
+		case *events.MediaRetry:
+			appEvt = &MediaRetryEvent{Info: v}
 		default:
-			// log unhandled event or pass as is
+			if v != nil {
+				// Log the type for debugging
+				// fmt.Printf("Backend: Received unhandled event: %T\n", v)
+			}
 			appEvt = evt
 		}
 

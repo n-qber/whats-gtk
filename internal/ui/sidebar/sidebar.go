@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 )
@@ -84,7 +85,7 @@ func (s *Sidebar) AddChat(jid, name string) {
 	}
 
 	row := adw.NewActionRow()
-	row.SetTitle(name)
+	row.SetTitle(glib.MarkupEscapeText(name))
 	row.SetName(jid)
 	
 	// Clean name for initials (remove [G] and unread count)

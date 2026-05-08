@@ -8,9 +8,11 @@ import (
 type AudioBubble struct {
 	*baseBubble
 	playButton        *gtk.Button
+	playImg           *gtk.Image
 	slider            *gtk.Scale
 	audioPath         string
 	isPlaying         bool
+	isDownloading     bool
 	OnDownloadRequest func()
 	OnPlayRequest     func()
 	OnStopRequest     func()
@@ -23,7 +25,7 @@ func NewAudioBubble(name string, isSelf bool, status, time string, avatar *gdk.T
 	playButton.SetHasFrame(false)
 	playButton.AddCSSClass("audio-play-button")
 	
-	playImg := gtk.NewImageFromIconName("media-playback-start")
+	playImg := gtk.NewImageFromIconName("folder-download-symbolic")
 	playImg.SetPixelSize(32)
 	playButton.SetChild(playImg)
 
@@ -44,23 +46,29 @@ func NewAudioBubble(name string, isSelf bool, status, time string, avatar *gdk.T
 	ab := &AudioBubble{
 		baseBubble: base,
 		playButton: playButton,
+		playImg:    playImg,
 		slider:     slider,
 	}
 
 	playButton.ConnectClicked(func() {
 		if ab.audioPath == "" {
-			if ab.OnDownloadRequest != nil {
-				ab.OnDownloadRequest()
+			if !ab.isDownloading {
+				ab.isDownloading = true
+				ab.playImg.SetFromIconName("process-working-symbolic")
+				if ab.OnDownloadRequest != nil {
+					ab.OnDownloadRequest()
+				}
+			}
+			return
+		}
+		
+		if ab.isPlaying {
+			if ab.OnStopRequest != nil {
+				ab.OnStopRequest()
 			}
 		} else {
-			if ab.isPlaying {
-				if ab.OnStopRequest != nil {
-					ab.OnStopRequest()
-				}
-			} else {
-				if ab.OnPlayRequest != nil {
-					ab.OnPlayRequest()
-				}
+			if ab.OnPlayRequest != nil {
+				ab.OnPlayRequest()
 			}
 		}
 	})
@@ -72,6 +80,12 @@ func (ab *AudioBubble) AudioPath() string { return ab.audioPath }
 
 func (ab *AudioBubble) SetAudioPath(path string) {
 	ab.audioPath = path
+	ab.isDownloading = false
+	if path != "" {
+		ab.playImg.SetFromIconName("media-playback-start")
+	} else {
+		ab.playImg.SetFromIconName("folder-download-symbolic")
+	}
 }
 
 func (ab *AudioBubble) SetPlaying(playing bool) {
@@ -80,8 +94,5 @@ func (ab *AudioBubble) SetPlaying(playing bool) {
 	if playing {
 		icon = "media-playback-pause"
 	}
-	
-	if img, ok := ab.playButton.Child().(*gtk.Image); ok {
-		img.SetFromIconName(icon)
-	}
+	ab.playImg.SetFromIconName(icon)
 }

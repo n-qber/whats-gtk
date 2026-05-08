@@ -1,6 +1,9 @@
 package chat
 
 import (
+	"fmt"
+	"strings"
+
 	"whats-gtk/internal/ui/chat/bubbles"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -126,7 +129,13 @@ func (cv *ChatView) SetReplyTo(id, sender, content string) {
 	cv.ReplyToID = id
 	cv.ReplyToSender = sender
 	cv.ReplyToContent = content
-	cv.ReplyPreviewLabel.SetMarkup("Replying to <b>" + sender + "</b>: " + content)
+
+	markupSender := sender
+	if !strings.Contains(sender, "<span") {
+		markupSender = glib.MarkupEscapeText(sender)
+	}
+
+	cv.ReplyPreviewLabel.SetMarkup("Replying to <b>" + markupSender + "</b>: " + glib.MarkupEscapeText(content))
 	cv.ReplyPreviewBox.Show()
 	glib.IdleAdd(func() {
 		cv.MessageEntry.GrabFocus()
@@ -182,6 +191,21 @@ func (cv *ChatView) AddAudio(id, jid, name string, isSelf, isCont bool, status, 
 				cv.OnDownloadMedia(id)
 			}
 		}
+		bubble.OnPlayRequest = func() {
+			err := cv.AudioPlayer.Play(bubble.AudioPath(), func() {
+				glib.IdleAdd(func() {
+					bubble.SetPlaying(false)
+				})
+			})
+			if err != nil {
+				fmt.Printf("ChatView: Audio play error: %v\n", err)
+				return
+			}
+			bubble.SetPlaying(true)
+		}
+		bubble.OnStopRequest = func() {
+			cv.AudioPlayer.Stop()
+		}
 		bubble.SetQuotedMessage(qID, qSender, qContent)
 		cv.registerBubble(id, jid, bubble, isCont)
 	}
@@ -201,8 +225,8 @@ func (cv *ChatView) AddVideo(id, jid, name string, thumb *gdk.Texture, isSelf, i
 	}
 }
 
-func (cv *ChatView) AddDocument(id, jid, name, fileName string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string) {
-	bubble, err := bubbles.NewDocumentBubble(name, fileName, isSelf, status, tStr, av)
+func (cv *ChatView) AddDocument(id, jid, name, fileName string, thumb *gdk.Texture, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string) {
+	bubble, err := bubbles.NewDocumentBubble(name, fileName, thumb, isSelf, status, tStr, av)
 	if err == nil {
 		bubble.OnDownloadRequest = func() {
 			if cv.OnDownloadMedia != nil {

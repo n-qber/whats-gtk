@@ -17,6 +17,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/skip2/go-qrcode"
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -382,10 +383,19 @@ func (br *Bridge) refreshMessages(jid types.JID) {
 					}
 				} else if m.Type == "document" {
 					fileName := "file"
-					if m.Content != "" && strings.HasPrefix(m.Content, "[Document: ") {
-						fileName = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Document: "), "]")
+					if m.Content != "" {
+						if strings.HasPrefix(m.Content, "[Document: ") {
+							fileName = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Document: "), "]")
+						} else if strings.Contains(m.Content, "media/") {
+							// Extract original name from saved path: media/ID_FileName.ext
+							base := filepath.Base(m.Content)
+							if idx := strings.Index(base, "_"); idx != -1 {
+								fileName = base[idx+1:]
+							}
+						}
 					}
-					br.App.ChatView.AddDocument(m.ID, m.SenderJID, sName, fileName, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+					texThumb := br.bytesToTexture(m.Thumbnail)
+					br.App.ChatView.AddDocument(m.ID, m.SenderJID, sName, fileName, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
 					if m.Content != "" && !strings.HasPrefix(m.Content, "[Document: ") {
 						if _, err := os.Stat(m.Content); err == nil {
 							br.App.ChatView.UpdateMessageDocument(m.ID, m.Content)
@@ -459,7 +469,34 @@ func (br *Bridge) HandleEvent(evt backend.AppEvent) {
 		br.handleContact(v)
 	case *backend.PushNameEvent:
 		br.handlePushName(v)
+	case *backend.MediaRetryEvent:
+		br.handleMediaRetry(v)
 	}
+}
+
+func (br *Bridge) handleMediaRetry(v *backend.MediaRetryEvent) {
+	fmt.Printf("Bridge: Received Media Retry for %s\n", v.Info.MessageID)
+	
+	msg, err := br.DB.GetMessage(v.Info.MessageID)
+	if err != nil { return }
+
+	retryData, err := whatsmeow.DecryptMediaRetryNotification(v.Info, msg.MediaKey)
+	if err != nil {
+		fmt.Printf("Bridge: Failed to decrypt Media Retry: %v\n", err)
+		return
+	}
+
+	if retryData.GetResult() != waProto.MediaRetryNotification_SUCCESS {
+		fmt.Printf("Bridge: Media Retry failed with result %s\n", retryData.GetResult())
+		return
+	}
+
+	msg.MediaDirectPath = sql.NullString{String: retryData.GetDirectPath(), Valid: retryData.GetDirectPath() != ""}
+	
+	br.DB.SaveMessage(*msg)
+
+	// Re-trigger download
+	br.handleDownloadMedia(v.Info.MessageID)
 }
 
 func (br *Bridge) handleHistorySync(v *backend.HistorySyncEvent) {
@@ -548,7 +585,8 @@ func (br *Bridge) handleMessage(v *backend.MessageEvent) {
 				} else if aud := msg.Message.GetAudioMessage(); aud != nil {
 					br.App.ChatView.AddAudio(msg.Info.ID, sJID, sName, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
 				} else if doc := msg.Message.GetDocumentMessage(); doc != nil {
-					br.App.ChatView.AddDocument(msg.Info.ID, sJID, sName, doc.GetFileName(), msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+					texThumb := br.bytesToTexture(doc.GetJPEGThumbnail())
+					br.App.ChatView.AddDocument(msg.Info.ID, sJID, sName, doc.GetFileName(), texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
 				} else if poll := msg.Message.GetPollCreationMessage(); poll != nil {
 					var opts []string
 					for _, o := range poll.GetOptions() {
@@ -595,10 +633,17 @@ func (br *Bridge) uniqueReactions(reactions []database.Reaction) []string {
 }
 
 func (br *Bridge) handleDownloadMedia(id string) {
+	fmt.Printf("Bridge: handleDownloadMedia called for %s\n", id)
 	msg, err := br.DB.GetMessage(id)
-	if err != nil { return }
-	
-	if msg.MediaURL.String == "" && msg.MediaDirectPath.String == "" { return }
+	if err != nil { 
+		fmt.Printf("Bridge: Message %s not found in DB\n", id)
+		return 
+	}
+
+	if msg.MediaURL.String == "" && msg.MediaDirectPath.String == "" {
+		fmt.Printf("Bridge: Message %s has no media URLs\n", id)
+		return 
+	}
 
 	metadata := &MediaMetadata{
 		URL: msg.MediaURL.String, DirectPath: msg.MediaDirectPath.String,
@@ -607,11 +652,11 @@ func (br *Bridge) handleDownloadMedia(id string) {
 		FileLength: uint64(msg.MediaLength.Int64),
 	}
 
+	fmt.Printf("Bridge: Sending DownloadTask for %s (type %s)\n", id, msg.Type)
 	br.Media.Download(DownloadTask{
 		ID: id, ChatJID: msg.ChatJID, SenderJID: msg.SenderJID, MsgType: msg.Type, Metadata: metadata,
 	})
 }
-
 func (br *Bridge) bytesToTexture(data []byte) *gdk.Texture {
 	if len(data) == 0 { return nil }
 	loader := gdkpixbuf.NewPixbufLoader()
