@@ -79,6 +79,19 @@ func (s *Sidebar) SelectChat(jid string) {
 	}
 }
 
+func (s *Sidebar) SelectIndex(index int) {
+	row := s.ListBox.RowAtIndex(index)
+	if row != nil {
+		s.ListBox.SelectRow(row)
+	}
+}
+
+func (s *Sidebar) ClearSelection() {
+	s.isRefreshing = true
+	s.ListBox.SelectRow(nil)
+	s.isRefreshing = false
+}
+
 func (s *Sidebar) AddChat(jid, name string) {
 	if _, exists := s.chatRows[jid]; exists {
 		return

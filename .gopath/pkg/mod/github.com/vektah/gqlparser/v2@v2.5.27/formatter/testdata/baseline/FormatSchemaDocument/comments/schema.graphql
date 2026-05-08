@@ -1,0 +1,66 @@
+# before schema description comment
+"""
+schema description
+"""
+# after schema description comment
+schema {
+	# before query comment
+	query: TopQuery
+	# before mutation comment
+	mutation: TopMutation
+	# before subscription comment
+	subscription: TopSubscription
+	# end of schema comment
+}
+type TopMutation {
+	noop: Boolean
+	noop2(
+		"""
+		noop2 foo bar
+		"""
+		arg: String
+	): Boolean
+	noop3(
+		"""
+		noop3 foo bar
+		"""
+		arg: String
+	): Boolean
+}
+type TopQuery {
+	noop: Boolean
+	noop2(
+		"""
+		noop2 foo bar
+		"""
+		arg: String
+	): Boolean
+	noop3(
+		"""
+		noop3 foo bar
+		"""
+		arg: String
+	): Boolean
+}
+type TopSubscription {
+	noop: Boolean
+	noop2(
+		"""
+		noop2 foo bar
+		"""
+		arg: String
+	): Boolean
+	noop3(
+		"""
+		noop3 foo bar
+		"""
+		arg1: String
+
+		"""
+		noop3 foo bar
+		"""
+		arg2: String
+	): Boolean
+}
+# end of file comment
+# end of file comment 2

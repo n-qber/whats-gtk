@@ -175,6 +175,27 @@ func (br *Bridge) setupUIHandlers() {
 			br.App.ChatView.FocusEntry()
 		})
 	})
+
+	// Ctrl+1 to Ctrl+9 to open chats by index
+	for i := 1; i <= 9; i++ {
+		idx := i - 1
+		key := fmt.Sprintf("Control+%d", i)
+		br.Input.Register(key, func() {
+			glib.IdleAdd(func() {
+				br.App.Sidebar.SelectIndex(idx)
+			})
+		})
+	}
+
+	// Ctrl+0 to return to initial screen
+	br.Input.Register("Control+0", func() {
+		glib.IdleAdd(func() {
+			br.selectedJID = nil
+			br.App.Sidebar.ClearSelection()
+			br.App.ChatView.Clear()
+			br.App.ChatView.SetHeader("WhatsApp GTK", nil)
+		})
+	})
 }
 
 func (br *Bridge) handleKeyPressed(key string, mods gdk.ModifierType) bool {
