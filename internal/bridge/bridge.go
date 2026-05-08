@@ -531,6 +531,12 @@ func (br *Bridge) handleMessage(v *backend.MessageEvent) {
 	resolvedChat := br.resolveJID(msg.Info.Chat)
 	if !br.isSyncing || (br.selectedJID != nil && resolvedChat.ToNonAD().String() == br.selectedJID.ToNonAD().String()) {
 		jid := resolvedChat.ToNonAD().String()
+
+		// Automatically mark as read if this chat is currently selected
+		if br.selectedJID != nil && jid == br.selectedJID.ToNonAD().String() {
+			go br.Backend.MarkRead(br.ctx, msg.Info.Chat, []string{msg.Info.ID}, msg.Info.Sender, time.Now())
+		}
+
 		glib.IdleAdd(func() {
 			br.App.Sidebar.MoveChatToTop(jid)
 			if br.selectedJID != nil && resolvedChat.ToNonAD().String() == br.selectedJID.ToNonAD().String() {
