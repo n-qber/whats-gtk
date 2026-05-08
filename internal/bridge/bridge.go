@@ -72,6 +72,90 @@ func (br *Bridge) registerDefaultHooks() {
 		}
 		return nil
 	})
+
+	// Hook to render messages in the UI
+	br.Pipeline.AddHook(func(ctx context.Context, msg *events.Message) error {
+		resolvedChat := br.resolveJID(msg.Info.Chat)
+		if !br.isSyncing || (br.selectedJID != nil && resolvedChat.ToNonAD().String() == br.selectedJID.ToNonAD().String()) {
+			jid := resolvedChat.ToNonAD().String()
+
+			// Automatically mark as read if this chat is currently selected
+			if br.selectedJID != nil && jid == br.selectedJID.ToNonAD().String() {
+				go br.Backend.MarkRead(br.ctx, msg.Info.Chat, []string{msg.Info.ID}, msg.Info.Sender, time.Now())
+			}
+
+			glib.IdleAdd(func() {
+				br.App.Sidebar.MoveChatToTop(jid)
+				if br.selectedJID != nil && resolvedChat.ToNonAD().String() == br.selectedJID.ToNonAD().String() {
+					tStr := msg.Info.Timestamp.Format("15:04"); sName := ""; var av *gdk.Texture; isG := msg.Info.Chat.Server == types.GroupServer
+					
+					resolvedSender := br.resolveJID(msg.Info.Sender)
+					sJID := resolvedSender.ToNonAD().String()
+					isCont := sJID == br.lastSender
+					
+					if isG && !msg.Info.IsFromMe {
+						if !isCont {
+							sName = br.Contacts.ResolveSenderName(sJID)
+							av = br.Contacts.GetAvatar(sJID)
+						}
+					}
+					br.lastSender = sJID
+					
+					var qID, qSender, qContent string
+					var qSenderName string
+					if ci := br.extractContextInfo(msg); ci != nil && ci.GetStanzaID() != "" {
+						qID = ci.GetStanzaID()
+						qSender = ci.GetParticipant()
+						if qSender != "" {
+							qSenderName = br.Contacts.ResolveSenderName(qSender)
+						}
+						if qm := ci.GetQuotedMessage(); qm != nil {
+							if qm.GetConversation() != "" {
+								qContent = qm.GetConversation()
+							} else if qm.GetExtendedTextMessage() != nil {
+								qContent = qm.GetExtendedTextMessage().GetText()
+							} else {
+								qContent = "[Quoted Media]"
+							}
+						}
+					}
+					
+					var mW, mH int
+					if img := msg.Message.GetImageMessage(); img != nil {
+						mW = int(img.GetWidth()); mH = int(img.GetHeight())
+						texThumb := br.bytesToTexture(img.GetJPEGThumbnail())
+						br.App.ChatView.AddImage(msg.Info.ID, sJID, sName, nil, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
+					} else if stkr := msg.Message.GetStickerMessage(); stkr != nil {
+						mW = int(stkr.GetWidth()); mH = int(stkr.GetHeight())
+						texThumb := br.bytesToTexture(stkr.GetPngThumbnail())
+						br.App.ChatView.AddSticker(msg.Info.ID, sJID, sName, nil, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
+					} else if vid := msg.Message.GetVideoMessage(); vid != nil {
+						mW = int(vid.GetWidth()); mH = int(vid.GetHeight())
+						texThumb := br.bytesToTexture(vid.GetJPEGThumbnail())
+						br.App.ChatView.AddVideo(msg.Info.ID, sJID, sName, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
+					} else if aud := msg.Message.GetAudioMessage(); aud != nil {
+						br.App.ChatView.AddAudio(msg.Info.ID, sJID, sName, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+					} else if doc := msg.Message.GetDocumentMessage(); doc != nil {
+						texThumb := br.bytesToTexture(doc.GetJPEGThumbnail())
+						br.App.ChatView.AddDocument(msg.Info.ID, sJID, sName, doc.GetFileName(), texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+					} else if poll := msg.Message.GetPollCreationMessage(); poll != nil {
+						var opts []string
+						for _, o := range poll.GetOptions() {
+							opts = append(opts, o.GetOptionName())
+						}
+						br.App.ChatView.AddPoll(msg.Info.ID, sJID, sName, poll.GetName(), opts, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+					} else {
+						content := br.extractContent(msg)
+						if content != "" {
+							br.App.ChatView.AddMessage(msg.Info.ID, sJID, sName, content, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+						}
+					}
+					br.App.ChatView.ScrollToBottom()
+				}
+			})
+		}
+		return nil
+	})
 }
 
 func (br *Bridge) setupUIHandlers() {
@@ -572,88 +656,8 @@ func (br *Bridge) handleMessage(v *backend.MessageEvent) {
 
 	br.persistMessage(msg)
 	
-	// Process message through hooks
+	// Process message through hooks (Rendering, auto-download, etc.)
 	br.Pipeline.Process(msg)
-	
-	resolvedChat := br.resolveJID(msg.Info.Chat)
-	if !br.isSyncing || (br.selectedJID != nil && resolvedChat.ToNonAD().String() == br.selectedJID.ToNonAD().String()) {
-		jid := resolvedChat.ToNonAD().String()
-
-		// Automatically mark as read if this chat is currently selected
-		if br.selectedJID != nil && jid == br.selectedJID.ToNonAD().String() {
-			go br.Backend.MarkRead(br.ctx, msg.Info.Chat, []string{msg.Info.ID}, msg.Info.Sender, time.Now())
-		}
-
-		glib.IdleAdd(func() {
-			br.App.Sidebar.MoveChatToTop(jid)
-			if br.selectedJID != nil && resolvedChat.ToNonAD().String() == br.selectedJID.ToNonAD().String() {
-				tStr := msg.Info.Timestamp.Format("15:04"); sName := ""; var av *gdk.Texture; isG := msg.Info.Chat.Server == types.GroupServer
-				
-				resolvedSender := br.resolveJID(msg.Info.Sender)
-				sJID := resolvedSender.ToNonAD().String()
-				isCont := sJID == br.lastSender
-				
-				if isG && !msg.Info.IsFromMe {
-					if !isCont {
-						sName = br.Contacts.ResolveSenderName(sJID)
-						av = br.Contacts.GetAvatar(sJID)
-					}
-				}
-				br.lastSender = sJID
-				
-				var qID, qSender, qContent string
-				var qSenderName string
-				if ci := br.extractContextInfo(msg); ci != nil && ci.GetStanzaID() != "" {
-					qID = ci.GetStanzaID()
-					qSender = ci.GetParticipant()
-					if qSender != "" {
-						qSenderName = br.Contacts.ResolveSenderName(qSender)
-					}
-					if qm := ci.GetQuotedMessage(); qm != nil {
-						if qm.GetConversation() != "" {
-							qContent = qm.GetConversation()
-						} else if qm.GetExtendedTextMessage() != nil {
-							qContent = qm.GetExtendedTextMessage().GetText()
-						} else {
-							qContent = "[Quoted Media]"
-						}
-					}
-				}
-				
-				var mW, mH int
-				if img := msg.Message.GetImageMessage(); img != nil {
-					mW = int(img.GetWidth()); mH = int(img.GetHeight())
-					texThumb := br.bytesToTexture(img.GetJPEGThumbnail())
-					br.App.ChatView.AddImage(msg.Info.ID, sJID, sName, nil, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
-				} else if stkr := msg.Message.GetStickerMessage(); stkr != nil {
-					mW = int(stkr.GetWidth()); mH = int(stkr.GetHeight())
-					texThumb := br.bytesToTexture(stkr.GetPngThumbnail())
-					br.App.ChatView.AddSticker(msg.Info.ID, sJID, sName, nil, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
-				} else if vid := msg.Message.GetVideoMessage(); vid != nil {
-					mW = int(vid.GetWidth()); mH = int(vid.GetHeight())
-					texThumb := br.bytesToTexture(vid.GetJPEGThumbnail())
-					br.App.ChatView.AddVideo(msg.Info.ID, sJID, sName, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
-				} else if aud := msg.Message.GetAudioMessage(); aud != nil {
-					br.App.ChatView.AddAudio(msg.Info.ID, sJID, sName, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
-				} else if doc := msg.Message.GetDocumentMessage(); doc != nil {
-					texThumb := br.bytesToTexture(doc.GetJPEGThumbnail())
-					br.App.ChatView.AddDocument(msg.Info.ID, sJID, sName, doc.GetFileName(), texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
-				} else if poll := msg.Message.GetPollCreationMessage(); poll != nil {
-					var opts []string
-					for _, o := range poll.GetOptions() {
-						opts = append(opts, o.GetOptionName())
-					}
-					br.App.ChatView.AddPoll(msg.Info.ID, sJID, sName, poll.GetName(), opts, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
-				} else {
-					content := br.extractContent(msg)
-					if content != "" {
-						br.App.ChatView.AddMessage(msg.Info.ID, sJID, sName, content, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
-					}
-				}
-				br.App.ChatView.ScrollToBottom()
-			}
-		})
-	}
 }
 
 func (br *Bridge) handleReactionInternal(chat, sender types.JID, text, targetID string, timestamp time.Time) {
