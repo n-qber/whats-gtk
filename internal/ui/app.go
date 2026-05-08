@@ -50,17 +50,25 @@ func NewApp(app *adw.Application) (*App, error) {
 
 	keyCtrl := gtk.NewEventControllerKey()
 	keyCtrl.ConnectKeyPressed(func(keyval uint, keycode uint, state gdk.ModifierType) bool {
+		keyName := gdk.KeyvalName(keyval)
+		if keyName == "Control_L" || keyName == "Control_R" {
+			if a.OnModifiersChanged != nil {
+				a.OnModifiersChanged(state | gdk.ControlMask)
+			}
+		}
 		if a.OnKeyPressed != nil {
-			keyName := gdk.KeyvalName(keyval)
 			return a.OnKeyPressed(keyName, state)
 		}
 		return false
 	})
-	keyCtrl.ConnectModifiers(func(state gdk.ModifierType) bool {
-		if a.OnModifiersChanged != nil {
-			a.OnModifiersChanged(state)
+	keyCtrl.ConnectKeyReleased(func(keyval uint, keycode uint, state gdk.ModifierType) {
+		keyName := gdk.KeyvalName(keyval)
+		if keyName == "Control_L" || keyName == "Control_R" {
+			if a.OnModifiersChanged != nil {
+				// When released, we explicitly clear the control mask bit for the callback
+				a.OnModifiersChanged(state &^ gdk.ControlMask)
+			}
 		}
-		return false
 	})
 	window.AddController(keyCtrl)
 
