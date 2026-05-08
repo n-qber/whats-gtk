@@ -167,6 +167,14 @@ func (br *Bridge) setupUIHandlers() {
 	br.App.ChatView.OnSendReaction = br.handleSendReaction
 
 	br.App.OnKeyPressed = br.handleKeyPressed
+	br.App.OnModifiersChanged = func(mods gdk.ModifierType) {
+		show := mods&gdk.ControlMask != 0
+		glib.IdleAdd(func() {
+			if br.App.Sidebar != nil {
+				br.App.Sidebar.ShowIndices(show)
+			}
+		})
+	}
 
 	// Register some default shortcuts
 	br.Input.Register("Escape", func() {
@@ -189,11 +197,16 @@ func (br *Bridge) setupUIHandlers() {
 
 	// Ctrl+0 to return to initial screen
 	br.Input.Register("Control+0", func() {
+		fmt.Println("Bridge: Ctrl+0 triggered, returning to home screen")
 		glib.IdleAdd(func() {
 			br.selectedJID = nil
-			br.App.Sidebar.ClearSelection()
-			br.App.ChatView.Clear()
-			br.App.ChatView.SetHeader("WhatsApp GTK", nil)
+			if br.App.Sidebar != nil {
+				br.App.Sidebar.ClearSelection()
+			}
+			if br.App.ChatView != nil {
+				br.App.ChatView.Clear()
+				br.App.ChatView.SetHeader("WhatsApp GTK", nil)
+			}
 		})
 	})
 }
@@ -335,7 +348,9 @@ func (br *Bridge) handleChatSelected(jidStr string) {
 	br.refreshMessages(jid)
 	
 	// Mark as read
-	go br.Backend.MarkRead(br.ctx, jid, []string{}, types.JID{}, time.Now())
+	if br.Backend != nil && br.Backend.Client != nil {
+		go br.Backend.MarkRead(br.ctx, jid, []string{}, types.JID{}, time.Now())
+	}
 
 	if strings.HasSuffix(jid.String(), "@lid") && !br.isSyncing {
 		go br.Contacts.ResolveLIDMapping(jid.String())
@@ -345,14 +360,22 @@ func (br *Bridge) handleChatSelected(jidStr string) {
 		br.syncGroupIfNeeded(jid)
 	}
 
-	br.App.ChatView.FocusEntry()
+	if br.App.ChatView != nil {
+		br.App.ChatView.FocusEntry()
+	}
 }
 
 func (br *Bridge) syncGroupIfNeeded(jid types.JID) {
+	if br.Backend == nil || br.Backend.Client == nil { return }
+
 	lastSync, exists := br.lastGroupSync[jid.String()]
 	if !exists || time.Since(lastSync) > 30*time.Minute {
 		go func(groupJID types.JID) {
-			info, err := br.Backend.GetGroupInfo(br.ctx, groupJID); if err != nil { return }
+			info, err := br.Backend.GetGroupInfo(br.ctx, groupJID)
+			if err != nil || info == nil { 
+				fmt.Printf("Bridge: Failed to get group info for %s: %v\n", groupJID, err)
+				return 
+			}
 			br.lastGroupSync[groupJID.String()] = time.Now()
 			for _, p := range info.Participants {
 				pn := p.PhoneNumber.ToNonAD().String(); lid := p.LID.ToNonAD().String()

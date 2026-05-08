@@ -1,6 +1,7 @@
 package sidebar
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -18,6 +19,7 @@ type Sidebar struct {
 	
 	chatRows       map[string]*adw.ActionRow
 	chatAvatars    map[string]*adw.Avatar
+	chatIndices    map[string]*gtk.Label
 	isRefreshing   bool
 }
 
@@ -47,6 +49,7 @@ func NewSidebar() (*Sidebar, error) {
 		SearchEntry: searchEntry,
 		chatRows:    make(map[string]*adw.ActionRow),
 		chatAvatars: make(map[string]*adw.Avatar),
+		chatIndices: make(map[string]*gtk.Label),
 	}
 
 	searchEntry.ConnectSearchChanged(func() {
@@ -92,6 +95,16 @@ func (s *Sidebar) ClearSelection() {
 	s.isRefreshing = false
 }
 
+func (s *Sidebar) ShowIndices(show bool) {
+	for _, label := range s.chatIndices {
+		if show {
+			label.Show()
+		} else {
+			label.Hide()
+		}
+	}
+}
+
 func (s *Sidebar) AddChat(jid, name string) {
 	if _, exists := s.chatRows[jid]; exists {
 		return
@@ -109,8 +122,20 @@ func (s *Sidebar) AddChat(jid, name string) {
 	avatar := adw.NewAvatar(32, cleanName, true)
 	row.AddPrefix(avatar)
 	
+	// Add index label
+	idx := len(s.chatRows) + 1
+	idxLabel := gtk.NewLabel(fmt.Sprintf("%d", idx))
+	if idx > 9 {
+		idxLabel.SetText("") // Only 1-9 are supported for now
+	}
+	idxLabel.AddCSSClass("chat-index-label")
+	idxLabel.SetOpacity(0.5)
+	idxLabel.Hide()
+	row.AddSuffix(idxLabel)
+	
 	s.chatRows[jid] = row
 	s.chatAvatars[jid] = avatar
+	s.chatIndices[jid] = idxLabel
 	
 	// We need to wrap it in a ListBoxRow to set the name for lookup
 	lbRow := gtk.NewListBoxRow()
@@ -123,6 +148,7 @@ func (s *Sidebar) AddChat(jid, name string) {
 func (s *Sidebar) ClearChats() {
 	s.chatRows = make(map[string]*adw.ActionRow)
 	s.chatAvatars = make(map[string]*adw.Avatar)
+	s.chatIndices = make(map[string]*gtk.Label)
 	for {
 		child := s.ListBox.FirstChild()
 		if child == nil {

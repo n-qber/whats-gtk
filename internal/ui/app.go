@@ -10,12 +10,13 @@ import (
 )
 
 type App struct {
-	Window       *adw.ApplicationWindow
-	Sidebar      *sidebar.Sidebar
-	ChatView     *chat.ChatView
-	QRDialog     *gtk.Window
-	QRImage      *gtk.Image
-	OnKeyPressed func(key string, mods gdk.ModifierType) bool
+	Window             *adw.ApplicationWindow
+	Sidebar            *sidebar.Sidebar
+	ChatView           *chat.ChatView
+	QRDialog           *gtk.Window
+	QRImage            *gtk.Image
+	OnKeyPressed       func(key string, mods gdk.ModifierType) bool
+	OnModifiersChanged func(mods gdk.ModifierType)
 }
 
 func NewApp(app *adw.Application) (*App, error) {
@@ -52,6 +53,12 @@ func NewApp(app *adw.Application) (*App, error) {
 		if a.OnKeyPressed != nil {
 			keyName := gdk.KeyvalName(keyval)
 			return a.OnKeyPressed(keyName, state)
+		}
+		return false
+	})
+	keyCtrl.ConnectModifiers(func(state gdk.ModifierType) bool {
+		if a.OnModifiersChanged != nil {
+			a.OnModifiersChanged(state)
 		}
 		return false
 	})
