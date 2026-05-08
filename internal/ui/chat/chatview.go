@@ -119,9 +119,19 @@ func NewChatView() (*ChatView, error) {
 }
 
 func (cv *ChatView) SetHeader(name string, tex *gdk.Texture) {
-	cv.ChatHeaderLabel.SetText(name)
-	cv.ChatHeaderImage.SetText(name)
-	cv.ChatHeaderImage.SetCustomImage(tex)
+	if cv == nil { return }
+	if cv.ChatHeaderLabel != nil {
+		cv.ChatHeaderLabel.SetText(name)
+	}
+	if cv.ChatHeaderImage != nil {
+		cv.ChatHeaderImage.SetText(name)
+		if tex != nil {
+			cv.ChatHeaderImage.SetCustomImage(tex)
+		} else {
+			// Explicitly pass untyped nil to avoid interface-with-nil-pointer panic
+			cv.ChatHeaderImage.SetCustomImage(nil)
+		}
+	}
 }
 
 func (cv *ChatView) SetReplyTo(id, sender, content string) {

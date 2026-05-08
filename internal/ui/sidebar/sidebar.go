@@ -166,12 +166,20 @@ func (s *Sidebar) SetAvatar(jid string, tex *gdk.Texture) {
 	// Normalize JID for lookup
 	jid = strings.Split(jid, ".")[0] // Handle potential .AD suffixes
 	if avatar, exists := s.chatAvatars[jid]; exists {
-		avatar.SetCustomImage(tex)
+		if tex != nil {
+			avatar.SetCustomImage(tex)
+		} else {
+			avatar.SetCustomImage(nil)
+		}
 	} else {
 		// Try search by Name if JID didn't match exactly
 		for j, av := range s.chatAvatars {
 			if strings.HasPrefix(j, jid) || strings.HasPrefix(jid, j) {
-				av.SetCustomImage(tex)
+				if tex != nil {
+					av.SetCustomImage(tex)
+				} else {
+					av.SetCustomImage(nil)
+				}
 			}
 		}
 	}
