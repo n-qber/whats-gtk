@@ -121,9 +121,7 @@ func NewChatView() (*ChatView, error) {
 func (cv *ChatView) SetHeader(name string, tex *gdk.Texture) {
 	cv.ChatHeaderLabel.SetText(name)
 	cv.ChatHeaderImage.SetText(name)
-	if tex != nil {
-		cv.ChatHeaderImage.SetCustomImage(tex)
-	}
+	cv.ChatHeaderImage.SetCustomImage(tex)
 }
 
 func (cv *ChatView) SetReplyTo(id, sender, content string) {
