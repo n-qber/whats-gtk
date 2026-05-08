@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 	"whats-gtk/internal/backend"
+	"whats-gtk/internal/core"
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/ui"
 
@@ -33,6 +34,9 @@ type Bridge struct {
 	Contacts      *ContactService
 	Media         *MediaService
 
+	Input         *core.InputManager
+	Pipeline      *core.MessagePipeline
+
 	selectedJID   *types.JID
 	lastSender    string
 	sidebarMutex  sync.Mutex
@@ -45,7 +49,11 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 	br := &Bridge{
 		Backend: b, App: a, DB: db, ctx: ctx,
 		lastGroupSync: make(map[string]time.Time),
+		Input:         core.NewInputManager(),
+		Pipeline:      core.NewMessagePipeline(),
 	}
+
+	br.registerDefaultHooks()
 
 	br.Contacts = NewContactService(b, db, ctx)
 	br.Media = NewMediaService(b, db, ctx)
@@ -56,6 +64,16 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 	return br
 }
 
+func (br *Bridge) registerDefaultHooks() {
+	// Hook to auto-download stickers
+	br.Pipeline.AddHook(func(ctx context.Context, msg *events.Message) error {
+		if stkr := msg.Message.GetStickerMessage(); stkr != nil {
+			go br.handleDownloadMedia(msg.Info.ID)
+		}
+		return nil
+	})
+}
+
 func (br *Bridge) setupUIHandlers() {
 	br.App.Sidebar.OnChatSelected = br.handleChatSelected
 	br.App.ChatView.OnSendMessage = br.handleSendMessage
@@ -63,6 +81,32 @@ func (br *Bridge) setupUIHandlers() {
 	br.App.ChatView.OnPasteImage = br.handlePasteImage
 	br.App.ChatView.OnDownloadMedia = br.handleDownloadMedia
 	br.App.ChatView.OnSendReaction = br.handleSendReaction
+
+	br.App.OnKeyPressed = br.handleKeyPressed
+
+	// Register some default shortcuts
+	br.Input.Register("Escape", func() {
+		glib.IdleAdd(func() {
+			br.App.Sidebar.SearchEntry.SetText("")
+			br.App.ChatView.FocusEntry()
+		})
+	})
+}
+
+func (br *Bridge) handleKeyPressed(key string, mods gdk.ModifierType) bool {
+	combo := ""
+	if mods&gdk.ControlMask != 0 {
+		combo += "Control+"
+	}
+	if mods&gdk.AltMask != 0 {
+		combo += "Alt+"
+	}
+	if mods&gdk.ShiftMask != 0 {
+		combo += "Shift+"
+	}
+	combo += key
+
+	return br.Input.HandleKeyPressed(combo)
 }
 
 func (br *Bridge) handleSendReaction(id, emoji string) {
@@ -528,6 +572,9 @@ func (br *Bridge) handleMessage(v *backend.MessageEvent) {
 
 	br.persistMessage(msg)
 	
+	// Process message through hooks
+	br.Pipeline.Process(msg)
+	
 	resolvedChat := br.resolveJID(msg.Info.Chat)
 	if !br.isSyncing || (br.selectedJID != nil && resolvedChat.ToNonAD().String() == br.selectedJID.ToNonAD().String()) {
 		jid := resolvedChat.ToNonAD().String()
@@ -582,8 +629,6 @@ func (br *Bridge) handleMessage(v *backend.MessageEvent) {
 					mW = int(stkr.GetWidth()); mH = int(stkr.GetHeight())
 					texThumb := br.bytesToTexture(stkr.GetPngThumbnail())
 					br.App.ChatView.AddSticker(msg.Info.ID, sJID, sName, nil, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
-					// Auto-download stickers
-					go br.handleDownloadMedia(msg.Info.ID)
 				} else if vid := msg.Message.GetVideoMessage(); vid != nil {
 					mW = int(vid.GetWidth()); mH = int(vid.GetHeight())
 					texThumb := br.bytesToTexture(vid.GetJPEGThumbnail())
