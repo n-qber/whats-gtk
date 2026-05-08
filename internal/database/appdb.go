@@ -45,6 +45,7 @@ func (a *AppDB) createTables() error {
 			chat_jid TEXT,
 			sender_jid TEXT,
 			content TEXT,
+			caption TEXT,
 			type TEXT,
 			timestamp DATETIME,
 			status TEXT,
@@ -82,6 +83,7 @@ func (a *AppDB) createTables() error {
 	a.ensureColumn("messages", "media_length", "INTEGER")
 	a.ensureColumn("messages", "media_width", "INTEGER")
 	a.ensureColumn("messages", "media_height", "INTEGER")
+	a.ensureColumn("messages", "caption", "TEXT")
 	a.ensureColumn("messages", "quoted_msg_id", "TEXT")
 	a.ensureColumn("messages", "quoted_msg_content", "TEXT")
 	a.ensureColumn("messages", "quoted_msg_sender", "TEXT")

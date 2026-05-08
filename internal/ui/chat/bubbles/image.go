@@ -9,10 +9,13 @@ type ImageBubble struct {
 	*baseBubble
 	picture           *gtk.Picture
 	placeholder       *gtk.Box
+	captionLabel      *gtk.Label
 	OnDownloadRequest func()
 }
 
-func NewImageBubble(name string, tex, thumb *gdk.Texture, isSelf bool, status, time string, avatar *gdk.Texture, realW, realH int) (*ImageBubble, error) {
+func NewImageBubble(name, text string, tex, thumb *gdk.Texture, isSelf bool, status, time string, avatar *gdk.Texture, realW, realH int) (*ImageBubble, error) {
+	mainBox := gtk.NewBox(gtk.OrientationVertical, 5)
+
 	overlay := gtk.NewOverlay()
 
 	picture := gtk.NewPicture()
@@ -38,6 +41,17 @@ func NewImageBubble(name string, tex, thumb *gdk.Texture, isSelf bool, status, t
 	overlay.AddOverlay(placeholder)
 	overlay.SetHAlign(gtk.AlignStart)
 	overlay.SetVAlign(gtk.AlignStart)
+
+	mainBox.Append(overlay)
+
+	var captionLabel *gtk.Label
+	if text != "" {
+		captionLabel = gtk.NewLabel(text)
+		captionLabel.SetWrap(true)
+		captionLabel.SetXAlign(0)
+		captionLabel.AddCSSClass("image-caption")
+		mainBox.Append(captionLabel)
+	}
 
 	displayTex := tex
 	if displayTex == nil && thumb != nil {
@@ -68,13 +82,17 @@ func NewImageBubble(name string, tex, thumb *gdk.Texture, isSelf bool, status, t
 	click := gtk.NewGestureClick()
 	overlay.AddController(click)
 
-	base, err := newBaseBubble(name, "[Image]", overlay, isSelf, true, status, time, avatar)
+	content := "[Image]"
+	if text != "" {
+		content = text
+	}
+	base, err := newBaseBubble(name, content, mainBox, isSelf, true, status, time, avatar)
 
 	if err != nil {
 		return nil, err
 	}
 
-	ib := &ImageBubble{baseBubble: base, picture: picture, placeholder: placeholder}
+	ib := &ImageBubble{baseBubble: base, picture: picture, placeholder: placeholder, captionLabel: captionLabel}
 
 	click.ConnectPressed(func(n int, x, y float64) {
 		if ib.OnDownloadRequest != nil {

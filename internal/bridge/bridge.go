@@ -124,7 +124,7 @@ func (br *Bridge) registerDefaultHooks() {
 					if img := msg.Message.GetImageMessage(); img != nil {
 						mW = int(img.GetWidth()); mH = int(img.GetHeight())
 						texThumb := br.bytesToTexture(img.GetJPEGThumbnail())
-						br.App.ChatView.AddImage(msg.Info.ID, sJID, sName, nil, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
+						br.App.ChatView.AddImage(msg.Info.ID, sJID, sName, img.GetCaption(), nil, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
 					} else if stkr := msg.Message.GetStickerMessage(); stkr != nil {
 						mW = int(stkr.GetWidth()); mH = int(stkr.GetHeight())
 						texThumb := br.bytesToTexture(stkr.GetPngThumbnail())
@@ -132,7 +132,7 @@ func (br *Bridge) registerDefaultHooks() {
 					} else if vid := msg.Message.GetVideoMessage(); vid != nil {
 						mW = int(vid.GetWidth()); mH = int(vid.GetHeight())
 						texThumb := br.bytesToTexture(vid.GetJPEGThumbnail())
-						br.App.ChatView.AddVideo(msg.Info.ID, sJID, sName, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
+						br.App.ChatView.AddVideo(msg.Info.ID, sJID, sName, vid.GetCaption(), texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
 					} else if aud := msg.Message.GetAudioMessage(); aud != nil {
 						br.App.ChatView.AddAudio(msg.Info.ID, sJID, sName, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
 					} else if doc := msg.Message.GetDocumentMessage(); doc != nil {
@@ -250,7 +250,7 @@ func (br *Bridge) handlePasteImage(tex *gdk.Texture) {
 
 	glib.IdleAdd(func() {
 		if br.selectedJID != nil && br.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
-			br.App.ChatView.AddImage("temp_img", "", "", tex, nil, true, false, "pending", now, nil, "", "", "", int(tex.Width()), int(tex.Height()))
+			br.App.ChatView.AddImage("temp_img", "", "", "", tex, nil, true, false, "pending", now, nil, "", "", "", int(tex.Width()), int(tex.Height()))
 			br.App.ChatView.ScrollToBottom()
 		}
 	})
@@ -538,13 +538,14 @@ func (br *Bridge) refreshMessages(jid types.JID) {
 					}
 					
 					mW := int(m.MediaWidth.Int64); mH := int(m.MediaHeight.Int64)
+					caption := m.Caption.String
 
 					if m.Type == "image" {
-						br.App.ChatView.AddImage(m.ID, m.SenderJID, sName, texImg, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
+						br.App.ChatView.AddImage(m.ID, m.SenderJID, sName, caption, texImg, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
 					} else if m.Type == "sticker" {
 						br.App.ChatView.AddSticker(m.ID, m.SenderJID, sName, texImg, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
 					} else if m.Type == "video" {
-						br.App.ChatView.AddVideo(m.ID, m.SenderJID, sName, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
+						br.App.ChatView.AddVideo(m.ID, m.SenderJID, sName, caption, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
 					}
 				} else if m.Type == "audio" {
 					br.App.ChatView.AddAudio(m.ID, m.SenderJID, sName, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)

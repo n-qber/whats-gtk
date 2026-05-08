@@ -12,6 +12,7 @@ type Message struct {
 	ChatJID   string
 	SenderJID string
 	Content   string
+	Caption   sql.NullString
 	Type      string
 	Timestamp time.Time
 	Status    string
@@ -37,13 +38,13 @@ type Message struct {
 
 func (a *AppDB) SaveMessage(m Message) error {
 	query := `INSERT OR REPLACE INTO messages (
-				msg_id, chat_jid, sender_jid, content, type, timestamp, status, is_from_me, thumbnail,
+				msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
 				media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
 				media_width, media_height,
 				quoted_msg_id, quoted_msg_content, quoted_msg_sender
-			  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := a.db.Exec(query, 
-		m.ID, m.ChatJID, m.SenderJID, m.Content, m.Type, m.Timestamp, m.Status, m.IsFromMe, m.Thumbnail,
+		m.ID, m.ChatJID, m.SenderJID, m.Content, m.Caption, m.Type, m.Timestamp, m.Status, m.IsFromMe, m.Thumbnail,
 		m.MediaURL, m.MediaDirectPath, m.MediaKey, m.MediaMimetype, m.MediaEncSHA256, m.MediaSHA256, m.MediaLength,
 		m.MediaWidth, m.MediaHeight,
 		m.QuotedMsgID, m.QuotedMsgContent, m.QuotedMsgSender,
@@ -64,7 +65,7 @@ func (a *AppDB) UpdateMessageContent(msgID, chatJID, content string) error {
 }
 
 func (a *AppDB) GetMessage(msgID string) (*Message, error) {
-	query := `SELECT msg_id, chat_jid, sender_jid, content, type, timestamp, status, is_from_me, thumbnail,
+	query := `SELECT msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
 				media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
 				media_width, media_height,
 				quoted_msg_id, quoted_msg_content, quoted_msg_sender
@@ -72,7 +73,7 @@ func (a *AppDB) GetMessage(msgID string) (*Message, error) {
 	row := a.db.QueryRow(query, msgID)
 	var m Message
 	err := row.Scan(
-		&m.ID, &m.ChatJID, &m.SenderJID, &m.Content, &m.Type, &m.Timestamp, &m.Status, &m.IsFromMe, &m.Thumbnail,
+		&m.ID, &m.ChatJID, &m.SenderJID, &m.Content, &m.Caption, &m.Type, &m.Timestamp, &m.Status, &m.IsFromMe, &m.Thumbnail,
 		&m.MediaURL, &m.MediaDirectPath, &m.MediaKey, &m.MediaMimetype, &m.MediaEncSHA256, &m.MediaSHA256, &m.MediaLength,
 		&m.MediaWidth, &m.MediaHeight,
 		&m.QuotedMsgID, &m.QuotedMsgContent, &m.QuotedMsgSender,
@@ -91,7 +92,7 @@ func (a *AppDB) GetMessages(jids []string, limit int) ([]Message, error) {
 	}
 	args = append(args, limit)
 
-	query := fmt.Sprintf(`SELECT msg_id, chat_jid, sender_jid, content, type, timestamp, status, is_from_me, thumbnail,
+	query := fmt.Sprintf(`SELECT msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
 				media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
 				media_width, media_height,
 				quoted_msg_id, quoted_msg_content, quoted_msg_sender
@@ -108,7 +109,7 @@ func (a *AppDB) GetMessages(jids []string, limit int) ([]Message, error) {
 	for rows.Next() {
 		var m Message
 		err := rows.Scan(
-			&m.ID, &m.ChatJID, &m.SenderJID, &m.Content, &m.Type, &m.Timestamp, &m.Status, &m.IsFromMe, &m.Thumbnail,
+			&m.ID, &m.ChatJID, &m.SenderJID, &m.Content, &m.Caption, &m.Type, &m.Timestamp, &m.Status, &m.IsFromMe, &m.Thumbnail,
 			&m.MediaURL, &m.MediaDirectPath, &m.MediaKey, &m.MediaMimetype, &m.MediaEncSHA256, &m.MediaSHA256, &m.MediaLength,
 			&m.MediaWidth, &m.MediaHeight,
 			&m.QuotedMsgID, &m.QuotedMsgContent, &m.QuotedMsgSender,

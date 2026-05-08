@@ -166,8 +166,8 @@ func (cv *ChatView) AddMessage(id, jid, name, text string, isSelf, isCont bool, 
 	}
 }
 
-func (cv *ChatView) AddImage(id, jid, name string, tex, thumb *gdk.Texture, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
-	bubble, err := bubbles.NewImageBubble(name, tex, thumb, isSelf, status, tStr, av, w, h)
+func (cv *ChatView) AddImage(id, jid, name, text string, tex, thumb *gdk.Texture, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
+	bubble, err := bubbles.NewImageBubble(name, text, tex, thumb, isSelf, status, tStr, av, w, h)
 	if err == nil {
 		bubble.OnDownloadRequest = func() {
 			if cv.OnDownloadMedia != nil {
@@ -231,9 +231,9 @@ func (cv *ChatView) AddAudio(id, jid, name string, isSelf, isCont bool, status, 
 	}
 }
 
-func (cv *ChatView) AddVideo(id, jid, name string, thumb *gdk.Texture, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
+func (cv *ChatView) AddVideo(id, jid, name, text string, thumb *gdk.Texture, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
 	// For now, video uses image bubble with thumbnail
-	bubble, err := bubbles.NewImageBubble(name, nil, thumb, isSelf, status, tStr, av, w, h)
+	bubble, err := bubbles.NewImageBubble(name, text, nil, thumb, isSelf, status, tStr, av, w, h)
 	if err == nil {
 		bubble.OnDownloadRequest = func() {
 			if cv.OnDownloadMedia != nil {
