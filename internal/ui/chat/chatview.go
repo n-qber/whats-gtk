@@ -28,12 +28,15 @@ type ChatView struct {
 	OnPasteImage          func(tex *gdk.Texture)
 	OnDownloadMedia       func(id string)
 	OnSendReaction        func(id, emoji string)
+	OnPinMessage          func(id string, pin bool)
 	AudioPlayer           *AudioPlayer
 	ReplyToID             string
 	ReplyToSender         string
 	ReplyToContent        string
 	ReplyPreviewBox       *gtk.Box
 	ReplyPreviewLabel     *gtk.Label
+	PinnedMessageBar      *gtk.Box
+	PinnedMessageLabel    *gtk.Label
 }
 
 func NewChatView() (*ChatView, error) {
@@ -50,6 +53,17 @@ func NewChatView() (*ChatView, error) {
 	header.PackStart(headerAvatar)
 	
 	box.Append(header)
+
+	pinnedMessageBar := gtk.NewBox(gtk.OrientationHorizontal, 5)
+	pinnedMessageBar.AddCSSClass("pinned-message-bar")
+	pinnedIcon := gtk.NewImageFromIconName("pin-symbolic")
+	pinnedLabel := gtk.NewLabel("Pinned Message")
+	pinnedLabel.SetXAlign(0)
+	pinnedLabel.SetEllipsize(pango.EllipsizeEnd)
+	pinnedMessageBar.Append(pinnedIcon)
+	pinnedMessageBar.Append(pinnedLabel)
+	pinnedMessageBar.Hide()
+	box.Append(pinnedMessageBar)
 
 	messageList := gtk.NewListBox()
 	messageList.SetName("message-list")
@@ -110,6 +124,8 @@ func NewChatView() (*ChatView, error) {
 		AudioPlayer:           NewAudioPlayer(),
 		ReplyPreviewBox:       replyPreviewBox,
 		ReplyPreviewLabel:     replyLabel,
+		PinnedMessageBar:      pinnedMessageBar,
+		PinnedMessageLabel:    pinnedLabel,
 	}
 
 	closeReplyBtn.ConnectClicked(func() {
@@ -178,6 +194,15 @@ func (cv *ChatView) CancelReply() {
 	cv.ReplyToSender = ""
 	cv.ReplyToContent = ""
 	cv.ReplyPreviewBox.Hide()
+}
+
+func (cv *ChatView) SetPinnedMessage(content string) {
+	if content == "" {
+		cv.PinnedMessageBar.Hide()
+	} else {
+		cv.PinnedMessageLabel.SetText(content)
+		cv.PinnedMessageBar.Show()
+	}
 }
 
 func (cv *ChatView) AddMessage(id, jid, name, text string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string) {
@@ -334,8 +359,32 @@ func (cv *ChatView) ScrollToMessage(id string) {
 	}
 }
 func (cv *ChatView) showContextMenu(id string, b bubbles.Bubble) {
-	// In GTK4, we use PopoverMenu or a simpler approach
-	// [TODO: Implement GTK4 context menu]
+	popover := gtk.NewPopover()
+	box := gtk.NewBox(gtk.OrientationVertical, 0)
+	
+	pinBtn := gtk.NewButtonWithLabel("Pin Message")
+	pinBtn.SetHasFrame(false)
+	pinBtn.ConnectClicked(func() {
+		if cv.OnPinMessage != nil {
+			cv.OnPinMessage(id, true)
+		}
+		popover.Popdown()
+	})
+	box.Append(pinBtn)
+
+	unpinBtn := gtk.NewButtonWithLabel("Unpin Message")
+	unpinBtn.SetHasFrame(false)
+	unpinBtn.ConnectClicked(func() {
+		if cv.OnPinMessage != nil {
+			cv.OnPinMessage(id, false)
+		}
+		popover.Popdown()
+	})
+	box.Append(unpinBtn)
+
+	popover.SetChild(box)
+	popover.SetParent(b.Widget().(gtk.Widgetter))
+	popover.Popup()
 }
 
 func (cv *ChatView) addBubble(id string, b bubbles.Bubble, isCont bool) {
@@ -384,6 +433,12 @@ func (cv *ChatView) UpdateMessageReactions(id string, reactions []string) {
 	}
 }
 
+func (cv *ChatView) UpdateMessagePinned(id string, pinned bool) {
+	if bubble, exists := cv.MessageRows[id]; exists {
+		glib.IdleAdd(func() { bubble.SetPinned(pinned) })
+	}
+}
+
 func (cv *ChatView) UpdateMessageImage(id string, tex *gdk.Texture) {
 	if bubble, exists := cv.MessageRows[id]; exists {
 		glib.IdleAdd(func() { bubble.UpdateImage(tex) })
@@ -418,6 +473,7 @@ func (cv *ChatView) Clear() {
 	cv.MessageRows = make(map[string]bubbles.Bubble)
 	cv.BubblesByJID = make(map[string][]bubbles.Bubble)
 	cv.MessageListRows = make(map[string]*gtk.ListBoxRow)
+	cv.SetPinnedMessage("")
 	
 	for {
 		child := cv.MessageList.FirstChild()

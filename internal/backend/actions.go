@@ -61,6 +61,24 @@ func (b *Backend) SendReaction(ctx context.Context, chat types.JID, msgID types.
 	})
 }
 
+func (b *Backend) PinMessage(ctx context.Context, chat types.JID, msgID types.MessageID, fromMe bool, pin bool) (whatsmeow.SendResponse, error) {
+	pinType := waProto.PinInChatMessage_PIN_FOR_ALL
+	if !pin {
+		pinType = waProto.PinInChatMessage_UNPIN_FOR_ALL
+	}
+	return b.Client.SendMessage(ctx, chat, &waProto.Message{
+		PinInChatMessage: &waProto.PinInChatMessage{
+			Key: &waProto.MessageKey{
+				RemoteJID: proto.String(chat.ToNonAD().String()),
+				FromMe:    proto.Bool(fromMe),
+				ID:        proto.String(msgID),
+			},
+			Type:              &pinType,
+			SenderTimestampMS: proto.Int64(time.Now().UnixMilli()),
+		},
+	})
+}
+
 
 func (b *Backend) SendImage(ctx context.Context, to types.JID, data []byte, mimetype string) (whatsmeow.SendResponse, error) {
 	resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaImage)

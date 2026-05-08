@@ -165,6 +165,7 @@ func (br *Bridge) setupUIHandlers() {
 	br.App.ChatView.OnPasteImage = br.handlePasteImage
 	br.App.ChatView.OnDownloadMedia = br.handleDownloadMedia
 	br.App.ChatView.OnSendReaction = br.handleSendReaction
+	br.App.ChatView.OnPinMessage = br.handlePinMessage
 
 	br.App.OnKeyPressed = br.handleKeyPressed
 	br.App.OnModifiersChanged = func(mods gdk.ModifierType) {
@@ -251,6 +252,25 @@ func (br *Bridge) handleSendReaction(id, emoji string) {
 			br.handleReactionInternal(chatJID, br.Backend.Device.ID.ToNonAD(), emoji, id, time.Now())
 		} else {
 			fmt.Printf("Bridge: SendReaction failed: %v\n", err)
+		}
+	}()
+}
+
+func (br *Bridge) handlePinMessage(id string, pin bool) {
+	if br.selectedJID == nil { return }
+	msg, err := br.DB.GetMessage(id); if err != nil { return }
+	
+	chatJID := *br.selectedJID
+
+	go func() {
+		_, err := br.Backend.PinMessage(br.ctx, chatJID, id, msg.IsFromMe, pin)
+		if err == nil {
+			br.DB.UpdateMessagePinned(id, chatJID.ToNonAD().String(), pin)
+			if br.selectedJID != nil && chatJID.ToNonAD().String() == br.selectedJID.ToNonAD().String() {
+				br.App.ChatView.UpdateMessagePinned(id, pin)
+			}
+		} else {
+			fmt.Printf("Bridge: PinMessage failed: %v\n", err)
 		}
 	}()
 }
@@ -597,6 +617,11 @@ func (br *Bridge) refreshMessages(jid types.JID) {
 				if len(reacts) > 0 {
 					br.App.ChatView.UpdateMessageReactions(m.ID, br.uniqueReactions(reacts))
 				}
+
+				if m.IsPinned {
+					br.App.ChatView.UpdateMessagePinned(m.ID, true)
+					br.App.ChatView.SetPinnedMessage(m.Content)
+				}
 			}
 			br.App.ChatView.ScrollToBottom()
 		})
@@ -708,6 +733,25 @@ func (br *Bridge) handleMessage(v *backend.MessageEvent) {
 	msg := v.Info
 	if react := msg.Message.GetReactionMessage(); react != nil {
 		br.handleReactionInternal(msg.Info.Chat, msg.Info.Sender, react.GetText(), react.GetKey().GetID(), msg.Info.Timestamp)
+		return
+	}
+
+	if pinMsg := msg.Message.GetPinInChatMessage(); pinMsg != nil {
+		targetID := pinMsg.GetKey().GetID()
+		isPinned := pinMsg.GetType() == waProto.PinInChatMessage_PIN_FOR_ALL
+		chatJID := msg.Info.Chat.ToNonAD().String()
+		br.DB.UpdateMessagePinned(targetID, chatJID, isPinned)
+		
+		if br.selectedJID != nil && chatJID == br.selectedJID.ToNonAD().String() {
+			br.App.ChatView.UpdateMessagePinned(targetID, isPinned)
+			if isPinned {
+				if m, err := br.DB.GetMessage(targetID); err == nil {
+					br.App.ChatView.SetPinnedMessage(m.Content)
+				}
+			} else {
+				br.App.ChatView.SetPinnedMessage("")
+			}
+		}
 		return
 	}
 

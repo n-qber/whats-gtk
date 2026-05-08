@@ -17,6 +17,7 @@ type Bubble interface {
 	UpdateDocument(path string)
 	SetStatus(status string)
 	SetReactions(reactions []string)
+	SetPinned(pinned bool)
 	SetQuotedMessage(id, sender, content string)
 	IsSelf() bool
 	Sender() string
@@ -32,6 +33,7 @@ type baseBubble struct {
 	QuotedBox      *gtk.Box
 	QuotedEventBox *gtk.GestureClick
 	StatusLabel    *gtk.Label
+	PinIcon        *gtk.Image
 	AvatarImg      *adw.Avatar
 	ReactionsBox   *gtk.Box
 	ReactionsBtn   *gtk.Button
@@ -231,6 +233,12 @@ func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSel
 		content:      contentText,
 	}
 
+	pinIcon := gtk.NewImageFromIconName("pin-symbolic")
+	pinIcon.AddCSSClass("pin-icon")
+	pinIcon.Hide()
+	statusBox.Prepend(pinIcon)
+	bb.PinIcon = pinIcon
+
 	hover.ConnectEnter(func(x, y float64) { reactionsBtn.SetOpacity(1) })
 	hover.ConnectLeave(func() { if !popover.Visible() { reactionsBtn.SetOpacity(0) } })
 
@@ -307,6 +315,16 @@ func (b *baseBubble) SetQuotedMessage(id, sender, content string) {
 		b.QuotedBox.Append(senderLabel)
 		b.QuotedBox.Append(contentLabel)
 		b.QuotedBox.Show()
+	})
+}
+
+func (b *baseBubble) SetPinned(pinned bool) {
+	glib.IdleAdd(func() {
+		if pinned {
+			b.PinIcon.Show()
+		} else {
+			b.PinIcon.Hide()
+		}
 	})
 }
 
