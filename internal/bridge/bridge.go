@@ -256,14 +256,14 @@ func (br *Bridge) handleSendReaction(id, emoji string) {
 	}()
 }
 
-func (br *Bridge) handlePinMessage(id string, pin bool) {
+func (br *Bridge) handlePinMessage(id string, pin bool, duration uint32) {
 	if br.selectedJID == nil { return }
 	msg, err := br.DB.GetMessage(id); if err != nil { return }
 	
 	chatJID := *br.selectedJID
 
 	go func() {
-		_, err := br.Backend.PinMessage(br.ctx, chatJID, id, msg.IsFromMe, pin)
+		_, err := br.Backend.PinMessage(br.ctx, chatJID, id, msg.IsFromMe, pin, duration)
 		if err == nil {
 			br.DB.UpdateMessagePinned(id, chatJID.ToNonAD().String(), pin)
 			if br.selectedJID != nil && chatJID.ToNonAD().String() == br.selectedJID.ToNonAD().String() {
@@ -736,10 +736,21 @@ func (br *Bridge) handleMessage(v *backend.MessageEvent) {
 		return
 	}
 
-	if pinMsg := msg.Message.GetPinInChatMessage(); pinMsg != nil {
+	if br.processPin(msg.Message, msg.Info.Chat) {
+		return
+	}
+
+	br.persistMessage(msg)
+	
+	// Process message through hooks (Rendering, auto-download, etc.)
+	br.Pipeline.Process(msg)
+}
+
+func (br *Bridge) processPin(msg *waProto.Message, chat types.JID) bool {
+	if pinMsg := msg.GetPinInChatMessage(); pinMsg != nil {
 		targetID := pinMsg.GetKey().GetID()
 		isPinned := pinMsg.GetType() == waProto.PinInChatMessage_PIN_FOR_ALL
-		chatJID := msg.Info.Chat.ToNonAD().String()
+		chatJID := chat.ToNonAD().String()
 		br.DB.UpdateMessagePinned(targetID, chatJID, isPinned)
 		
 		if br.selectedJID != nil && chatJID == br.selectedJID.ToNonAD().String() {
@@ -752,13 +763,14 @@ func (br *Bridge) handleMessage(v *backend.MessageEvent) {
 				br.App.ChatView.SetPinnedMessage("")
 			}
 		}
-		return
+		return true
 	}
 
-	br.persistMessage(msg)
-	
-	// Process message through hooks (Rendering, auto-download, etc.)
-	br.Pipeline.Process(msg)
+	if msg.GetProtocolMessage() != nil && msg.GetProtocolMessage().GetEditedMessage() != nil {
+		return br.processPin(msg.GetProtocolMessage().GetEditedMessage(), chat)
+	}
+
+	return false
 }
 
 func (br *Bridge) handleReactionInternal(chat, sender types.JID, text, targetID string, timestamp time.Time) {

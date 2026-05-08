@@ -61,22 +61,44 @@ func (b *Backend) SendReaction(ctx context.Context, chat types.JID, msgID types.
 	})
 }
 
-func (b *Backend) PinMessage(ctx context.Context, chat types.JID, msgID types.MessageID, fromMe bool, pin bool) (whatsmeow.SendResponse, error) {
+func (b *Backend) PinMessage(ctx context.Context, chat types.JID, msgID types.MessageID, fromMe bool, pin bool, duration uint32) (whatsmeow.SendResponse, error) {
 	pinType := waProto.PinInChatMessage_PIN_FOR_ALL
 	if !pin {
 		pinType = waProto.PinInChatMessage_UNPIN_FOR_ALL
 	}
-	return b.Client.SendMessage(ctx, chat, &waProto.Message{
-		PinInChatMessage: &waProto.PinInChatMessage{
+
+	pinMsg := &waProto.PinInChatMessage{
+		Key: &waProto.MessageKey{
+			RemoteJID: proto.String(chat.ToNonAD().String()),
+			FromMe:    proto.Bool(fromMe),
+			ID:        proto.String(msgID),
+		},
+		Type:              &pinType,
+		SenderTimestampMS: proto.Int64(time.Now().UnixMilli()),
+	}
+
+	msg := &waProto.Message{
+		ProtocolMessage: &waProto.ProtocolMessage{
+			Type: waProto.ProtocolMessage_MESSAGE_EDIT.Enum(),
 			Key: &waProto.MessageKey{
 				RemoteJID: proto.String(chat.ToNonAD().String()),
-				FromMe:    proto.Bool(fromMe),
+				FromMe:    proto.Bool(true),
 				ID:        proto.String(msgID),
 			},
-			Type:              &pinType,
-			SenderTimestampMS: proto.Int64(time.Now().UnixMilli()),
+			EditedMessage: &waProto.Message{
+				PinInChatMessage: pinMsg,
+			},
+			TimestampMS: proto.Int64(time.Now().UnixMilli()),
 		},
-	})
+	}
+
+	if pin && duration > 0 {
+		msg.ProtocolMessage.EditedMessage.MessageContextInfo = &waProto.MessageContextInfo{
+			MessageAddOnDurationInSecs: proto.Uint32(duration),
+		}
+	}
+
+	return b.Client.SendMessage(ctx, chat, msg)
 }
 
 

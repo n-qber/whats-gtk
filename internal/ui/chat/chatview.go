@@ -28,7 +28,7 @@ type ChatView struct {
 	OnPasteImage          func(tex *gdk.Texture)
 	OnDownloadMedia       func(id string)
 	OnSendReaction        func(id, emoji string)
-	OnPinMessage          func(id string, pin bool)
+	OnPinMessage          func(id string, pin bool, duration uint32)
 	AudioPlayer           *AudioPlayer
 	ReplyToID             string
 	ReplyToSender         string
@@ -365,10 +365,36 @@ func (cv *ChatView) showContextMenu(id string, b bubbles.Bubble) {
 	pinBtn := gtk.NewButtonWithLabel("Pin Message")
 	pinBtn.SetHasFrame(false)
 	pinBtn.ConnectClicked(func() {
-		if cv.OnPinMessage != nil {
-			cv.OnPinMessage(id, true)
-		}
 		popover.Popdown()
+		
+		durationPopover := gtk.NewPopover()
+		dBox := gtk.NewBox(gtk.OrientationVertical, 0)
+		
+		durations := []struct {
+			Label string
+			Secs  uint32
+		}{
+			{"24 Hours", 86400},
+			{"7 Days", 604800},
+			{"30 Days", 2592000},
+		}
+		
+		for _, d := range durations {
+			btn := gtk.NewButtonWithLabel(d.Label)
+			btn.SetHasFrame(false)
+			dSecs := d.Secs
+			btn.ConnectClicked(func() {
+				if cv.OnPinMessage != nil {
+					cv.OnPinMessage(id, true, dSecs)
+				}
+				durationPopover.Popdown()
+			})
+			dBox.Append(btn)
+		}
+		
+		durationPopover.SetChild(dBox)
+		durationPopover.SetParent(b.Widget().(gtk.Widgetter))
+		durationPopover.Popup()
 	})
 	box.Append(pinBtn)
 
@@ -376,7 +402,7 @@ func (cv *ChatView) showContextMenu(id string, b bubbles.Bubble) {
 	unpinBtn.SetHasFrame(false)
 	unpinBtn.ConnectClicked(func() {
 		if cv.OnPinMessage != nil {
-			cv.OnPinMessage(id, false)
+			cv.OnPinMessage(id, false, 0)
 		}
 		popover.Popdown()
 	})

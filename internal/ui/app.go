@@ -182,6 +182,16 @@ func loadCSS() {
 			min-height: 12px;
 			margin: -4px;
 		}
+		.pinned-message-bar {
+			background-color: #ffffff;
+			border-bottom: 1px solid #d1d7db;
+			padding: 8px 16px;
+			box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+		}
+		.pin-icon {
+			color: #8696a0;
+			margin-right: 4px;
+		}
 	`)
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), cssProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 }
