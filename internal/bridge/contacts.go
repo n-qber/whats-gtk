@@ -189,7 +189,7 @@ func (cs *ContactService) formatNonAddedName(j, p string) string {
 	if !strings.HasSuffix(j, "@lid") {
 		n = cs.formatPhoneNumber(n)
 	}
-	return fmt.Sprintf("%s <span foreground='#8696a0' size='small'>%s</span>", p, n)
+	return fmt.Sprintf("%s <span foreground='#8696a0' size='small'>%s</span>", glib.MarkupEscapeText(p), glib.MarkupEscapeText(n))
 }
 
 func (cs *ContactService) formatPhoneNumber(n string) string {

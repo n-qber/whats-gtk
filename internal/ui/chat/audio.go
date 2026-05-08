@@ -67,20 +67,28 @@ func (ap *AudioPlayer) Play(path string, onStop func()) error {
 
 	err = decode(path)
 	if err != nil {
-		if f != nil { f.Close() }
-		
+		if f != nil {
+			f.Close()
+		}
+
 		// Fallback to ffmpeg conversion
-		tempWav := path + ".tmp.wav"
-		cmd := exec.Command("ffmpeg", "-y", "-i", path, "-acodec", "pcm_s16le", "-ar", "44100", tempWav)
-		if cmd.Run() == nil {
-			err = decode(tempWav)
-			if err == nil {
-				isTempWav = true
-				path = tempWav
-			} else {
-				if f != nil { f.Close() }
-				os.Remove(tempWav)
+		if _, lookErr := exec.LookPath("ffmpeg"); lookErr == nil {
+			tempWav := path + ".tmp.wav"
+			cmd := exec.Command("ffmpeg", "-y", "-i", path, "-acodec", "pcm_s16le", "-ar", "44100", tempWav)
+			if cmd.Run() == nil {
+				err = decode(tempWav)
+				if err == nil {
+					isTempWav = true
+					path = tempWav
+				} else {
+					if f != nil {
+						f.Close()
+					}
+					os.Remove(tempWav)
+				}
 			}
+		} else {
+			return fmt.Errorf("ffmpeg not found, cannot decode this audio format: %v", err)
 		}
 	}
 

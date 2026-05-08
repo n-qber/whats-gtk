@@ -67,6 +67,30 @@ func loadCSS() {
 		.status-overlay { margin-top: -10px; margin-right: -4px; margin-bottom: -2px; }
 		.message-sender-name { color: #008069; font-weight: bold; font-size: 9pt; margin-bottom: 2px; }
 		.message-image { border-radius: 4px; }
+		.document-bubble-main {
+			background-color: rgba(0,0,0,0.03);
+			border-radius: 4px;
+			overflow: hidden;
+		}
+		.document-preview-image {
+			min-height: 120px;
+			max-height: 120px;
+			min-width: 240px;
+			object-fit: cover;
+		}
+		.document-info-box {
+			background-color: rgba(0,0,0,0.05);
+		}
+		.sticker-placeholder {
+			background-color: rgba(0,0,0,0.05);
+			border-radius: 8px;
+			border: 1px dashed rgba(0,0,0,0.1);
+		}
+		.image-placeholder {
+			background-color: rgba(0,0,0,0.05);
+			border-radius: 4px;
+			border: 1px dashed rgba(0,0,0,0.1);
+		}
 		.message-sticker { margin: 4px; }
 		.reactions-container {
 			margin-top: 2px;

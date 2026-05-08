@@ -86,7 +86,11 @@ func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSel
 
 	if name != "" && !isSelf {
 		nameLabel := gtk.NewLabel("")
-		nameLabel.SetMarkup(name)
+		if strings.Contains(name, "<span") {
+			nameLabel.SetMarkup(name)
+		} else {
+			nameLabel.SetText(name)
+		}
 		nameLabel.AddCSSClass("message-sender-name")
 		nameLabel.SetXAlign(0)
 		bubbleBox.Append(nameLabel)
@@ -267,6 +271,18 @@ func (b *baseBubble) SetQuotedMessage(id, sender, content string) {
 		return
 	}
 	glib.IdleAdd(func() {
+		// If it's a sticker or similar that usually has no bubble, enable it for quoted messages
+		if !b.BubbleBox.HasCSSClass("message-bubble") {
+			b.BubbleBox.AddCSSClass("message-bubble")
+			if b.isSelf {
+				b.BubbleBox.AddCSSClass("bubble-self")
+				b.BubbleBox.SetHAlign(gtk.AlignEnd)
+			} else {
+				b.BubbleBox.AddCSSClass("bubble-other")
+				b.BubbleBox.SetHAlign(gtk.AlignStart)
+			}
+		}
+
 		for {
 			child := b.QuotedBox.FirstChild()
 			if child == nil { break }
@@ -274,7 +290,11 @@ func (b *baseBubble) SetQuotedMessage(id, sender, content string) {
 		}
 		b.QuotedBox.AddCSSClass("quoted-message")
 		senderLabel := gtk.NewLabel("")
-		senderLabel.SetMarkup("<b>" + sender + "</b>")
+		markupSender := sender
+		if !strings.Contains(sender, "<span") {
+			markupSender = glib.MarkupEscapeText(sender)
+		}
+		senderLabel.SetMarkup("<b>" + markupSender + "</b>")
 		senderLabel.SetXAlign(0)
 		senderLabel.AddCSSClass("quoted-sender")
 		contentLabel := gtk.NewLabel(content)

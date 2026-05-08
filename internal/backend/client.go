@@ -26,8 +26,14 @@ func NewBackend(ctx context.Context, container *sqlstore.Container) (*Backend, e
 		device = container.NewDevice()
 	}
 
-	clientLog := waLog.Stdout("Client", "WARN", true)
+	clientLog := waLog.Stdout("Client", "DEBUG", true)
 	client := whatsmeow.NewClient(device, clientLog)
+
+	// Enable all other loggers to stdout
+	client.Log = clientLog
+	// We don't have direct access to all sub-loggers easily in NewClient, 
+	// but setting client.Log usually propagates or covers the main ones.
+	// Actually, whatsmeow uses separate loggers. Let's try to set them if possible.
 
 	b := &Backend{
 		Client: client,

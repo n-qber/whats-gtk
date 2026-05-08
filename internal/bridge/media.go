@@ -3,14 +3,17 @@ package bridge
 import (
 	"context"
 	"fmt"
+	"mime"
 	"os"
 	"path/filepath"
+	"strings"
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/database"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
+	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -68,19 +71,43 @@ func (ms *MediaService) SetOnMediaDownloaded(f func(task DownloadTask, data []by
 }
 
 func (ms *MediaService) Download(task DownloadTask) {
+	fmt.Printf("MediaService: Download requested for %s (type %s)\n", task.ID, task.MsgType)
 	ms.mediaQueue <- task
 }
 
 func (ms *MediaService) mediaWorker() {
 	for task := range ms.mediaQueue {
-		ext := ".jpg"
-		switch task.MsgType {
-		case "sticker": ext = ".webp"
-		case "video": ext = ".mp4"
-		case "audio": ext = ".ogg"
-		case "document": ext = ".bin"
+		ext := ".bin"
+		if task.Metadata != nil && task.Metadata.Mimetype != "" {
+			mtype := strings.Split(task.Metadata.Mimetype, ";")[0]
+			if exts, _ := mime.ExtensionsByType(mtype); len(exts) > 0 {
+				ext = exts[len(exts)-1]
+			}
 		}
-		path := filepath.Join("media", task.ID+ext)
+
+		// Try to find the original filename if it's a document
+		filename := task.ID + ext
+		msg, err := ms.DB.GetMessage(task.ID)
+		if err == nil && msg.Type == "document" && strings.HasPrefix(msg.Content, "[Document: ") {
+			origName := strings.TrimSuffix(strings.TrimPrefix(msg.Content, "[Document: "), "]")
+			if origName != "" {
+				// Clean filename for OS safety but keep the real name
+				safeName := strings.Map(func(r rune) rune {
+					if strings.ContainsRune("\\/:*?\"<>|", r) {
+						return -1
+					}
+					return r
+				}, origName)
+
+				// Ensure it has the correct extension if missing
+				if !strings.HasSuffix(strings.ToLower(safeName), strings.ToLower(ext)) {
+					safeName += ext
+				}
+				filename = safeName
+			}
+		}
+
+		path := filepath.Join("media", filename)
 		
 		if _, err := os.Stat(path); err == nil {
 			ms.persistMediaMessage(task, path)
@@ -156,6 +183,38 @@ func (ms *MediaService) mediaWorker() {
 			}
 		} else {
 			fmt.Printf("MediaService: Download Failed for %s: %v\n", task.ID, err)
+			if strings.Contains(err.Error(), "403") {
+				fmt.Printf("MediaService: Attempting Media Retry Request for %s\n", task.ID)
+				chatJID, _ := types.ParseJID(task.ChatJID)
+				senderJID, _ := types.ParseJID(task.SenderJID)
+				
+				if len(task.Metadata.MediaKey) == 0 {
+					fmt.Printf("MediaService: CANNOT RETRY %s - MediaKey is missing!\n", task.ID)
+					return
+				}
+
+				info := &types.MessageInfo{
+					ID: task.ID,
+					MessageSource: types.MessageSource{
+						Chat:     chatJID,
+						Sender:   senderJID,
+						IsGroup:  chatJID.Server == types.GroupServer,
+						IsFromMe: false,
+					},
+				}
+				// If it's from me, we need to adjust
+				if msg, err := ms.DB.GetMessage(task.ID); err == nil {
+					info.IsFromMe = msg.IsFromMe
+					if info.IsFromMe && senderJID.IsEmpty() {
+						info.Sender = ms.Backend.Device.ID.ToNonAD()
+					}
+				}
+
+				err := ms.Backend.Client.SendMediaRetryReceipt(ms.ctx, info, task.Metadata.MediaKey)
+				if err != nil {
+					fmt.Printf("MediaService: Failed to send retry receipt for %s: %v\n", task.ID, err)
+				}
+			}
 		}
 	}
 }
