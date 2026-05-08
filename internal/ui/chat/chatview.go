@@ -215,6 +215,9 @@ func (cv *ChatView) AddAudio(id, jid, name string, isSelf, isCont bool, status, 
 		bubble.OnStopRequest = func() {
 			cv.AudioPlayer.Stop()
 		}
+		bubble.OnSeekRequest = func(percent float64) {
+			cv.AudioPlayer.Seek(percent)
+		}
 		bubble.SetQuotedMessage(qID, qSender, qContent)
 		cv.registerBubble(id, jid, bubble, isCont)
 	}

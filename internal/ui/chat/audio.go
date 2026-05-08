@@ -19,6 +19,9 @@ type AudioPlayer struct {
 	initialized bool
 	sampleRate  beep.SampleRate
 	ctrl        *beep.Ctrl
+	streamer    beep.StreamSeekCloser
+	format      beep.Format
+	f           *os.File
 	OnStop      func()
 	OnProgress  func(current, total time.Duration)
 	currentPath string
@@ -35,44 +38,42 @@ func NewAudioPlayer() *AudioPlayer {
 func (ap *AudioPlayer) Play(path string, onStop func(), onProgress func(c, t time.Duration)) error {
 	ap.Stop()
 
-	var streamer beep.StreamSeekCloser
-	var format beep.Format
-	var f *os.File
-	var err error
 	var isTempWav bool
 
 	decode := func(p string) error {
-		f, err = os.Open(p)
+		f, err := os.Open(p)
 		if err != nil {
 			return err
 		}
+		ap.f = f
 
 		ext := strings.ToLower(filepath.Ext(p))
 		switch ext {
 		case ".ogg":
-			streamer, format, err = vorbis.Decode(f)
+			ap.streamer, ap.format, err = vorbis.Decode(f)
 		case ".mp3":
-			streamer, format, err = mp3.Decode(f)
+			ap.streamer, ap.format, err = mp3.Decode(f)
 		case ".wav":
-			streamer, format, err = wav.Decode(f)
+			ap.streamer, ap.format, err = wav.Decode(f)
 		default:
-			streamer, format, err = vorbis.Decode(f)
+			ap.streamer, ap.format, err = vorbis.Decode(f)
 			if err != nil {
 				f.Seek(0, 0)
-				streamer, format, err = mp3.Decode(f)
+				ap.streamer, ap.format, err = mp3.Decode(f)
 			}
 			if err != nil {
 				f.Seek(0, 0)
-				streamer, format, err = wav.Decode(f)
+				ap.streamer, ap.format, err = wav.Decode(f)
 			}
 		}
 		return err
 	}
 
-	err = decode(path)
+	err := decode(path)
 	if err != nil {
-		if f != nil {
-			f.Close()
+		if ap.f != nil {
+			ap.f.Close()
+			ap.f = nil
 		}
 
 		// Fallback to ffmpeg conversion
@@ -85,8 +86,9 @@ func (ap *AudioPlayer) Play(path string, onStop func(), onProgress func(c, t tim
 					isTempWav = true
 					path = tempWav
 				} else {
-					if f != nil {
-						f.Close()
+					if ap.f != nil {
+						ap.f.Close()
+						ap.f = nil
 					}
 					os.Remove(tempWav)
 				}
@@ -106,28 +108,24 @@ func (ap *AudioPlayer) Play(path string, onStop func(), onProgress func(c, t tim
 	ap.isTemp = isTempWav
 
 	if !ap.initialized {
-		err = speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+		err = speaker.Init(ap.format.SampleRate, ap.format.SampleRate.N(time.Second/10))
 		if err != nil {
-			streamer.Close()
-			f.Close()
+			ap.streamer.Close()
+			ap.f.Close()
+			ap.f = nil
 			ap.cleanup()
 			return err
 		}
 		ap.initialized = true
-		ap.sampleRate = format.SampleRate
+		ap.sampleRate = ap.format.SampleRate
 	}
 
-	totalDuration := format.SampleRate.D(streamer.Len())
+	totalDuration := ap.format.SampleRate.D(ap.streamer.Len())
 
-	resampled := beep.Resample(4, format.SampleRate, ap.sampleRate, streamer)
+	resampled := beep.Resample(4, ap.format.SampleRate, ap.sampleRate, ap.streamer)
 	ap.ctrl = &beep.Ctrl{Streamer: beep.Seq(resampled, beep.Callback(func() {
 		ap.done <- true
-		streamer.Close()
-		f.Close()
-		ap.cleanup()
-		if ap.OnStop != nil {
-			ap.OnStop()
-		}
+		ap.Stop()
 	})), Paused: false}
 
 	speaker.Play(ap.ctrl)
@@ -143,7 +141,7 @@ func (ap *AudioPlayer) Play(path string, onStop func(), onProgress func(c, t tim
 					continue
 				}
 				if ap.OnProgress != nil {
-					current := format.SampleRate.D(streamer.Position())
+					current := ap.format.SampleRate.D(ap.streamer.Position())
 					ap.OnProgress(current, totalDuration)
 				}
 			case <-ap.done:
@@ -155,16 +153,44 @@ func (ap *AudioPlayer) Play(path string, onStop func(), onProgress func(c, t tim
 	return nil
 }
 
+func (ap *AudioPlayer) Seek(percent float64) {
+	if ap.streamer == nil {
+		return
+	}
+	speaker.Lock()
+	newPos := int(float64(ap.streamer.Len()) * percent / 100.0)
+	if newPos < 0 {
+		newPos = 0
+	}
+	if newPos >= ap.streamer.Len() {
+		newPos = ap.streamer.Len() - 1
+	}
+	ap.streamer.Seek(newPos)
+	speaker.Unlock()
+}
+
 func (ap *AudioPlayer) Stop() {
 	if ap.ctrl != nil {
-		ap.done <- true
+		select {
+		case ap.done <- true:
+		default:
+		}
 		speaker.Clear()
 		ap.ctrl = nil
-		ap.cleanup()
-		if ap.OnStop != nil {
-			ap.OnStop()
-			ap.OnStop = nil
-		}
+	}
+	if ap.streamer != nil {
+		ap.streamer.Close()
+		ap.streamer = nil
+	}
+	if ap.f != nil {
+		ap.f.Close()
+		ap.f = nil
+	}
+	ap.cleanup()
+	if ap.OnStop != nil {
+		tmpStop := ap.OnStop
+		ap.OnStop = nil
+		tmpStop()
 	}
 }
 
