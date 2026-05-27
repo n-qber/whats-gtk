@@ -13,7 +13,7 @@ import (
 type Bubble interface {
 	Widget() gtk.Widgetter
 	UpdateAvatar(tex *gdk.Texture)
-	UpdateImage(tex *gdk.Texture)
+	UpdateImage(tex *gdk.Texture, path string)
 	UpdateDocument(path string)
 	SetStatus(status string)
 	SetReactions(reactions []string)
@@ -352,7 +352,7 @@ func (b *baseBubble) UpdateAvatar(tex *gdk.Texture) {
 	if b.AvatarImg != nil && tex != nil { b.AvatarImg.SetCustomImage(tex) }
 }
 
-func (b *baseBubble) UpdateImage(tex *gdk.Texture) {}
+func (b *baseBubble) UpdateImage(tex *gdk.Texture, path string) {}
 func (b *baseBubble) UpdateDocument(path string) {}
 
 func (b *baseBubble) SetStatus(status string) {

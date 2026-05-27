@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -126,7 +127,7 @@ func (br *Bridge) registerDefaultHooks() {
 					if img := msg.Message.GetImageMessage(); img != nil {
 						mW = int(img.GetWidth()); mH = int(img.GetHeight())
 						texThumb := br.bytesToTexture(img.GetJPEGThumbnail())
-						br.App.ChatView.AddImage(msg.Info.ID, sJID, sName, img.GetCaption(), nil, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
+						br.App.ChatView.AddImage(msg.Info.ID, sJID, sName, img.GetCaption(), nil, texThumb, "", msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
 					} else if stkr := msg.Message.GetStickerMessage(); stkr != nil {
 						mW = int(stkr.GetWidth()); mH = int(stkr.GetHeight())
 						texThumb := br.bytesToTexture(stkr.GetPngThumbnail())
@@ -134,7 +135,7 @@ func (br *Bridge) registerDefaultHooks() {
 					} else if vid := msg.Message.GetVideoMessage(); vid != nil {
 						mW = int(vid.GetWidth()); mH = int(vid.GetHeight())
 						texThumb := br.bytesToTexture(vid.GetJPEGThumbnail())
-						br.App.ChatView.AddVideo(msg.Info.ID, sJID, sName, vid.GetCaption(), texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
+						br.App.ChatView.AddVideo(msg.Info.ID, sJID, sName, vid.GetCaption(), texThumb, "", msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
 					} else if aud := msg.Message.GetAudioMessage(); aud != nil {
 						br.App.ChatView.AddAudio(msg.Info.ID, sJID, sName, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
 					} else if doc := msg.Message.GetDocumentMessage(); doc != nil {
@@ -167,6 +168,7 @@ func (br *Bridge) setupUIHandlers() {
 	br.App.ChatView.OnPasteImage = br.handlePasteImage
 	br.App.ChatView.OnSendFile = br.handleSendFile
 	br.App.ChatView.OnDownloadMedia = br.handleDownloadMedia
+	br.App.ChatView.OnOpenImage = br.handleOpenImage
 	br.App.ChatView.OnSendReaction = br.handleSendReaction
 	br.App.ChatView.OnPinMessage = br.handlePinMessage
 
@@ -285,7 +287,7 @@ func (br *Bridge) handlePasteImage(tex *gdk.Texture) {
 
 	glib.IdleAdd(func() {
 		if br.selectedJID != nil && br.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
-			br.App.ChatView.AddImage("temp_img", "", "", "", tex, nil, true, false, "pending", now, nil, "", "", "", int(tex.Width()), int(tex.Height()))
+			br.App.ChatView.AddImage("temp_img", "", "", "", tex, nil, "", true, false, "pending", now, nil, "", "", "", int(tex.Width()), int(tex.Height()))
 			br.App.ChatView.ScrollToBottom()
 		}
 	})
@@ -375,14 +377,14 @@ func (br *Bridge) handleSendFile(path string) {
 				pixbuf, _ := gdkpixbuf.NewPixbufFromFile(path)
 				var tex *gdk.Texture
 				if pixbuf != nil { tex = gdk.NewTextureForPixbuf(pixbuf) }
-				br.App.ChatView.AddImage("temp_file", jidStr, "", "", tex, nil, true, false, "pending", now, nil, "", "", "", 0, 0)
+				br.App.ChatView.AddImage("temp_file", jidStr, "", "", tex, nil, path, true, false, "pending", now, nil, "", "", "", 0, 0)
 			case "document":
 				br.App.ChatView.AddDocument("temp_file", jidStr, "", filename, nil, true, false, "pending", now, nil, "", "", "")
 			case "audio":
 				br.App.ChatView.AddAudio("temp_file", jidStr, "", true, false, "pending", now, nil, "", "", "")
 			case "video":
 				// For now video uses image bubble with no thumb or a placeholder
-				br.App.ChatView.AddVideo("temp_file", jidStr, "", "", nil, true, false, "pending", now, nil, "", "", "", 0, 0)
+				br.App.ChatView.AddVideo("temp_file", jidStr, "", "", nil, path, true, false, "pending", now, nil, "", "", "", 0, 0)
 			}
 			br.App.ChatView.ScrollToBottom()
 		}
@@ -464,7 +466,7 @@ func (br *Bridge) setupServiceHandlers() {
 				if pixbuf == nil { return }
 				tex := gdk.NewTextureForPixbuf(pixbuf)
 
-				br.App.ChatView.UpdateMessageImage(task.ID, tex)
+				br.App.ChatView.UpdateMessageImage(task.ID, tex, path)
 			}
 		})
 	})
@@ -676,13 +678,18 @@ func (br *Bridge) refreshMessages(jid types.JID) {
 					
 					mW := int(m.MediaWidth.Int64); mH := int(m.MediaHeight.Int64)
 					caption := m.Caption.String
+					
+					imgPath := ""
+					if _, err := os.Stat(m.Content); err == nil {
+						imgPath = m.Content
+					}
 
 					if m.Type == "image" {
-						br.App.ChatView.AddImage(m.ID, m.SenderJID, sName, caption, texImg, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
+						br.App.ChatView.AddImage(m.ID, m.SenderJID, sName, caption, texImg, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
 					} else if m.Type == "sticker" {
 						br.App.ChatView.AddSticker(m.ID, m.SenderJID, sName, texImg, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
 					} else if m.Type == "video" {
-						br.App.ChatView.AddVideo(m.ID, m.SenderJID, sName, caption, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
+						br.App.ChatView.AddVideo(m.ID, m.SenderJID, sName, caption, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
 					}
 				} else if m.Type == "audio" {
 					br.App.ChatView.AddAudio(m.ID, m.SenderJID, sName, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
@@ -929,6 +936,17 @@ func (br *Bridge) handleDownloadMedia(id string) {
 	br.Media.Download(DownloadTask{
 		ID: id, ChatJID: msg.ChatJID, SenderJID: msg.SenderJID, MsgType: msg.Type, Metadata: metadata,
 	})
+}
+
+func (br *Bridge) handleOpenImage(path string) {
+	fmt.Printf("Bridge: handleOpenImage called for %s\n", path)
+	// On Linux use xdg-open. Should ideally be cross-platform.
+	cmd := exec.Command("xdg-open", path)
+	err := cmd.Start()
+	if err != nil {
+		fmt.Printf("Bridge: Failed to open image: %v\n", err)
+	}
+	// We don't wait for the command to finish
 }
 func (br *Bridge) bytesToTexture(data []byte) *gdk.Texture {
 	if len(data) == 0 { return nil }

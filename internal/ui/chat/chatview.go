@@ -30,6 +30,7 @@ type ChatView struct {
 	OnPasteImage          func(tex *gdk.Texture)
 	OnSendFile            func(path string)
 	OnDownloadMedia       func(id string)
+	OnOpenImage           func(path string)
 	OnSendReaction        func(id, emoji string)
 	OnPinMessage          func(id string, pin bool, duration uint32)
 	AudioPlayer           *AudioPlayer
@@ -240,12 +241,18 @@ func (cv *ChatView) AddMessage(id, jid, name, text string, isSelf, isCont bool, 
 	}
 }
 
-func (cv *ChatView) AddImage(id, jid, name, text string, tex, thumb *gdk.Texture, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
+func (cv *ChatView) AddImage(id, jid, name, text string, tex, thumb *gdk.Texture, path string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
 	bubble, err := bubbles.NewImageBubble(name, text, tex, thumb, isSelf, status, tStr, av, w, h)
 	if err == nil {
+		bubble.SetFilePath(path)
 		bubble.OnDownloadRequest = func() {
 			if cv.OnDownloadMedia != nil {
 				cv.OnDownloadMedia(id)
+			}
+		}
+		bubble.OnOpenRequest = func(path string) {
+			if cv.OnOpenImage != nil {
+				cv.OnOpenImage(path)
 			}
 		}
 		bubble.SetQuotedMessage(qID, qSender, qContent)
@@ -305,13 +312,19 @@ func (cv *ChatView) AddAudio(id, jid, name string, isSelf, isCont bool, status, 
 	}
 }
 
-func (cv *ChatView) AddVideo(id, jid, name, text string, thumb *gdk.Texture, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
+func (cv *ChatView) AddVideo(id, jid, name, text string, thumb *gdk.Texture, path string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
 	// For now, video uses image bubble with thumbnail
 	bubble, err := bubbles.NewImageBubble(name, text, nil, thumb, isSelf, status, tStr, av, w, h)
 	if err == nil {
+		bubble.SetFilePath(path)
 		bubble.OnDownloadRequest = func() {
 			if cv.OnDownloadMedia != nil {
 				cv.OnDownloadMedia(id)
+			}
+		}
+		bubble.OnOpenRequest = func(path string) {
+			if cv.OnOpenImage != nil {
+				cv.OnOpenImage(path)
 			}
 		}
 		bubble.SetQuotedMessage(qID, qSender, qContent)
@@ -492,9 +505,9 @@ func (cv *ChatView) UpdateMessagePinned(id string, pinned bool) {
 	}
 }
 
-func (cv *ChatView) UpdateMessageImage(id string, tex *gdk.Texture) {
+func (cv *ChatView) UpdateMessageImage(id string, tex *gdk.Texture, path string) {
 	if bubble, exists := cv.MessageRows[id]; exists {
-		glib.IdleAdd(func() { bubble.UpdateImage(tex) })
+		glib.IdleAdd(func() { bubble.UpdateImage(tex, path) })
 	}
 }
 

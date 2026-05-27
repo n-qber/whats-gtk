@@ -90,7 +90,7 @@ func NewStickerBubble(name string, pixbuf, thumb *gdk.Texture, isSelf bool, stat
 	return sb, nil
 }
 
-func (sb *StickerBubble) UpdateImage(tex *gdk.Texture) {
+func (sb *StickerBubble) UpdateImage(tex *gdk.Texture, path string) {
 	if tex != nil {
 		sb.placeholder.Hide()
 		sb.picture.Show()

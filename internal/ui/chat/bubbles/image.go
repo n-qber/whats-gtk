@@ -11,6 +11,8 @@ type ImageBubble struct {
 	placeholder       *gtk.Box
 	captionLabel      *gtk.Label
 	OnDownloadRequest func()
+	OnOpenRequest     func(path string)
+	filePath          string
 }
 
 func NewImageBubble(name, text string, tex, thumb *gdk.Texture, isSelf bool, status, time string, avatar *gdk.Texture, realW, realH int) (*ImageBubble, error) {
@@ -95,15 +97,24 @@ func NewImageBubble(name, text string, tex, thumb *gdk.Texture, isSelf bool, sta
 	ib := &ImageBubble{baseBubble: base, picture: picture, placeholder: placeholder, captionLabel: captionLabel}
 
 	click.ConnectPressed(func(n int, x, y float64) {
-		if ib.OnDownloadRequest != nil {
-			ib.OnDownloadRequest()
+		if ib.filePath != "" {
+			if ib.OnOpenRequest != nil {
+				ib.OnOpenRequest(ib.filePath)
+			}
+		} else {
+			if ib.OnDownloadRequest != nil {
+				ib.OnDownloadRequest()
+			}
 		}
 	})
 
 	return ib, nil
 }
 
-func (ib *ImageBubble) UpdateImage(tex *gdk.Texture) {
+func (ib *ImageBubble) UpdateImage(tex *gdk.Texture, path string) {
+	if path != "" {
+		ib.filePath = path
+	}
 	if tex != nil {
 		ib.placeholder.Hide()
 		ib.picture.Show()
@@ -117,4 +128,8 @@ func (ib *ImageBubble) UpdateImage(tex *gdk.Texture) {
 		}
 		ib.picture.SetSizeRequest(int(w), int(h))
 	}
+}
+
+func (ib *ImageBubble) SetFilePath(path string) {
+	ib.filePath = path
 }
