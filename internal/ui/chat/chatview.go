@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"whats-gtk/internal/ui/chat/bubbles"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/diamondburned/gotk4/pkg/pango"
@@ -26,6 +28,7 @@ type ChatView struct {
 	BubblesByJID          map[string][]bubbles.Bubble
 	OnSendMessage         func(text string, replyToID string)
 	OnPasteImage          func(tex *gdk.Texture)
+	OnSendFile            func(path string)
 	OnDownloadMedia       func(id string)
 	OnSendReaction        func(id, emoji string)
 	OnPinMessage          func(id string, pin bool, duration uint32)
@@ -104,9 +107,13 @@ func NewChatView() (*ChatView, error) {
 	messageInput.AddCSSClass("message-input-view")
 	inputScrolled.SetChild(messageInput)
 
+	fileButton := gtk.NewButtonFromIconName("mail-attachment-symbolic")
+	fileButton.SetVAlign(gtk.AlignEnd)
+
 	sendButton := gtk.NewButtonWithLabel("Send")
 	sendButton.SetVAlign(gtk.AlignEnd)
 
+	inputBox.Append(fileButton)
 	inputBox.Append(inputScrolled)
 	inputBox.Append(sendButton)
 	box.Append(inputBox)
@@ -152,6 +159,26 @@ func NewChatView() (*ChatView, error) {
 		return false
 	})
 	messageInput.AddController(keyCtrl)
+
+	fileButton.ConnectClicked(func() {
+		dialog := gtk.NewFileDialog()
+		
+		var window *gtk.Window
+		if root := cv.Box.Root(); root != nil {
+			if win, ok := root.Cast().(*gtk.Window); ok {
+				window = win
+			}
+		}
+
+		dialog.Open(context.TODO(), window, func(res gio.AsyncResulter) {
+			file, err := dialog.OpenFinish(res)
+			if err == nil {
+				if cv.OnSendFile != nil {
+					cv.OnSendFile(file.Path())
+				}
+			}
+		})
+	})
 
 	sendButton.ConnectClicked(sendMsg)
 

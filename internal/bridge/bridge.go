@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"mime"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,6 +165,7 @@ func (br *Bridge) setupUIHandlers() {
 	br.App.ChatView.OnSendMessage = br.handleSendMessage
 	br.App.Sidebar.OnSearch = br.handleSearch
 	br.App.ChatView.OnPasteImage = br.handlePasteImage
+	br.App.ChatView.OnSendFile = br.handleSendFile
 	br.App.ChatView.OnDownloadMedia = br.handleDownloadMedia
 	br.App.ChatView.OnSendReaction = br.handleSendReaction
 	br.App.ChatView.OnPinMessage = br.handlePinMessage
@@ -332,6 +335,108 @@ func (br *Bridge) handlePasteImage(tex *gdk.Texture) {
 			Content: path, Type: "image", Timestamp: resp.Timestamp, Status: "sent", IsFromMe: true,
 			MediaWidth: sql.NullInt64{Int64: int64(tex.Width()), Valid: true},
 			MediaHeight: sql.NullInt64{Int64: int64(tex.Height()), Valid: true},
+		})
+		br.DB.UpdateContactTimestamp(targetJID.ToNonAD().String(), resp.Timestamp)
+	}()
+}
+
+func (br *Bridge) handleSendFile(path string) {
+	if br.selectedJID == nil { return }
+	targetJID := *br.selectedJID
+	now := time.Now().Format("15:04")
+	filename := filepath.Base(path)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Printf("Bridge: Failed to read file: %v\n", err)
+		return
+	}
+
+	mimetype := mime.TypeByExtension(filepath.Ext(path))
+	if mimetype == "" {
+		mimetype = http.DetectContentType(data)
+	}
+
+	msgType := "document"
+	if strings.HasPrefix(mimetype, "image/") {
+		msgType = "image"
+	} else if strings.HasPrefix(mimetype, "video/") {
+		msgType = "video"
+	} else if strings.HasPrefix(mimetype, "audio/") {
+		msgType = "audio"
+	}
+
+	glib.IdleAdd(func() {
+		if br.selectedJID != nil && br.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
+			jidStr := targetJID.ToNonAD().String()
+			switch msgType {
+			case "image":
+				// Try to load as texture for preview
+				pixbuf, _ := gdkpixbuf.NewPixbufFromFile(path)
+				var tex *gdk.Texture
+				if pixbuf != nil { tex = gdk.NewTextureForPixbuf(pixbuf) }
+				br.App.ChatView.AddImage("temp_file", jidStr, "", "", tex, nil, true, false, "pending", now, nil, "", "", "", 0, 0)
+			case "document":
+				br.App.ChatView.AddDocument("temp_file", jidStr, "", filename, nil, true, false, "pending", now, nil, "", "", "")
+			case "audio":
+				br.App.ChatView.AddAudio("temp_file", jidStr, "", true, false, "pending", now, nil, "", "", "")
+			case "video":
+				// For now video uses image bubble with no thumb or a placeholder
+				br.App.ChatView.AddVideo("temp_file", jidStr, "", "", nil, true, false, "pending", now, nil, "", "", "", 0, 0)
+			}
+			br.App.ChatView.ScrollToBottom()
+		}
+	})
+
+	go func() {
+		var resp whatsmeow.SendResponse
+		var err error
+
+		switch msgType {
+		case "image":
+			resp, err = br.Backend.SendImage(br.ctx, targetJID, data, mimetype)
+		case "video":
+			resp, err = br.Backend.SendVideo(br.ctx, targetJID, data, mimetype)
+		case "audio":
+			resp, err = br.Backend.SendAudio(br.ctx, targetJID, data, mimetype)
+		case "document":
+			resp, err = br.Backend.SendDocument(br.ctx, targetJID, data, mimetype, filename)
+		}
+
+		if err != nil {
+			fmt.Printf("Bridge: SendFile failed: %v\n", err)
+			return
+		}
+
+		glib.IdleAdd(func() {
+			if br.selectedJID != nil && br.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
+				br.App.ChatView.UpdateMessageStatus("temp_file", "sent")
+				if b, exists := br.App.ChatView.MessageRows["temp_file"]; exists {
+					br.App.ChatView.MessageRows[resp.ID] = b; delete(br.App.ChatView.MessageRows, "temp_file")
+				}
+				if r, exists := br.App.ChatView.MessageListRows["temp_file"]; exists {
+					br.App.ChatView.MessageListRows[resp.ID] = r; delete(br.App.ChatView.MessageListRows, "temp_file")
+				}
+			}
+		})
+
+		// Save to DB and media folder
+		ext := filepath.Ext(path)
+		if ext == "" {
+			ext = ".bin"
+			switch msgType {
+			case "image": ext = ".jpg"
+			case "video": ext = ".mp4"
+			case "audio": ext = ".ogg"
+			}
+		}
+		
+		dbPath := filepath.Join("media", resp.ID+ext)
+		os.WriteFile(dbPath, data, 0644)
+		
+		br.DB.SaveMessage(database.Message{
+			ID: resp.ID, ChatJID: targetJID.ToNonAD().String(), SenderJID: br.Backend.Device.ID.ToNonAD().String(),
+			Content: dbPath, Type: msgType, Timestamp: resp.Timestamp, Status: "sent", IsFromMe: true,
 		})
 		br.DB.UpdateContactTimestamp(targetJID.ToNonAD().String(), resp.Timestamp)
 	}()

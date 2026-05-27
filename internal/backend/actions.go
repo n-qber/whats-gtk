@@ -120,3 +120,61 @@ func (b *Backend) SendImage(ctx context.Context, to types.JID, data []byte, mime
 		},
 	})
 }
+
+func (b *Backend) SendVideo(ctx context.Context, to types.JID, data []byte, mimetype string) (whatsmeow.SendResponse, error) {
+	resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaVideo)
+	if err != nil {
+		return whatsmeow.SendResponse{}, err
+	}
+
+	return b.Client.SendMessage(ctx, to, &waProto.Message{
+		VideoMessage: &waProto.VideoMessage{
+			URL:           proto.String(resp.URL),
+			DirectPath:    proto.String(resp.DirectPath),
+			MediaKey:      resp.MediaKey,
+			Mimetype:      proto.String(mimetype),
+			FileEncSHA256: resp.FileEncSHA256,
+			FileSHA256:    resp.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))),
+		},
+	})
+}
+
+func (b *Backend) SendAudio(ctx context.Context, to types.JID, data []byte, mimetype string) (whatsmeow.SendResponse, error) {
+	resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaAudio)
+	if err != nil {
+		return whatsmeow.SendResponse{}, err
+	}
+
+	return b.Client.SendMessage(ctx, to, &waProto.Message{
+		AudioMessage: &waProto.AudioMessage{
+			URL:           proto.String(resp.URL),
+			DirectPath:    proto.String(resp.DirectPath),
+			MediaKey:      resp.MediaKey,
+			Mimetype:      proto.String(mimetype),
+			FileEncSHA256: resp.FileEncSHA256,
+			FileSHA256:    resp.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))),
+		},
+	})
+}
+
+func (b *Backend) SendDocument(ctx context.Context, to types.JID, data []byte, mimetype, filename string) (whatsmeow.SendResponse, error) {
+	resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaDocument)
+	if err != nil {
+		return whatsmeow.SendResponse{}, err
+	}
+
+	return b.Client.SendMessage(ctx, to, &waProto.Message{
+		DocumentMessage: &waProto.DocumentMessage{
+			URL:           proto.String(resp.URL),
+			DirectPath:    proto.String(resp.DirectPath),
+			MediaKey:      resp.MediaKey,
+			Mimetype:      proto.String(mimetype),
+			FileEncSHA256: resp.FileEncSHA256,
+			FileSHA256:    resp.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))),
+			FileName:      proto.String(filename),
+		},
+	})
+}
