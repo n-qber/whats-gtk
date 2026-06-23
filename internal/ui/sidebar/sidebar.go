@@ -67,6 +67,14 @@ func NewSidebar() (*Sidebar, error) {
 		}
 	})
 
+	searchEntry.ConnectActivate(func() {
+		row := s.ListBox.RowAtIndex(0)
+		if row != nil {
+			s.ListBox.SelectRow(row)
+			searchEntry.SetText("")
+		}
+	})
+
 	listBox.ConnectRowSelected(func(row *gtk.ListBoxRow) {
 		if row == nil || s.isRefreshing { return }
 		if s.OnChatSelected != nil {
