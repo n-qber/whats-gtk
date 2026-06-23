@@ -1,0 +1,463 @@
+package bridge
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"mime"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+	"whats-gtk/internal/backend"
+	"whats-gtk/internal/database"
+	"whats-gtk/internal/ui"
+
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
+	"github.com/diamondburned/gotk4/pkg/glib/v2"
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/types"
+	waProto "go.mau.fi/whatsmeow/binary/proto"
+	"google.golang.org/protobuf/proto"
+)
+
+// ChatController handles all user-initiated actions: chat selection, message sending,
+// search, file uploads, reactions, pins, media downloads, and group management.
+// It owns the session state (selectedJID, lastSender, search serial).
+type ChatController struct {
+	Backend  *backend.Backend
+	App      *ui.App
+	DB       *database.AppDB
+	Messages *MessageService
+	Contacts *ContactService
+	Media    *MediaService
+	Renderer *Renderer
+	ctx      context.Context
+
+	selectedJID   *types.JID
+	lastSender    string
+	sidebarMutex  sync.Mutex
+	searchSerial  int
+	lastGroupSync map[string]time.Time
+}
+
+// NewChatController creates a new ChatController.
+func NewChatController(b *backend.Backend, app *ui.App, db *database.AppDB, msgs *MessageService, contacts *ContactService, media *MediaService, ctx context.Context) *ChatController {
+	return &ChatController{
+		Backend:       b,
+		App:           app,
+		DB:            db,
+		Messages:      msgs,
+		Contacts:      contacts,
+		Media:         media,
+		ctx:           ctx,
+		lastGroupSync: make(map[string]time.Time),
+	}
+}
+
+// SelectedJID returns the currently selected chat JID.
+func (cc *ChatController) SelectedJID() *types.JID { return cc.selectedJID }
+
+// LastSender returns the JID string of the last message sender (for continuation grouping).
+func (cc *ChatController) LastSender() string { return cc.lastSender }
+
+// SetLastSender updates the last sender (used by Renderer for continuation tracking).
+func (cc *ChatController) SetLastSender(s string) { cc.lastSender = s }
+
+// IsSyncing is accessed from EventHandler. We use a separate field there,
+// but ChatController needs to check it for LID resolution decisions.
+// This is checked via EventHandler reference (set via Bridge wiring).
+
+// HandleChatSelected opens a chat: sets header, refreshes messages, marks read,
+// resolves LID if needed, and syncs group info for group chats.
+func (cc *ChatController) HandleChatSelected(jidStr string) {
+	jid, err := types.ParseJID(jidStr); if err != nil { return }
+	jid = cc.Messages.ResolveJID(jid); cc.selectedJID = &jid; cc.lastSender = "" 
+	
+	if contact, err := cc.DB.GetContact(jid.String()); err == nil {
+		headerName := contact.DisplayName()
+		if jid.Server == types.GroupServer { headerName = "[G] " + headerName }
+		cc.App.ChatView.SetHeader(headerName, cc.Contacts.GetAvatar(jid.String()))
+	} else {
+		cc.App.ChatView.SetHeader(jid.String(), cc.Contacts.GetAvatar(jid.String()))
+	}
+
+	cc.Renderer.RefreshMessages(jid)
+	
+	// Mark as read
+	if cc.Backend != nil && cc.Backend.Client != nil {
+		go cc.Backend.MarkRead(cc.ctx, jid, []string{}, types.JID{}, time.Now())
+	}
+
+	if strings.HasSuffix(jid.String(), "@lid") {
+		go cc.Contacts.ResolveLIDMapping(jid.String())
+	}
+
+	if jid.Server == types.GroupServer {
+		cc.SyncGroupIfNeeded(jid)
+	}
+
+	if cc.App.ChatView != nil {
+		cc.App.ChatView.FocusEntry()
+	}
+}
+
+// HandleSendMessage sends a text message with optional reply context, shows
+// optimistic UI, and persists on success.
+func (cc *ChatController) HandleSendMessage(text string, replyToID string) {
+	if cc.selectedJID == nil { return }
+	targetJID := *cc.selectedJID; now := time.Now().Format("15:04")
+	
+	// Get Quoted Context if any
+	var qID, qSender, qContent string
+	if replyToID != "" {
+		if qm, err := cc.DB.GetMessage(replyToID); err == nil {
+			qID = qm.ID
+			qSender = qm.SenderJID
+			qContent = qm.Content
+			if qm.Type != "text" { qContent = "[" + strings.Title(qm.Type) + "]" }
+		}
+	}
+
+	tempID := "temp"
+	glib.IdleAdd(func() {
+		if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
+			isCont := cc.lastSender == cc.Backend.Device.ID.ToNonAD().String()
+			// For own messages, name is empty but avatar should show if available
+			cc.App.ChatView.AddMessage(tempID, "", "", text, true, isCont, "pending", now, nil, qID, qSender, qContent)
+			cc.lastSender = cc.Backend.Device.ID.ToNonAD().String()
+			cc.App.ChatView.ScrollToBottom()
+		}
+	})
+
+	go func() {
+		var contextInfo *waProto.ContextInfo
+		if replyToID != "" {
+			if qm, err := cc.DB.GetMessage(replyToID); err == nil {
+				contextInfo = &waProto.ContextInfo{
+					StanzaID:    proto.String(qm.ID),
+					Participant: proto.String(qm.SenderJID),
+					QuotedMessage: &waProto.Message{
+						Conversation: proto.String(qm.Content),
+					},
+				}
+			}
+		}
+
+		resp, err := cc.Backend.SendText(cc.ctx, targetJID, text, contextInfo); if err != nil { return }
+		cc.promoteTempMessage(targetJID, tempID, resp.ID)
+		cc.DB.SaveMessage(database.Message{
+			ID: resp.ID, ChatJID: targetJID.ToNonAD().String(), SenderJID: cc.Backend.Device.ID.ToNonAD().String(), 
+			Content: text, Type: "text", Timestamp: resp.Timestamp, Status: "sent", IsFromMe: true,
+			QuotedMsgID: sql.NullString{String: qID, Valid: qID != ""},
+			QuotedMsgSender: sql.NullString{String: qSender, Valid: qSender != ""},
+			QuotedMsgContent: sql.NullString{String: qContent, Valid: qContent != ""},
+		})
+		cc.DB.UpdateContactTimestamp(targetJID.ToNonAD().String(), resp.Timestamp)
+	}()
+}
+
+// HandleSearch performs a debounced search on contacts.
+func (cc *ChatController) HandleSearch(t string) {
+	cc.sidebarMutex.Lock()
+	cc.searchSerial++
+	serial := cc.searchSerial
+	cc.sidebarMutex.Unlock()
+
+	go func() {
+		var c []database.Contact
+		var err error
+		if strings.TrimSpace(t) == "" {
+			c, err = cc.DB.GetAllContacts(100)
+		} else {
+			c, err = cc.DB.SearchContacts(t, 200)
+		}
+		
+		cc.sidebarMutex.Lock()
+		if serial != cc.searchSerial {
+			cc.sidebarMutex.Unlock()
+			return
+		}
+		cc.sidebarMutex.Unlock()
+
+		if err != nil {
+			fmt.Printf("Bridge: Search failed: %v\n", err)
+			return
+		}
+		cc.Renderer.RefreshSidebar(c)
+	}()
+}
+
+// HandlePasteImage sends a pasted image with optimistic UI.
+func (cc *ChatController) HandlePasteImage(tex *gdk.Texture) {
+	if cc.selectedJID == nil { return }
+	targetJID := *cc.selectedJID
+	now := time.Now().Format("15:04")
+	tempID := fmt.Sprintf("temp_%d", time.Now().UnixNano())
+
+	glib.IdleAdd(func() {
+		if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
+			cc.App.ChatView.AddImage(tempID, "", "", "", tex, nil, "", true, false, "pending", now, nil, "", "", "", int(tex.Width()), int(tex.Height()))
+			cc.App.ChatView.ScrollToBottom()
+		}
+	})
+
+	go func() {
+		// Convert texture to bytes via pixbuf
+		pixbuf := gdk.PixbufGetFromTexture(tex)
+		if pixbuf == nil { return }
+
+		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("paste_%d.jpg", time.Now().UnixNano()))
+		err := pixbuf.Savev(tmpPath, "jpeg", nil, nil)
+		if err != nil {
+			fmt.Printf("Bridge: Failed to save temp image: %v\n", err)
+			return
+		}
+		defer os.Remove(tmpPath)
+
+		data, err := os.ReadFile(tmpPath)
+		if err != nil {
+			fmt.Printf("Bridge: Failed to read temp image: %v\n", err)
+			return
+		}
+
+		resp, err := cc.Backend.SendImage(cc.ctx, targetJID, data, "image/jpeg")
+		if err != nil {
+			fmt.Printf("Bridge: SendImage failed: %v\n", err)
+			return
+		}
+
+		cc.promoteTempMessage(targetJID, tempID, resp.ID)
+
+		// Save to DB and media folder
+		path := filepath.Join("media", resp.ID+".jpg")
+		os.WriteFile(path, data, 0644)
+		cc.DB.SaveMessage(database.Message{
+			ID: resp.ID, ChatJID: targetJID.ToNonAD().String(), SenderJID: cc.Backend.Device.ID.ToNonAD().String(),
+			Content: path, Type: "image", Timestamp: resp.Timestamp, Status: "sent", IsFromMe: true,
+			MediaWidth: sql.NullInt64{Int64: int64(tex.Width()), Valid: true},
+			MediaHeight: sql.NullInt64{Int64: int64(tex.Height()), Valid: true},
+		})
+		cc.DB.UpdateContactTimestamp(targetJID.ToNonAD().String(), resp.Timestamp)
+	}()
+}
+
+// HandleSendFile sends a file (image, video, audio, or document) with optimistic UI.
+func (cc *ChatController) HandleSendFile(path string) {
+	if cc.selectedJID == nil { return }
+	targetJID := *cc.selectedJID
+	now := time.Now().Format("15:04")
+	filename := filepath.Base(path)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Printf("Bridge: Failed to read file: %v\n", err)
+		return
+	}
+
+	mimetype := mime.TypeByExtension(filepath.Ext(path))
+	if mimetype == "" {
+		mimetype = http.DetectContentType(data)
+	}
+
+	msgType := "document"
+	if strings.HasPrefix(mimetype, "image/") {
+		msgType = "image"
+	} else if strings.HasPrefix(mimetype, "video/") {
+		msgType = "video"
+	} else if strings.HasPrefix(mimetype, "audio/") {
+		msgType = "audio"
+	}
+
+	tempID := "temp_file"
+	glib.IdleAdd(func() {
+		if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
+			jidStr := targetJID.ToNonAD().String()
+			switch msgType {
+			case "image":
+				// Try to load as texture for preview
+				pixbuf, _ := gdkpixbuf.NewPixbufFromFile(path)
+				var tex *gdk.Texture
+				if pixbuf != nil { tex = gdk.NewTextureForPixbuf(pixbuf) }
+				cc.App.ChatView.AddImage(tempID, jidStr, "", "", tex, nil, path, true, false, "pending", now, nil, "", "", "", 0, 0)
+			case "document":
+				cc.App.ChatView.AddDocument(tempID, jidStr, "", filename, nil, true, false, "pending", now, nil, "", "", "")
+			case "audio":
+				cc.App.ChatView.AddAudio(tempID, jidStr, "", true, false, "pending", now, nil, "", "", "")
+			case "video":
+				// For now video uses image bubble with no thumb or a placeholder
+				cc.App.ChatView.AddVideo(tempID, jidStr, "", "", nil, path, true, false, "pending", now, nil, "", "", "", 0, 0)
+			}
+			cc.App.ChatView.ScrollToBottom()
+		}
+	})
+
+	go func() {
+		var resp whatsmeow.SendResponse
+		var err error
+
+		switch msgType {
+		case "image":
+			resp, err = cc.Backend.SendImage(cc.ctx, targetJID, data, mimetype)
+		case "video":
+			resp, err = cc.Backend.SendVideo(cc.ctx, targetJID, data, mimetype)
+		case "audio":
+			resp, err = cc.Backend.SendAudio(cc.ctx, targetJID, data, mimetype)
+		case "document":
+			resp, err = cc.Backend.SendDocument(cc.ctx, targetJID, data, mimetype, filename)
+		}
+
+		if err != nil {
+			fmt.Printf("Bridge: SendFile failed: %v\n", err)
+			return
+		}
+
+		cc.promoteTempMessage(targetJID, tempID, resp.ID)
+
+		// Save to DB and media folder
+		ext := filepath.Ext(path)
+		if ext == "" {
+			ext = ".bin"
+			switch msgType {
+			case "image": ext = ".jpg"
+			case "video": ext = ".mp4"
+			case "audio": ext = ".ogg"
+			}
+		}
+		
+		dbPath := filepath.Join("media", resp.ID+ext)
+		os.WriteFile(dbPath, data, 0644)
+		
+		cc.DB.SaveMessage(database.Message{
+			ID: resp.ID, ChatJID: targetJID.ToNonAD().String(), SenderJID: cc.Backend.Device.ID.ToNonAD().String(),
+			Content: dbPath, Type: msgType, Timestamp: resp.Timestamp, Status: "sent", IsFromMe: true,
+		})
+		cc.DB.UpdateContactTimestamp(targetJID.ToNonAD().String(), resp.Timestamp)
+	}()
+}
+
+// HandleSendReaction sends a reaction to a message.
+func (cc *ChatController) HandleSendReaction(id, emoji string) {
+	if cc.selectedJID == nil { return }
+	msg, err := cc.DB.GetMessage(id); if err != nil { return }
+	
+	chatJID := *cc.selectedJID
+
+	go func() {
+		_, err := cc.Backend.SendReaction(cc.ctx, chatJID, id, msg.IsFromMe, emoji)
+		if err == nil {
+			cc.Messages.HandleReaction(chatJID, cc.Backend.Device.ID.ToNonAD(), emoji, id, time.Now())
+		} else {
+			fmt.Printf("Bridge: SendReaction failed: %v\n", err)
+		}
+	}()
+}
+
+// HandlePinMessage pins or unpins a message.
+func (cc *ChatController) HandlePinMessage(id string, pin bool, duration uint32) {
+	if cc.selectedJID == nil { return }
+	msg, err := cc.DB.GetMessage(id); if err != nil { return }
+	
+	chatJID := *cc.selectedJID
+
+	go func() {
+		_, err := cc.Backend.PinMessage(cc.ctx, chatJID, id, msg.IsFromMe, pin, duration)
+		if err == nil {
+			cc.DB.UpdateMessagePinned(id, chatJID.ToNonAD().String(), pin)
+			if cc.selectedJID != nil && chatJID.ToNonAD().String() == cc.selectedJID.ToNonAD().String() {
+				cc.App.ChatView.UpdateMessagePinned(id, pin)
+			}
+		} else {
+			fmt.Printf("Bridge: PinMessage failed: %v\n", err)
+		}
+	}()
+}
+
+// HandleDownloadMedia reads a message from the DB, builds MediaMetadata, and
+// sends a DownloadTask to the MediaService.
+func (cc *ChatController) HandleDownloadMedia(id string) {
+	fmt.Printf("Bridge: handleDownloadMedia called for %s\n", id)
+	msg, err := cc.DB.GetMessage(id)
+	if err != nil { 
+		fmt.Printf("Bridge: Message %s not found in DB\n", id)
+		return 
+	}
+
+	if msg.MediaURL.String == "" && msg.MediaDirectPath.String == "" {
+		fmt.Printf("Bridge: Message %s has no media URLs\n", id)
+		return 
+	}
+
+	metadata := &MediaMetadata{
+		URL: msg.MediaURL.String, DirectPath: msg.MediaDirectPath.String,
+		MediaKey: msg.MediaKey, Mimetype: msg.MediaMimetype.String,
+		FileEncSHA256: msg.MediaEncSHA256, FileSHA256: msg.MediaSHA256,
+		FileLength: uint64(msg.MediaLength.Int64),
+	}
+
+	fmt.Printf("Bridge: Sending DownloadTask for %s (type %s)\n", id, msg.Type)
+	cc.Media.Download(DownloadTask{
+		ID: id, ChatJID: msg.ChatJID, SenderJID: msg.SenderJID, MsgType: msg.Type, Metadata: metadata,
+	})
+}
+
+// HandleOpenImage opens a file with the system's default application.
+func (cc *ChatController) HandleOpenImage(path string) {
+	fmt.Printf("Bridge: handleOpenImage called for %s\n", path)
+	// On Linux use xdg-open. Should ideally be cross-platform.
+	cmd := exec.Command("xdg-open", path)
+	err := cmd.Start()
+	if err != nil {
+		fmt.Printf("Bridge: Failed to open image: %v\n", err)
+	}
+	// We don't wait for the command to finish
+}
+
+// SyncGroupIfNeeded fetches group info if it hasn't been synced recently (30 min throttle).
+func (cc *ChatController) SyncGroupIfNeeded(jid types.JID) {
+	if cc.Backend == nil || cc.Backend.Client == nil { return }
+
+	lastSync, exists := cc.lastGroupSync[jid.String()]
+	if !exists || time.Since(lastSync) > 30*time.Minute {
+		go func(groupJID types.JID) {
+			info, err := cc.Backend.GetGroupInfo(cc.ctx, groupJID)
+			if err != nil || info == nil { 
+				fmt.Printf("Bridge: Failed to get group info for %s: %v\n", groupJID, err)
+				return 
+			}
+			cc.lastGroupSync[groupJID.String()] = time.Now()
+			for _, p := range info.Participants {
+				pn := p.PhoneNumber.ToNonAD().String(); lid := p.LID.ToNonAD().String()
+				if pn != "" && lid != "" {
+					cc.DB.MergeLID(pn, lid)
+				} else {
+					cc.DB.SaveContact(database.Contact{JID: p.JID.ToNonAD().String()})
+				}
+			}
+			if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == groupJID.ToNonAD().String() {
+				glib.IdleAdd(func() { cc.Renderer.RefreshMessages(groupJID) })
+			}
+		}(jid)
+	}
+}
+
+// promoteTempMessage replaces a temporary message ID with the real one in the UI.
+// This deduplicates the optimistic UI pattern used by HandleSendMessage,
+// HandlePasteImage, and HandleSendFile.
+func (cc *ChatController) promoteTempMessage(targetJID types.JID, tempID, realID string) {
+	glib.IdleAdd(func() {
+		if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
+			cc.App.ChatView.UpdateMessageStatus(tempID, "sent")
+			if b, exists := cc.App.ChatView.MessageRows[tempID]; exists {
+				cc.App.ChatView.MessageRows[realID] = b; delete(cc.App.ChatView.MessageRows, tempID)
+			}
+			if r, exists := cc.App.ChatView.MessageListRows[tempID]; exists {
+				cc.App.ChatView.MessageListRows[realID] = r; delete(cc.App.ChatView.MessageListRows, tempID)
+			}
+		}
+	})
+}

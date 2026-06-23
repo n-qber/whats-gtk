@@ -157,6 +157,18 @@ func NewChatView() (*ChatView, error) {
 			sendMsg()
 			return true
 		}
+		if keyval == gdk.KEY_v && (state&gdk.ControlMask != 0) {
+			clipboard := gdk.DisplayGetDefault().Clipboard()
+			if clipboard.Formats().ContainGType(gdk.GTypeTexture) {
+				clipboard.ReadTextureAsync(context.TODO(), func(res gio.AsyncResulter) {
+					tex, err := clipboard.ReadTextureFinish(res)
+					if err == nil && cv.OnPasteImage != nil {
+						cv.OnPasteImage(gdk.BaseTexture(tex))
+					}
+				})
+				return true
+			}
+		}
 		return false
 	})
 	messageInput.AddController(keyCtrl)

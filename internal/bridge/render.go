@@ -1,0 +1,273 @@
+package bridge
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+	"whats-gtk/internal/backend"
+	"whats-gtk/internal/database"
+	"whats-gtk/internal/ui"
+
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
+	"github.com/diamondburned/gotk4/pkg/glib/v2"
+	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
+)
+
+// Renderer handles all UI rendering — message display, sidebar refresh,
+// and live message rendering from the pipeline.
+type Renderer struct {
+	App      *ui.App
+	DB       *database.AppDB
+	Contacts *ContactService
+	Backend  *backend.Backend
+	Messages *MessageService
+	ctx      context.Context
+
+	// Chat is set after ChatController is created to provide selectedJID/lastSender access.
+	Chat *ChatController
+}
+
+// NewRenderer creates a new Renderer.
+func NewRenderer(app *ui.App, db *database.AppDB, contacts *ContactService, b *backend.Backend, msgs *MessageService, ctx context.Context) *Renderer {
+	return &Renderer{
+		App:      app,
+		DB:       db,
+		Contacts: contacts,
+		Backend:  b,
+		Messages: msgs,
+		ctx:      ctx,
+	}
+}
+
+// RefreshMessages loads messages from the database and renders them in the chat view.
+func (r *Renderer) RefreshMessages(jid types.JID) {
+	go func() {
+		jids := []string{jid.ToNonAD().String()}
+		if contact, err := r.DB.GetContact(jid.ToNonAD().String()); err == nil {
+			if contact.LID.Valid && contact.LID.String != "" {
+				jids = append(jids, contact.LID.String)
+			}
+		}
+
+		msgs, err := r.DB.GetMessages(jids, 50)
+		if err != nil {
+			fmt.Printf("Bridge: GetMessages failed: %v\n", err)
+			return
+		}
+		seen := make(map[string]bool)
+		for i := len(msgs) - 1; i >= 0; i-- {
+			if !msgs[i].IsFromMe && !seen[msgs[i].SenderJID] {
+				r.Contacts.GetAvatar(msgs[i].SenderJID)
+				seen[msgs[i].SenderJID] = true
+			}
+		}
+		glib.IdleAdd(func() {
+			selectedJID := r.Chat.SelectedJID()
+			if selectedJID == nil || selectedJID.ToNonAD().String() != jid.ToNonAD().String() { return }
+			r.App.ChatView.Clear(); r.Chat.SetLastSender("")
+			for _, m := range msgs {
+				tStr := m.Timestamp.Format("15:04"); sName := ""; var av *gdk.Texture; isCont := m.SenderJID == r.Chat.LastSender()
+				if jid.Server == types.GroupServer && !m.IsFromMe {
+					if !isCont {
+						sName = r.Contacts.ResolveSenderName(m.SenderJID)
+						av = r.Contacts.GetAvatar(m.SenderJID)
+					}
+				}
+				r.Chat.SetLastSender(m.SenderJID)
+				qID := m.QuotedMsgID.String; qSender := m.QuotedMsgSender.String; qContent := m.QuotedMsgContent.String
+				qSenderName := qSender
+				if qSender != "" {
+					qSenderName = r.Contacts.ResolveSenderName(qSender)
+				}
+
+				if m.Type == "image" || m.Type == "sticker" || m.Type == "video" {
+					var texImg, texThumb *gdk.Texture
+					texThumb = bytesToTexture(m.Thumbnail)
+					
+					if _, err := os.Stat(m.Content); err == nil {
+						pixbuf, _ := gdkpixbuf.NewPixbufFromFile(m.Content)
+						if pixbuf != nil {
+							texImg = gdk.NewTextureForPixbuf(pixbuf)
+						}
+					} else if m.Type == "sticker" {
+						// Auto-download missing stickers
+						go r.Chat.HandleDownloadMedia(m.ID)
+					}
+					
+					mW := int(m.MediaWidth.Int64); mH := int(m.MediaHeight.Int64)
+					caption := m.Caption.String
+					
+					imgPath := ""
+					if _, err := os.Stat(m.Content); err == nil {
+						imgPath = m.Content
+					}
+
+					if m.Type == "image" {
+						r.App.ChatView.AddImage(m.ID, m.SenderJID, sName, caption, texImg, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
+					} else if m.Type == "sticker" {
+						r.App.ChatView.AddSticker(m.ID, m.SenderJID, sName, texImg, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
+					} else if m.Type == "video" {
+						r.App.ChatView.AddVideo(m.ID, m.SenderJID, sName, caption, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
+					}
+				} else if m.Type == "audio" {
+					r.App.ChatView.AddAudio(m.ID, m.SenderJID, sName, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+					if m.Content != "" {
+						if _, err := os.Stat(m.Content); err == nil {
+							r.App.ChatView.UpdateMessageAudio(m.ID, m.Content)
+						}
+					}
+				} else if m.Type == "document" {
+					fileName := "file"
+					if m.Content != "" {
+						if strings.HasPrefix(m.Content, "[Document: ") {
+							fileName = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Document: "), "]")
+						} else if strings.Contains(m.Content, "media/") {
+							// Extract original name from saved path: media/ID_FileName.ext
+							base := filepath.Base(m.Content)
+							if idx := strings.Index(base, "_"); idx != -1 {
+								fileName = base[idx+1:]
+							}
+						}
+					}
+					texThumb := bytesToTexture(m.Thumbnail)
+					r.App.ChatView.AddDocument(m.ID, m.SenderJID, sName, fileName, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+					if m.Content != "" && !strings.HasPrefix(m.Content, "[Document: ") {
+						if _, err := os.Stat(m.Content); err == nil {
+							r.App.ChatView.UpdateMessageDocument(m.ID, m.Content)
+						}
+					}
+				} else {
+					if m.Content != "" {
+						r.App.ChatView.AddMessage(m.ID, m.SenderJID, sName, m.Content, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+					}
+				}
+				
+				// Set reactions
+				reacts, _ := r.DB.GetReactions(m.ID)
+				if len(reacts) > 0 {
+					r.App.ChatView.UpdateMessageReactions(m.ID, uniqueReactions(reacts))
+				}
+
+				if m.IsPinned {
+					r.App.ChatView.UpdateMessagePinned(m.ID, true)
+					r.App.ChatView.SetPinnedMessage(m.Content)
+				}
+			}
+			r.App.ChatView.ScrollToBottom()
+		})
+	}()
+}
+
+// RefreshSidebar rebuilds the sidebar chat list from the given contacts.
+func (r *Renderer) RefreshSidebar(contacts []database.Contact) {
+	glib.IdleAdd(func() {
+		r.App.Sidebar.SetRefreshing(true)
+		r.App.Sidebar.ClearChats()
+		for _, c := range contacts {
+			prefix := ""
+			if c.IsGroup.Valid && c.IsGroup.Bool { prefix = "[G] " }
+			r.App.Sidebar.AddChat(c.JID, prefix+c.DisplayName())
+			
+			if tex := r.Contacts.GetAvatarNoFetch(c.JID); tex != nil {
+				r.App.Sidebar.SetAvatar(c.JID, tex)
+			}
+		}
+		
+		selectedJID := r.Chat.SelectedJID()
+		if selectedJID != nil {
+			r.App.Sidebar.SelectChat(selectedJID.ToNonAD().String())
+		}
+		r.App.Sidebar.SetRefreshing(false)
+	})
+}
+
+// RenderLiveMessage renders an incoming live message from the pipeline to the UI.
+// It handles sidebar reordering, auto-read marking, and message rendering.
+func (r *Renderer) RenderLiveMessage(msg *events.Message, isSyncing bool) {
+	resolvedChat := r.Messages.ResolveJID(msg.Info.Chat)
+	selectedJID := r.Chat.SelectedJID()
+	if !isSyncing || (selectedJID != nil && resolvedChat.ToNonAD().String() == selectedJID.ToNonAD().String()) {
+		jid := resolvedChat.ToNonAD().String()
+
+		// Automatically mark as read if this chat is currently selected
+		if selectedJID != nil && jid == selectedJID.ToNonAD().String() {
+			go r.Backend.MarkRead(r.ctx, msg.Info.Chat, []string{msg.Info.ID}, msg.Info.Sender, time.Now())
+		}
+
+		glib.IdleAdd(func() {
+			r.App.Sidebar.MoveChatToTop(jid)
+			selectedJID := r.Chat.SelectedJID() // re-read inside GTK thread
+			if selectedJID != nil && resolvedChat.ToNonAD().String() == selectedJID.ToNonAD().String() {
+				tStr := msg.Info.Timestamp.Format("15:04"); sName := ""; var av *gdk.Texture; isG := msg.Info.Chat.Server == types.GroupServer
+				
+				resolvedSender := r.Messages.ResolveJID(msg.Info.Sender)
+				sJID := resolvedSender.ToNonAD().String()
+				isCont := sJID == r.Chat.LastSender()
+				
+				if isG && !msg.Info.IsFromMe {
+					if !isCont {
+						sName = r.Contacts.ResolveSenderName(sJID)
+						av = r.Contacts.GetAvatar(sJID)
+					}
+				}
+				r.Chat.SetLastSender(sJID)
+				
+				var qID, qSender, qContent string
+				var qSenderName string
+				if ci := r.Messages.ExtractContextInfo(msg); ci != nil && ci.GetStanzaID() != "" {
+					qID = ci.GetStanzaID()
+					qSender = ci.GetParticipant()
+					if qSender != "" {
+						qSenderName = r.Contacts.ResolveSenderName(qSender)
+					}
+					if qm := ci.GetQuotedMessage(); qm != nil {
+						if qm.GetConversation() != "" {
+							qContent = qm.GetConversation()
+						} else if qm.GetExtendedTextMessage() != nil {
+							qContent = qm.GetExtendedTextMessage().GetText()
+						} else {
+							qContent = "[Quoted Media]"
+						}
+					}
+				}
+				
+				var mW, mH int
+				if img := msg.Message.GetImageMessage(); img != nil {
+					mW = int(img.GetWidth()); mH = int(img.GetHeight())
+					texThumb := bytesToTexture(img.GetJPEGThumbnail())
+					r.App.ChatView.AddImage(msg.Info.ID, sJID, sName, img.GetCaption(), nil, texThumb, "", msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
+				} else if stkr := msg.Message.GetStickerMessage(); stkr != nil {
+					mW = int(stkr.GetWidth()); mH = int(stkr.GetHeight())
+					texThumb := bytesToTexture(stkr.GetPngThumbnail())
+					r.App.ChatView.AddSticker(msg.Info.ID, sJID, sName, nil, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
+				} else if vid := msg.Message.GetVideoMessage(); vid != nil {
+					mW = int(vid.GetWidth()); mH = int(vid.GetHeight())
+					texThumb := bytesToTexture(vid.GetJPEGThumbnail())
+					r.App.ChatView.AddVideo(msg.Info.ID, sJID, sName, vid.GetCaption(), texThumb, "", msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
+				} else if aud := msg.Message.GetAudioMessage(); aud != nil {
+					r.App.ChatView.AddAudio(msg.Info.ID, sJID, sName, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+				} else if doc := msg.Message.GetDocumentMessage(); doc != nil {
+					texThumb := bytesToTexture(doc.GetJPEGThumbnail())
+					r.App.ChatView.AddDocument(msg.Info.ID, sJID, sName, doc.GetFileName(), texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+				} else if poll := msg.Message.GetPollCreationMessage(); poll != nil {
+					var opts []string
+					for _, o := range poll.GetOptions() {
+						opts = append(opts, o.GetOptionName())
+					}
+					r.App.ChatView.AddPoll(msg.Info.ID, sJID, sName, poll.GetName(), opts, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+				} else {
+					content := r.Messages.ExtractContent(msg)
+					if content != "" {
+						r.App.ChatView.AddMessage(msg.Info.ID, sJID, sName, content, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+					}
+				}
+				r.App.ChatView.ScrollToBottom()
+			}
+		})
+	}
+}
