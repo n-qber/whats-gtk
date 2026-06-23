@@ -14,6 +14,7 @@ type Sidebar struct {
 	Box            *gtk.Box
 	ListBox        *gtk.ListBox
 	SearchEntry    *gtk.SearchEntry
+	ProgressBar    *gtk.ProgressBar
 	OnChatSelected func(jid string)
 	OnSearch       func(text string)
 	
@@ -21,6 +22,7 @@ type Sidebar struct {
 	chatAvatars    map[string]*adw.Avatar
 	chatIndices    map[string]*gtk.Label
 	isRefreshing   bool
+	syncPulseId    glib.SourceHandle
 }
 
 func NewSidebar() (*Sidebar, error) {
@@ -33,6 +35,12 @@ func NewSidebar() (*Sidebar, error) {
 	searchEntry.SetMarginEnd(6)
 	
 	box.Append(searchEntry)
+
+	progressBar := gtk.NewProgressBar()
+	progressBar.SetVisible(false)
+	progressBar.SetShowText(true)
+	progressBar.SetText("Syncing messages...")
+	box.Append(progressBar)
 
 	scrolled := gtk.NewScrolledWindow()
 	scrolled.SetVExpand(true)
@@ -47,6 +55,7 @@ func NewSidebar() (*Sidebar, error) {
 		Box:         box,
 		ListBox:     listBox,
 		SearchEntry: searchEntry,
+		ProgressBar: progressBar,
 		chatRows:    make(map[string]*adw.ActionRow),
 		chatAvatars: make(map[string]*adw.Avatar),
 		chatIndices: make(map[string]*gtk.Label),
@@ -70,6 +79,23 @@ func NewSidebar() (*Sidebar, error) {
 
 func (s *Sidebar) SetRefreshing(refreshing bool) {
 	s.isRefreshing = refreshing
+}
+
+func (s *Sidebar) ShowSyncing(syncing bool) {
+	s.ProgressBar.SetVisible(syncing)
+	if syncing {
+		if s.syncPulseId == 0 {
+			s.syncPulseId = glib.TimeoutAdd(100, func() bool {
+				s.ProgressBar.Pulse()
+				return true
+			})
+		}
+	} else {
+		if s.syncPulseId != 0 {
+			glib.SourceRemove(s.syncPulseId)
+			s.syncPulseId = 0
+		}
+	}
 }
 
 func (s *Sidebar) SelectChat(jid string) {

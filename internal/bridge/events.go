@@ -84,6 +84,7 @@ func (eh *EventHandler) HandleEvent(evt backend.AppEvent) {
 // persists them, handles reactions, and refreshes the sidebar.
 func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 	eh.isSyncing = true
+	glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(true) })
 	go func() {
 		for _, conv := range v.Data.Data.GetConversations() {
 			chatJID, _ := types.ParseJID(conv.GetID()); chatJID = chatJID.ToNonAD()
@@ -98,7 +99,9 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 				}
 			}
 		}
-		eh.isSyncing = false; c, _ := eh.DB.GetAllContacts(100); eh.Renderer.RefreshSidebar(c)
+		eh.isSyncing = false
+		glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(false) })
+		c, _ := eh.DB.GetAllContacts(100); eh.Renderer.RefreshSidebar(c)
 	}()
 }
 
@@ -158,6 +161,7 @@ func (eh *EventHandler) handleQR(v *backend.QREvent) {
 // handleOfflineSyncCompleted clears the syncing flag and refreshes the sidebar.
 func (eh *EventHandler) handleOfflineSyncCompleted() {
 	eh.isSyncing = false
+	glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(false) })
 	go func() {
 		c, _ := eh.DB.GetAllContacts(100)
 		eh.Renderer.RefreshSidebar(c)
@@ -166,14 +170,19 @@ func (eh *EventHandler) handleOfflineSyncCompleted() {
 
 // handleReceipt maps receipt types to status strings and updates DB and UI.
 func (eh *EventHandler) handleReceipt(v *backend.ReceiptEvent) {
-	chatJID := v.Info.Chat.ToNonAD().String(); status := "sent"
+	chatJID := eh.Messages.ResolveJID(v.Info.Chat).String(); status := "sent"
 	if v.Info.Type == types.ReceiptTypeDelivered { status = "delivered" }
 	if v.Info.Type == types.ReceiptTypeRead || v.Info.Type == types.ReceiptTypeReadSelf { status = "read" }
 	for _, id := range v.Info.MessageIDs {
-		eh.DB.UpdateMessageStatus(id, chatJID, status)
+		err := eh.DB.UpdateMessageStatus(id, chatJID, status)
+		if err != nil {
+			fmt.Printf("Bridge: Error updating receipt status for %s: %v\n", id, err)
+		}
 		selectedJID := eh.Chat.SelectedJID()
 		if selectedJID != nil && selectedJID.ToNonAD().String() == chatJID {
-			eh.App.ChatView.UpdateMessageStatus(id, status)
+			glib.IdleAdd(func() {
+				eh.App.ChatView.UpdateMessageStatus(id, status)
+			})
 		}
 	}
 }
