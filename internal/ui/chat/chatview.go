@@ -33,6 +33,7 @@ type ChatView struct {
 	OnOpenImage           func(path string)
 	OnSendReaction        func(id, emoji string)
 	OnPinMessage          func(id string, pin bool, duration uint32)
+	OnDetach              func()
 	AudioPlayer           *AudioPlayer
 	ReplyToID             string
 	ReplyToSender         string
@@ -56,6 +57,9 @@ func NewChatView() (*ChatView, error) {
 	headerAvatar := adw.NewAvatar(32, "", true)
 	header.PackStart(headerAvatar)
 	
+	detachBtn := gtk.NewButtonFromIconName("window-new-symbolic")
+	header.PackEnd(detachBtn)
+
 	box.Append(header)
 
 	pinnedMessageBar := gtk.NewBox(gtk.OrientationHorizontal, 5)
@@ -135,6 +139,12 @@ func NewChatView() (*ChatView, error) {
 		PinnedMessageBar:      pinnedMessageBar,
 		PinnedMessageLabel:    pinnedLabel,
 	}
+
+	detachBtn.ConnectClicked(func() {
+		if cv.OnDetach != nil {
+			cv.OnDetach()
+		}
+	})
 
 	closeReplyBtn.ConnectClicked(func() {
 		cv.CancelReply()
@@ -493,15 +503,25 @@ func (cv *ChatView) addBubble(id string, b bubbles.Bubble, isCont bool) {
 }
 
 func (cv *ChatView) ScrollToBottom() {
-	glib.IdleAdd(func() {
+	glib.TimeoutAdd(50, func() bool {
 		adj := cv.MessageScrolledWindow.VAdjustment()
 		adj.SetValue(adj.Upper() - adj.PageSize())
+		return false
 	})
 }
 
 func (cv *ChatView) UpdateMessageStatus(id, status string) {
 	if bubble, exists := cv.MessageRows[id]; exists {
 		glib.IdleAdd(func() { bubble.SetStatus(status) })
+	}
+}
+
+func (cv *ChatView) UpdateMessageContent(id, content string, isEdited bool) {
+	if bubble, exists := cv.MessageRows[id]; exists {
+		glib.IdleAdd(func() {
+			bubble.SetContentText(content)
+			bubble.SetEdited(isEdited)
+		})
 	}
 }
 

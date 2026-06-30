@@ -220,5 +220,5 @@ func (ms *MediaService) mediaWorker() {
 }
 
 func (ms *MediaService) persistMediaMessage(task DownloadTask, path string) {
-	ms.DB.UpdateMessageContent(task.ID, task.ChatJID, path)
+	ms.DB.UpdateMessageContent(task.ID, task.ChatJID, path, false)
 }

@@ -20,6 +20,8 @@ type App struct {
 	ZoomCSSProvider    *gtk.CSSProvider
 	OnKeyPressed       func(key string, mods gdk.ModifierType) bool
 	OnModifiersChanged func(mods gdk.ModifierType)
+	DetachedChats      map[string]*chat.ChatView
+	ActiveMainJID      string
 }
 
 func NewApp(app *adw.Application) (*App, error) {
@@ -51,6 +53,7 @@ func NewApp(app *adw.Application) (*App, error) {
 		ChatView:        cv,
 		ZoomLevel:       1.0,
 		ZoomCSSProvider: gtk.NewCSSProvider(),
+		DetachedChats:   make(map[string]*chat.ChatView),
 	}
 
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), a.ZoomCSSProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -275,4 +278,14 @@ func (a *App) ResetZoom() {
 func (a *App) applyZoom() {
 	css := "window { font-size: " + fmt.Sprintf("%.1f", a.ZoomLevel*10) + "pt; }"
 	a.ZoomCSSProvider.LoadFromData(css)
+}
+
+func (a *App) GetChatViewForJID(jid string) *chat.ChatView {
+	if cv, ok := a.DetachedChats[jid]; ok {
+		return cv
+	}
+	if a.ActiveMainJID == jid {
+		return a.ChatView
+	}
+	return nil
 }

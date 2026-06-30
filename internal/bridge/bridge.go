@@ -8,6 +8,7 @@ import (
 	"whats-gtk/internal/core"
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/ui"
+	"whats-gtk/internal/ui/chat"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
@@ -109,14 +110,9 @@ func (br *Bridge) registerDefaultHooks() {
 // setupUIHandlers wires all UI callbacks to the ChatController and InputManager.
 func (br *Bridge) setupUIHandlers() {
 	br.App.Sidebar.OnChatSelected = br.Chat.HandleChatSelected
-	br.App.ChatView.OnSendMessage = br.Chat.HandleSendMessage
 	br.App.Sidebar.OnSearch = br.Chat.HandleSearch
-	br.App.ChatView.OnPasteImage = br.Chat.HandlePasteImage
-	br.App.ChatView.OnSendFile = br.Chat.HandleSendFile
-	br.App.ChatView.OnDownloadMedia = br.Chat.HandleDownloadMedia
-	br.App.ChatView.OnOpenImage = br.Chat.HandleOpenImage
-	br.App.ChatView.OnSendReaction = br.Chat.HandleSendReaction
-	br.App.ChatView.OnPinMessage = br.Chat.HandlePinMessage
+	br.WireChatView(br.App.ChatView)
+	br.App.Window.Connect("notify::is-active", br.Chat.HandleWindowActive)
 
 	br.App.OnKeyPressed = br.handleKeyPressed
 	br.App.OnModifiersChanged = func(mods gdk.ModifierType) {
@@ -220,4 +216,36 @@ func (br *Bridge) handleKeyPressed(key string, mods gdk.ModifierType) bool {
 	combo += key
 
 	return br.Input.HandleKeyPressed(combo)
+}
+
+func (br *Bridge) WireChatView(cv *chat.ChatView) {
+	cv.OnSendMessage = func(text, replyToID string) {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Chat.HandleSendMessage(*jid, text, replyToID)
+		}
+	}
+	cv.OnPasteImage = func(tex *gdk.Texture) {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Chat.HandlePasteImage(*jid, tex)
+		}
+	}
+	cv.OnSendFile = func(path string) {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Chat.HandleSendFile(*jid, path)
+		}
+	}
+	cv.OnSendReaction = func(id, emoji string) {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Chat.HandleSendReaction(*jid, id, emoji)
+		}
+	}
+	cv.OnPinMessage = func(id string, pin bool, duration uint32) {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Chat.HandlePinMessage(*jid, id, pin, duration)
+		}
+	}
+
+	cv.OnDownloadMedia = br.Chat.HandleDownloadMedia
+	cv.OnOpenImage = br.Chat.HandleOpenImage
+	cv.OnDetach = br.Chat.HandleDetach
 }

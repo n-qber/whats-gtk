@@ -23,6 +23,8 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"google.golang.org/protobuf/proto"
+	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
+	"whats-gtk/internal/ui/chat"
 )
 
 // ChatController handles all user-initiated actions: chat selection, message sending,
@@ -65,6 +67,15 @@ func (cc *ChatController) SelectedJID() *types.JID { return cc.selectedJID }
 // LastSender returns the JID string of the last message sender (for continuation grouping).
 func (cc *ChatController) LastSender() string { return cc.lastSender }
 
+func (cc *ChatController) HandleWindowActive() {
+	if cc.App.Window.IsActive() {
+		jid := cc.SelectedJID()
+		if jid != nil && cc.Backend != nil && cc.Backend.Client != nil {
+			go cc.Backend.MarkRead(cc.ctx, *jid, []string{}, types.JID{}, time.Now())
+		}
+	}
+}
+
 // SetLastSender updates the last sender (used by Renderer for continuation tracking).
 func (cc *ChatController) SetLastSender(s string) { cc.lastSender = s }
 
@@ -77,6 +88,7 @@ func (cc *ChatController) SetLastSender(s string) { cc.lastSender = s }
 func (cc *ChatController) HandleChatSelected(jidStr string) {
 	jid, err := types.ParseJID(jidStr); if err != nil { return }
 	jid = cc.Messages.ResolveJID(jid); cc.selectedJID = &jid; cc.lastSender = "" 
+	cc.App.ActiveMainJID = jid.ToNonAD().String()
 	
 	if contact, err := cc.DB.GetContact(jid.String()); err == nil {
 		headerName := contact.DisplayName()
@@ -90,7 +102,9 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 	
 	// Mark as read
 	if cc.Backend != nil && cc.Backend.Client != nil {
-		go cc.Backend.MarkRead(cc.ctx, jid, []string{}, types.JID{}, time.Now())
+		if cc.App.Window.IsActive() {
+			go cc.Backend.MarkRead(cc.ctx, jid, []string{}, types.JID{}, time.Now())
+		}
 	}
 
 	if strings.HasSuffix(jid.String(), "@lid") {
@@ -108,9 +122,8 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 
 // HandleSendMessage sends a text message with optional reply context, shows
 // optimistic UI, and persists on success.
-func (cc *ChatController) HandleSendMessage(text string, replyToID string) {
-	if cc.selectedJID == nil { return }
-	targetJID := *cc.selectedJID; now := time.Now().Format("15:04")
+func (cc *ChatController) HandleSendMessage(targetJID types.JID, text string, replyToID string) {
+	now := time.Now().Format("15:04")
 	
 	// Get Quoted Context if any
 	var qID, qSender, qContent string
@@ -125,12 +138,12 @@ func (cc *ChatController) HandleSendMessage(text string, replyToID string) {
 
 	tempID := "temp"
 	glib.IdleAdd(func() {
-		if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
+		if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
 			isCont := cc.lastSender == cc.Backend.Device.ID.ToNonAD().String()
 			// For own messages, name is empty but avatar should show if available
-			cc.App.ChatView.AddMessage(tempID, "", "", text, true, isCont, "pending", now, nil, qID, qSender, qContent)
+			cv.AddMessage(tempID, "", "", text, true, isCont, "pending", now, nil, qID, qSender, qContent)
 			cc.lastSender = cc.Backend.Device.ID.ToNonAD().String()
-			cc.App.ChatView.ScrollToBottom()
+			cv.ScrollToBottom()
 		}
 	})
 
@@ -193,16 +206,14 @@ func (cc *ChatController) HandleSearch(t string) {
 }
 
 // HandlePasteImage sends a pasted image with optimistic UI.
-func (cc *ChatController) HandlePasteImage(tex *gdk.Texture) {
-	if cc.selectedJID == nil { return }
-	targetJID := *cc.selectedJID
+func (cc *ChatController) HandlePasteImage(targetJID types.JID, tex *gdk.Texture) {
 	now := time.Now().Format("15:04")
 	tempID := fmt.Sprintf("temp_%d", time.Now().UnixNano())
 
 	glib.IdleAdd(func() {
-		if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
-			cc.App.ChatView.AddImage(tempID, "", "", "", tex, nil, "", true, false, "pending", now, nil, "", "", "", int(tex.Width()), int(tex.Height()))
-			cc.App.ChatView.ScrollToBottom()
+		if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
+			cv.AddImage(tempID, "", "", "", tex, nil, "", true, false, "pending", now, nil, "", "", "", int(tex.Width()), int(tex.Height()))
+			cv.ScrollToBottom()
 		}
 	})
 
@@ -211,8 +222,8 @@ func (cc *ChatController) HandlePasteImage(tex *gdk.Texture) {
 		pixbuf := gdk.PixbufGetFromTexture(tex)
 		if pixbuf == nil { return }
 
-		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("paste_%d.jpg", time.Now().UnixNano()))
-		err := pixbuf.Savev(tmpPath, "jpeg", nil, nil)
+		tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("paste_%d.png", time.Now().UnixNano()))
+		err := pixbuf.Savev(tmpPath, "png", nil, nil)
 		if err != nil {
 			fmt.Printf("Bridge: Failed to save temp image: %v\n", err)
 			return
@@ -225,7 +236,7 @@ func (cc *ChatController) HandlePasteImage(tex *gdk.Texture) {
 			return
 		}
 
-		resp, err := cc.Backend.SendImage(cc.ctx, targetJID, data, "image/jpeg")
+		resp, err := cc.Backend.SendImage(cc.ctx, targetJID, data, "image/png")
 		if err != nil {
 			fmt.Printf("Bridge: SendImage failed: %v\n", err)
 			return
@@ -247,9 +258,7 @@ func (cc *ChatController) HandlePasteImage(tex *gdk.Texture) {
 }
 
 // HandleSendFile sends a file (image, video, audio, or document) with optimistic UI.
-func (cc *ChatController) HandleSendFile(path string) {
-	if cc.selectedJID == nil { return }
-	targetJID := *cc.selectedJID
+func (cc *ChatController) HandleSendFile(targetJID types.JID, path string) {
 	now := time.Now().Format("15:04")
 	filename := filepath.Base(path)
 
@@ -275,7 +284,7 @@ func (cc *ChatController) HandleSendFile(path string) {
 
 	tempID := "temp_file"
 	glib.IdleAdd(func() {
-		if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
+		if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
 			jidStr := targetJID.ToNonAD().String()
 			switch msgType {
 			case "image":
@@ -283,16 +292,16 @@ func (cc *ChatController) HandleSendFile(path string) {
 				pixbuf, _ := gdkpixbuf.NewPixbufFromFile(path)
 				var tex *gdk.Texture
 				if pixbuf != nil { tex = gdk.NewTextureForPixbuf(pixbuf) }
-				cc.App.ChatView.AddImage(tempID, jidStr, "", "", tex, nil, path, true, false, "pending", now, nil, "", "", "", 0, 0)
+				cv.AddImage(tempID, jidStr, "", "", tex, nil, path, true, false, "pending", now, nil, "", "", "", 0, 0)
 			case "document":
-				cc.App.ChatView.AddDocument(tempID, jidStr, "", filename, nil, true, false, "pending", now, nil, "", "", "")
+				cv.AddDocument(tempID, jidStr, "", filename, nil, true, false, "pending", now, nil, "", "", "")
 			case "audio":
-				cc.App.ChatView.AddAudio(tempID, jidStr, "", true, false, "pending", now, nil, "", "", "")
+				cv.AddAudio(tempID, jidStr, "", true, false, "pending", now, nil, "", "", "")
 			case "video":
 				// For now video uses image bubble with no thumb or a placeholder
-				cc.App.ChatView.AddVideo(tempID, jidStr, "", "", nil, path, true, false, "pending", now, nil, "", "", "", 0, 0)
+				cv.AddVideo(tempID, jidStr, "", "", nil, path, true, false, "pending", now, nil, "", "", "", 0, 0)
 			}
-			cc.App.ChatView.ScrollToBottom()
+			cv.ScrollToBottom()
 		}
 	})
 
@@ -341,16 +350,13 @@ func (cc *ChatController) HandleSendFile(path string) {
 }
 
 // HandleSendReaction sends a reaction to a message.
-func (cc *ChatController) HandleSendReaction(id, emoji string) {
-	if cc.selectedJID == nil { return }
+func (cc *ChatController) HandleSendReaction(targetJID types.JID, id, emoji string) {
 	msg, err := cc.DB.GetMessage(id); if err != nil { return }
 	
-	chatJID := *cc.selectedJID
-
 	go func() {
-		_, err := cc.Backend.SendReaction(cc.ctx, chatJID, id, msg.IsFromMe, emoji)
+		_, err := cc.Backend.SendReaction(cc.ctx, targetJID, id, msg.IsFromMe, emoji)
 		if err == nil {
-			cc.Messages.HandleReaction(chatJID, cc.Backend.Device.ID.ToNonAD(), emoji, id, time.Now())
+			cc.Messages.HandleReaction(targetJID, cc.Backend.Device.ID.ToNonAD(), emoji, id, time.Now())
 		} else {
 			fmt.Printf("Bridge: SendReaction failed: %v\n", err)
 		}
@@ -358,19 +364,18 @@ func (cc *ChatController) HandleSendReaction(id, emoji string) {
 }
 
 // HandlePinMessage pins or unpins a message.
-func (cc *ChatController) HandlePinMessage(id string, pin bool, duration uint32) {
-	if cc.selectedJID == nil { return }
+func (cc *ChatController) HandlePinMessage(targetJID types.JID, id string, pin bool, duration uint32) {
 	msg, err := cc.DB.GetMessage(id); if err != nil { return }
 	
-	chatJID := *cc.selectedJID
-
 	go func() {
-		_, err := cc.Backend.PinMessage(cc.ctx, chatJID, id, msg.IsFromMe, pin, duration)
+		_, err := cc.Backend.PinMessage(cc.ctx, targetJID, id, msg.IsFromMe, pin, duration)
 		if err == nil {
-			cc.DB.UpdateMessagePinned(id, chatJID.ToNonAD().String(), pin)
-			if cc.selectedJID != nil && chatJID.ToNonAD().String() == cc.selectedJID.ToNonAD().String() {
-				cc.App.ChatView.UpdateMessagePinned(id, pin)
-			}
+			cc.DB.UpdateMessagePinned(id, targetJID.ToNonAD().String(), pin)
+			glib.IdleAdd(func() {
+				if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
+					cv.UpdateMessagePinned(id, pin)
+				}
+			})
 		} else {
 			fmt.Printf("Bridge: PinMessage failed: %v\n", err)
 		}
@@ -459,5 +464,77 @@ func (cc *ChatController) promoteTempMessage(targetJID types.JID, tempID, realID
 				cc.App.ChatView.MessageListRows[realID] = r; delete(cc.App.ChatView.MessageListRows, tempID)
 			}
 		}
+	})
+}
+
+func (c *ChatController) HandleDetach() {
+	if c.selectedJID == nil {
+		return
+	}
+	jidStr := c.selectedJID.ToNonAD().String()
+
+	// If already detached, just focus it
+	if _, ok := c.App.DetachedChats[jidStr]; ok {
+		// Can't easily focus without window reference, but we could add Window to DetachedChats later if needed.
+		return
+	}
+
+	glib.IdleAdd(func() {
+		win := adw.NewWindow()
+		win.SetTitle("WhatsApp - Detached Chat")
+		win.SetDefaultSize(600, 700)
+
+		cv, err := chat.NewChatView()
+		if err != nil {
+			fmt.Printf("Failed to create detached chat view: %v\n", err)
+			return
+		}
+		
+		c.App.DetachedChats[jidStr] = cv
+		
+		targetJID, _ := types.ParseJID(jidStr)
+		
+		// Fallback wiring
+		cv.OnSendMessage = func(text, replyToID string) {
+			c.HandleSendMessage(targetJID, text, replyToID)
+		}
+		cv.OnPasteImage = func(tex *gdk.Texture) {
+			c.HandlePasteImage(targetJID, tex)
+		}
+		cv.OnSendFile = func(path string) {
+			c.HandleSendFile(targetJID, path)
+		}
+		cv.OnSendReaction = func(id, emoji string) {
+			c.HandleSendReaction(targetJID, id, emoji)
+		}
+		cv.OnPinMessage = func(id string, pin bool, duration uint32) {
+			c.HandlePinMessage(targetJID, id, pin, duration)
+		}
+		cv.OnDownloadMedia = c.HandleDownloadMedia
+		cv.OnOpenImage = c.HandleOpenImage
+		cv.OnDetach = c.HandleDetach
+
+		// Connect active state for read receipts
+		win.Connect("notify::is-active", func() {
+			c.HandleWindowActive() // This will check all detached windows ideally, but wait, HandleWindowActive checks active main window.
+		})
+
+		win.SetContent(cv.Box)
+		win.Show()
+
+		win.Connect("close-request", func() bool {
+			delete(c.App.DetachedChats, jidStr)
+			return false // allow close
+		})
+
+		// Load chat history for this JID
+		// We can reuse the logic from HandleChatSelected for just loading the DB history
+		c.Renderer.RefreshMessages(targetJID)
+		
+		// Clear main chat view since it's now detached
+		c.App.ChatView.Clear()
+		c.App.ChatView.SetHeader("Select a chat", nil)
+		c.App.ActiveMainJID = ""
+		c.selectedJID = nil
 	})
 }

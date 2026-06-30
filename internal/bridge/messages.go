@@ -58,42 +58,46 @@ func (ms *MessageService) ResolveJID(jid types.JID) types.JID {
 	return jid.ToNonAD()
 }
 
-// ExtractContent extracts the text content from various WhatsApp message types.
-func (ms *MessageService) ExtractContent(msg *events.Message) string {
-	if msg.Message.GetConversation() != "" {
-		return msg.Message.GetConversation()
+// ExtractContentFromProto extracts the text content from a waProto.Message
+func (ms *MessageService) ExtractContentFromProto(protoMsg *waProto.Message) string {
+	if protoMsg.GetConversation() != "" {
+		return protoMsg.GetConversation()
 	}
-	if msg.Message.GetExtendedTextMessage().GetText() != "" {
-		return msg.Message.GetExtendedTextMessage().GetText()
+	if protoMsg.GetExtendedTextMessage().GetText() != "" {
+		return protoMsg.GetExtendedTextMessage().GetText()
 	}
-	if msg.Message.GetImageMessage().GetCaption() != "" {
-		return msg.Message.GetImageMessage().GetCaption()
+	if protoMsg.GetImageMessage().GetCaption() != "" {
+		return protoMsg.GetImageMessage().GetCaption()
 	}
-	if msg.Message.GetVideoMessage().GetCaption() != "" {
-		return msg.Message.GetVideoMessage().GetCaption()
+	if protoMsg.GetVideoMessage().GetCaption() != "" {
+		return protoMsg.GetVideoMessage().GetCaption()
 	}
-	if msg.Message.GetDocumentMessage().GetCaption() != "" {
-		return msg.Message.GetDocumentMessage().GetCaption()
+	if protoMsg.GetDocumentMessage().GetCaption() != "" {
+		return protoMsg.GetDocumentMessage().GetCaption()
 	}
 
-	// Placeholder for unimplemented types to avoid empty bubbles
-	if msg.Message.GetAudioMessage() != nil {
+	if protoMsg.GetAudioMessage() != nil {
 		return "[Audio Message]"
 	}
-	if msg.Message.GetDocumentMessage() != nil {
-		return fmt.Sprintf("[Document: %s]", msg.Message.GetDocumentMessage().GetFileName())
+	if protoMsg.GetDocumentMessage() != nil {
+		return fmt.Sprintf("[Document: %s]", protoMsg.GetDocumentMessage().GetFileName())
 	}
-	if msg.Message.GetPollCreationMessage() != nil {
-		return fmt.Sprintf("[Poll: %s]", msg.Message.GetPollCreationMessage().GetName())
+	if protoMsg.GetPollCreationMessage() != nil {
+		return fmt.Sprintf("[Poll: %s]", protoMsg.GetPollCreationMessage().GetName())
 	}
-	if msg.Message.GetContactMessage() != nil {
-		return fmt.Sprintf("[Contact: %s]", msg.Message.GetContactMessage().GetDisplayName())
+	if protoMsg.GetContactMessage() != nil {
+		return fmt.Sprintf("[Contact: %s]", protoMsg.GetContactMessage().GetDisplayName())
 	}
-	if msg.Message.GetLocationMessage() != nil {
+	if protoMsg.GetLocationMessage() != nil {
 		return "[Location]"
 	}
 
 	return ""
+}
+
+// ExtractContent extracts the text content from various WhatsApp message types.
+func (ms *MessageService) ExtractContent(msg *events.Message) string {
+	return ms.ExtractContentFromProto(msg.Message)
 }
 
 // ExtractContextInfo extracts the ContextInfo (quoted message info) from various message types.
@@ -326,4 +330,28 @@ func (ms *MessageService) ProcessPin(msg *waProto.Message, chat types.JID) bool 
 	}
 
 	return false
+}
+
+func (ms *MessageService) HandleEdit(protoMsg *waProto.ProtocolMessage, chat types.JID) {
+	if protoMsg.GetEditedMessage() == nil || protoMsg.GetKey() == nil {
+		return
+	}
+	targetID := protoMsg.GetKey().GetID()
+	newContent := ms.ExtractContentFromProto(protoMsg.GetEditedMessage())
+	if newContent == "" {
+		return
+	}
+	
+	chatJID := chat.ToNonAD().String()
+	err := ms.DB.UpdateMessageContent(targetID, chatJID, newContent, true)
+	if err != nil {
+		fmt.Printf("Bridge: Failed to update edited message %s: %v\n", targetID, err)
+		return
+	}
+	
+	// Update UI
+	chatView := ms.App.GetChatViewForJID(chatJID)
+	if chatView != nil {
+		chatView.UpdateMessageContent(targetID, newContent, true)
+	}
 }

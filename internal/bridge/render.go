@@ -67,9 +67,9 @@ func (r *Renderer) RefreshMessages(jid types.JID) {
 			}
 		}
 		glib.IdleAdd(func() {
-			selectedJID := r.Chat.SelectedJID()
-			if selectedJID == nil || selectedJID.ToNonAD().String() != jid.ToNonAD().String() { return }
-			r.App.ChatView.Clear(); r.Chat.SetLastSender("")
+			cv := r.App.GetChatViewForJID(jid.ToNonAD().String())
+			if cv == nil { return }
+			cv.Clear(); r.Chat.SetLastSender("")
 			for _, m := range msgs {
 				tStr := m.Timestamp.Format("15:04"); sName := ""; var av *gdk.Texture; isCont := m.SenderJID == r.Chat.LastSender()
 				if jid.Server == types.GroupServer && !m.IsFromMe {
@@ -108,17 +108,17 @@ func (r *Renderer) RefreshMessages(jid types.JID) {
 					}
 
 					if m.Type == "image" {
-						r.App.ChatView.AddImage(m.ID, m.SenderJID, sName, caption, texImg, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
+						cv.AddImage(m.ID, m.SenderJID, sName, caption, texImg, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
 					} else if m.Type == "sticker" {
-						r.App.ChatView.AddSticker(m.ID, m.SenderJID, sName, texImg, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
+						cv.AddSticker(m.ID, m.SenderJID, sName, texImg, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
 					} else if m.Type == "video" {
-						r.App.ChatView.AddVideo(m.ID, m.SenderJID, sName, caption, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
+						cv.AddVideo(m.ID, m.SenderJID, sName, caption, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
 					}
 				} else if m.Type == "audio" {
-					r.App.ChatView.AddAudio(m.ID, m.SenderJID, sName, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+					cv.AddAudio(m.ID, m.SenderJID, sName, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
 					if m.Content != "" {
 						if _, err := os.Stat(m.Content); err == nil {
-							r.App.ChatView.UpdateMessageAudio(m.ID, m.Content)
+							cv.UpdateMessageAudio(m.ID, m.Content)
 						}
 					}
 				} else if m.Type == "document" {
@@ -135,30 +135,30 @@ func (r *Renderer) RefreshMessages(jid types.JID) {
 						}
 					}
 					texThumb := bytesToTexture(m.Thumbnail)
-					r.App.ChatView.AddDocument(m.ID, m.SenderJID, sName, fileName, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+					cv.AddDocument(m.ID, m.SenderJID, sName, fileName, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
 					if m.Content != "" && !strings.HasPrefix(m.Content, "[Document: ") {
 						if _, err := os.Stat(m.Content); err == nil {
-							r.App.ChatView.UpdateMessageDocument(m.ID, m.Content)
+							cv.UpdateMessageDocument(m.ID, m.Content)
 						}
 					}
 				} else {
 					if m.Content != "" {
-						r.App.ChatView.AddMessage(m.ID, m.SenderJID, sName, m.Content, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+						cv.AddMessage(m.ID, m.SenderJID, sName, m.Content, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
 					}
 				}
 				
 				// Set reactions
 				reacts, _ := r.DB.GetReactions(m.ID)
 				if len(reacts) > 0 {
-					r.App.ChatView.UpdateMessageReactions(m.ID, uniqueReactions(reacts))
+					cv.UpdateMessageReactions(m.ID, uniqueReactions(reacts))
 				}
 
 				if m.IsPinned {
-					r.App.ChatView.UpdateMessagePinned(m.ID, true)
-					r.App.ChatView.SetPinnedMessage(m.Content)
+					cv.UpdateMessagePinned(m.ID, true)
+					cv.SetPinnedMessage(m.Content)
 				}
 			}
-			r.App.ChatView.ScrollToBottom()
+			cv.ScrollToBottom()
 		})
 	}()
 }
@@ -196,13 +196,15 @@ func (r *Renderer) RenderLiveMessage(msg *events.Message, isSyncing bool) {
 
 		// Automatically mark as read if this chat is currently selected
 		if selectedJID != nil && jid == selectedJID.ToNonAD().String() {
-			go r.Backend.MarkRead(r.ctx, msg.Info.Chat, []string{msg.Info.ID}, msg.Info.Sender, time.Now())
+			if r.App.Window.IsActive() {
+				go r.Backend.MarkRead(r.ctx, msg.Info.Chat, []string{msg.Info.ID}, msg.Info.Sender, time.Now())
+			}
 		}
 
 		glib.IdleAdd(func() {
 			r.App.Sidebar.MoveChatToTop(jid)
-			selectedJID := r.Chat.SelectedJID() // re-read inside GTK thread
-			if selectedJID != nil && resolvedChat.ToNonAD().String() == selectedJID.ToNonAD().String() {
+			cv := r.App.GetChatViewForJID(resolvedChat.ToNonAD().String())
+			if cv != nil {
 				tStr := msg.Info.Timestamp.Format("15:04"); sName := ""; var av *gdk.Texture; isG := msg.Info.Chat.Server == types.GroupServer
 				
 				resolvedSender := r.Messages.ResolveJID(msg.Info.Sender)
@@ -240,33 +242,33 @@ func (r *Renderer) RenderLiveMessage(msg *events.Message, isSyncing bool) {
 				if img := msg.Message.GetImageMessage(); img != nil {
 					mW = int(img.GetWidth()); mH = int(img.GetHeight())
 					texThumb := bytesToTexture(img.GetJPEGThumbnail())
-					r.App.ChatView.AddImage(msg.Info.ID, sJID, sName, img.GetCaption(), nil, texThumb, "", msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
+					cv.AddImage(msg.Info.ID, sJID, sName, img.GetCaption(), nil, texThumb, "", msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
 				} else if stkr := msg.Message.GetStickerMessage(); stkr != nil {
 					mW = int(stkr.GetWidth()); mH = int(stkr.GetHeight())
 					texThumb := bytesToTexture(stkr.GetPngThumbnail())
-					r.App.ChatView.AddSticker(msg.Info.ID, sJID, sName, nil, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
+					cv.AddSticker(msg.Info.ID, sJID, sName, nil, texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
 				} else if vid := msg.Message.GetVideoMessage(); vid != nil {
 					mW = int(vid.GetWidth()); mH = int(vid.GetHeight())
 					texThumb := bytesToTexture(vid.GetJPEGThumbnail())
-					r.App.ChatView.AddVideo(msg.Info.ID, sJID, sName, vid.GetCaption(), texThumb, "", msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
+					cv.AddVideo(msg.Info.ID, sJID, sName, vid.GetCaption(), texThumb, "", msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent, mW, mH)
 				} else if aud := msg.Message.GetAudioMessage(); aud != nil {
-					r.App.ChatView.AddAudio(msg.Info.ID, sJID, sName, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+					cv.AddAudio(msg.Info.ID, sJID, sName, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
 				} else if doc := msg.Message.GetDocumentMessage(); doc != nil {
 					texThumb := bytesToTexture(doc.GetJPEGThumbnail())
-					r.App.ChatView.AddDocument(msg.Info.ID, sJID, sName, doc.GetFileName(), texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+					cv.AddDocument(msg.Info.ID, sJID, sName, doc.GetFileName(), texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
 				} else if poll := msg.Message.GetPollCreationMessage(); poll != nil {
 					var opts []string
 					for _, o := range poll.GetOptions() {
 						opts = append(opts, o.GetOptionName())
 					}
-					r.App.ChatView.AddPoll(msg.Info.ID, sJID, sName, poll.GetName(), opts, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+					cv.AddPoll(msg.Info.ID, sJID, sName, poll.GetName(), opts, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
 				} else {
 					content := r.Messages.ExtractContent(msg)
 					if content != "" {
-						r.App.ChatView.AddMessage(msg.Info.ID, sJID, sName, content, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+						cv.AddMessage(msg.Info.ID, sJID, sName, content, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
 					}
 				}
-				r.App.ChatView.ScrollToBottom()
+				cv.ScrollToBottom()
 			}
 		})
 	}

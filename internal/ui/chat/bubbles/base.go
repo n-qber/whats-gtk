@@ -25,6 +25,8 @@ type Bubble interface {
 	SetOnQuotedClick(f func(id string))
 	SetOnReplyRequest(f func())
 	SetOnReactionRequest(f func(emoji string))
+	SetContentText(text string)
+	SetEdited(edited bool)
 }
 
 type baseBubble struct {
@@ -44,6 +46,8 @@ type baseBubble struct {
 	onQuotedClick  func(id string)
 	onReplyRequest func()
 	onReactionRequest func(emoji string)
+	contentWidget  gtk.Widgetter
+	editedLabel    *gtk.Label
 }
 
 func (b *baseBubble) Sender() string  { return b.sender }
@@ -53,6 +57,23 @@ func (b *baseBubble) SetOnReplyRequest(f func()) { b.onReplyRequest = f }
 func (b *baseBubble) SetOnReactionRequest(f func(emoji string)) { b.onReactionRequest = f }
 func (b *baseBubble) IsSelf() bool { return b.isSelf }
 func (b *baseBubble) Widget() gtk.Widgetter { return b.Box }
+
+func (b *baseBubble) SetContentText(text string) {
+	b.content = text
+	if l, ok := b.contentWidget.(*gtk.Label); ok {
+		l.SetText(text)
+	}
+}
+
+func (b *baseBubble) SetEdited(edited bool) {
+	if b.editedLabel != nil {
+		if edited {
+			b.editedLabel.Show()
+		} else {
+			b.editedLabel.Hide()
+		}
+	}
+}
 
 func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSelf bool, hasBubble bool, status string, time string, avatar *gdk.Texture) (*baseBubble, error) {
 	alignmentBox := gtk.NewBox(gtk.OrientationHorizontal, 8)
@@ -111,8 +132,13 @@ func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSel
 	statusBox.AddCSSClass("status-overlay")
 	statusBox.SetHAlign(gtk.AlignEnd)
 	statusBox.SetVAlign(gtk.AlignEnd)
-	statusBox.SetCanTarget(false)
-	
+	statusBox.SetMarginTop(4)
+
+	editedLabel := gtk.NewLabel("(edited)")
+	editedLabel.AddCSSClass("time")
+	editedLabel.Hide()
+	statusBox.Append(editedLabel)
+
 	timeLabel := gtk.NewLabel(time)
 	timeLabel.AddCSSClass("message-time")
 	statusBox.Append(timeLabel)
@@ -231,6 +257,8 @@ func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSel
 		isSelf:       isSelf,
 		sender:       name,
 		content:      contentText,
+		contentWidget: content,
+		editedLabel:  editedLabel,
 	}
 
 	pinIcon := gtk.NewImageFromIconName("pin-symbolic")

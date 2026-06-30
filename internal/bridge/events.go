@@ -113,6 +113,10 @@ func (eh *EventHandler) handleMessage(v *backend.MessageEvent) {
 		eh.Messages.HandleReaction(msg.Info.Chat, msg.Info.Sender, react.GetText(), react.GetKey().GetID(), msg.Info.Timestamp)
 		return
 	}
+	if protoMsg := msg.Message.GetProtocolMessage(); protoMsg != nil && protoMsg.GetType() == waProto.ProtocolMessage_MESSAGE_EDIT {
+		eh.Messages.HandleEdit(protoMsg, msg.Info.Chat)
+		return
+	}
 
 	if eh.Messages.ProcessPin(msg.Message, msg.Info.Chat) {
 		return
