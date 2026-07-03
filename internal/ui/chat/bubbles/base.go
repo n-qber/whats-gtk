@@ -27,6 +27,7 @@ type Bubble interface {
 	SetOnReactionRequest(f func(emoji string))
 	SetContentText(text string)
 	SetEdited(edited bool)
+	SetViewOnce(viewOnce bool)
 }
 
 type baseBubble struct {
@@ -48,6 +49,9 @@ type baseBubble struct {
 	onReactionRequest func(emoji string)
 	contentWidget  gtk.Widgetter
 	editedLabel    *gtk.Label
+	progressBar    *gtk.ProgressBar
+	progressTick   glib.SourceHandle
+	viewOnceLabel  *gtk.Label
 }
 
 func (b *baseBubble) Sender() string  { return b.sender }
@@ -73,6 +77,18 @@ func (b *baseBubble) SetEdited(edited bool) {
 			b.editedLabel.Hide()
 		}
 	}
+}
+
+func (b *baseBubble) SetViewOnce(viewOnce bool) {
+	glib.IdleAdd(func() {
+		if b.viewOnceLabel != nil {
+			if viewOnce {
+				b.viewOnceLabel.Show()
+			} else {
+				b.viewOnceLabel.Hide()
+			}
+		}
+	})
 }
 
 func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSelf bool, hasBubble bool, status string, time string, avatar *gdk.Texture) (*baseBubble, error) {
@@ -141,6 +157,11 @@ func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSel
 
 	timeLabel := gtk.NewLabel(time)
 	timeLabel.AddCSSClass("message-time")
+	
+	viewOnceLabel := gtk.NewLabel("①")
+	viewOnceLabel.AddCSSClass("time") // reuse small text styling
+	viewOnceLabel.Hide()
+	statusBox.Append(viewOnceLabel)
 	statusBox.Append(timeLabel)
 
 	var statusLabel *gtk.Label
@@ -152,6 +173,7 @@ func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSel
 	}
 
 	isPhoto := contentText == "[Image]" || contentText == "[Video]"
+	isMedia := isPhoto || contentText == "[Audio]" || strings.HasPrefix(contentText, "[File:") || contentText == "[Sticker]"
 	
 	if isPhoto {
 		overlay := gtk.NewOverlay()
@@ -172,6 +194,14 @@ func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSel
 		contentStatusBox.Append(content)
 		contentStatusBox.Append(statusBox)
 		bubbleBox.Append(contentStatusBox)
+	}
+
+	var progressBar *gtk.ProgressBar
+	if isMedia {
+		progressBar = gtk.NewProgressBar()
+		progressBar.AddCSSClass("media-progress")
+		progressBar.Hide()
+		bubbleBox.Append(progressBar)
 	}
 
 	reactionsBox := gtk.NewBox(gtk.OrientationHorizontal, 2)
@@ -259,6 +289,8 @@ func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSel
 		content:      contentText,
 		contentWidget: content,
 		editedLabel:  editedLabel,
+		progressBar:  progressBar,
+		viewOnceLabel: viewOnceLabel,
 	}
 
 	pinIcon := gtk.NewImageFromIconName("pin-symbolic")
@@ -391,6 +423,28 @@ func (b *baseBubble) SetStatus(status string) {
 		b.StatusLabel.RemoveCSSClass("receipt-read")
 		b.StatusLabel.RemoveCSSClass("receipt-pending")
 		applyStatusClass(b.StatusLabel, status)
+	}
+
+	if b.progressBar != nil {
+		if status == "pending" {
+			b.progressBar.Show()
+			if b.progressTick == 0 {
+				b.progressTick = glib.TimeoutAdd(50, func() bool {
+					if b.progressBar != nil && b.progressBar.Visible() {
+						b.progressBar.Pulse()
+						return true
+					}
+					b.progressTick = 0
+					return false
+				})
+			}
+		} else {
+			b.progressBar.Hide()
+			if b.progressTick != 0 {
+				glib.SourceRemove(b.progressTick)
+				b.progressTick = 0
+			}
+		}
 	}
 }
 

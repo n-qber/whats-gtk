@@ -58,8 +58,26 @@ func (ms *MessageService) ResolveJID(jid types.JID) types.JID {
 	return jid.ToNonAD()
 }
 
+// UnwrapMessage removes ViewOnce wrappers and returns the underlying message and a boolean indicating if it was ViewOnce.
+func (ms *MessageService) UnwrapMessage(msg *waProto.Message) (*waProto.Message, bool) {
+	if msg == nil {
+		return nil, false
+	}
+	if vo := msg.GetViewOnceMessage(); vo != nil && vo.GetMessage() != nil {
+		return vo.GetMessage(), true
+	}
+	if vo2 := msg.GetViewOnceMessageV2(); vo2 != nil && vo2.GetMessage() != nil {
+		return vo2.GetMessage(), true
+	}
+	if vo2e := msg.GetViewOnceMessageV2Extension(); vo2e != nil && vo2e.GetMessage() != nil {
+		return vo2e.GetMessage(), true
+	}
+	return msg, false
+}
+
 // ExtractContentFromProto extracts the text content from a waProto.Message
 func (ms *MessageService) ExtractContentFromProto(protoMsg *waProto.Message) string {
+	protoMsg, _ = ms.UnwrapMessage(protoMsg)
 	if protoMsg.GetConversation() != "" {
 		return protoMsg.GetConversation()
 	}
@@ -102,22 +120,23 @@ func (ms *MessageService) ExtractContent(msg *events.Message) string {
 
 // ExtractContextInfo extracts the ContextInfo (quoted message info) from various message types.
 func (ms *MessageService) ExtractContextInfo(msg *events.Message) *waProto.ContextInfo {
-	if etm := msg.Message.GetExtendedTextMessage(); etm != nil {
+	protoMsg, _ := ms.UnwrapMessage(msg.Message)
+	if etm := protoMsg.GetExtendedTextMessage(); etm != nil {
 		return etm.GetContextInfo()
 	}
-	if img := msg.Message.GetImageMessage(); img != nil {
+	if img := protoMsg.GetImageMessage(); img != nil {
 		return img.GetContextInfo()
 	}
-	if vid := msg.Message.GetVideoMessage(); vid != nil {
+	if vid := protoMsg.GetVideoMessage(); vid != nil {
 		return vid.GetContextInfo()
 	}
-	if aud := msg.Message.GetAudioMessage(); aud != nil {
+	if aud := protoMsg.GetAudioMessage(); aud != nil {
 		return aud.GetContextInfo()
 	}
-	if doc := msg.Message.GetDocumentMessage(); doc != nil {
+	if doc := protoMsg.GetDocumentMessage(); doc != nil {
 		return doc.GetContextInfo()
 	}
-	if stkr := msg.Message.GetStickerMessage(); stkr != nil {
+	if stkr := protoMsg.GetStickerMessage(); stkr != nil {
 		return stkr.GetContextInfo()
 	}
 	return nil
@@ -132,10 +151,13 @@ func (ms *MessageService) PersistMessage(msg *events.Message) {
 		return
 	}
 
+	protoMsg, isViewOnce := ms.UnwrapMessage(msg.Message)
+
 	msgType := "text"; content := ms.ExtractContent(msg); var thumb []byte
 	var metadata database.Message
+	metadata.IsViewOnce = isViewOnce
 
-	if img := msg.Message.GetImageMessage(); img != nil {
+	if img := protoMsg.GetImageMessage(); img != nil {
 		msgType = "image"; thumb = img.GetJPEGThumbnail()
 		metadata.MediaURL = sql.NullString{String: img.GetURL(), Valid: img.GetURL() != ""}
 		metadata.MediaDirectPath = sql.NullString{String: img.GetDirectPath(), Valid: img.GetDirectPath() != ""}
@@ -146,7 +168,7 @@ func (ms *MessageService) PersistMessage(msg *events.Message) {
 		metadata.MediaLength = sql.NullInt64{Int64: int64(img.GetFileLength()), Valid: true}
 		metadata.MediaWidth = sql.NullInt64{Int64: int64(img.GetWidth()), Valid: true}
 		metadata.MediaHeight = sql.NullInt64{Int64: int64(img.GetHeight()), Valid: true}
-	} else if stkr := msg.Message.GetStickerMessage(); stkr != nil {
+	} else if stkr := protoMsg.GetStickerMessage(); stkr != nil {
 		msgType = "sticker"; thumb = stkr.GetPngThumbnail()
 		metadata.MediaURL = sql.NullString{String: stkr.GetURL(), Valid: stkr.GetURL() != ""}
 		metadata.MediaDirectPath = sql.NullString{String: stkr.GetDirectPath(), Valid: stkr.GetDirectPath() != ""}
@@ -157,7 +179,7 @@ func (ms *MessageService) PersistMessage(msg *events.Message) {
 		metadata.MediaLength = sql.NullInt64{Int64: int64(stkr.GetFileLength()), Valid: true}
 		metadata.MediaWidth = sql.NullInt64{Int64: int64(stkr.GetWidth()), Valid: true}
 		metadata.MediaHeight = sql.NullInt64{Int64: int64(stkr.GetHeight()), Valid: true}
-	} else if vid := msg.Message.GetVideoMessage(); vid != nil {
+	} else if vid := protoMsg.GetVideoMessage(); vid != nil {
 		msgType = "video"; thumb = vid.GetJPEGThumbnail()
 		metadata.MediaURL = sql.NullString{String: vid.GetURL(), Valid: vid.GetURL() != ""}
 		metadata.MediaDirectPath = sql.NullString{String: vid.GetDirectPath(), Valid: vid.GetDirectPath() != ""}
@@ -168,7 +190,7 @@ func (ms *MessageService) PersistMessage(msg *events.Message) {
 		metadata.MediaLength = sql.NullInt64{Int64: int64(vid.GetFileLength()), Valid: true}
 		metadata.MediaWidth = sql.NullInt64{Int64: int64(vid.GetWidth()), Valid: true}
 		metadata.MediaHeight = sql.NullInt64{Int64: int64(vid.GetHeight()), Valid: true}
-	} else if doc := msg.Message.GetDocumentMessage(); doc != nil {
+	} else if doc := protoMsg.GetDocumentMessage(); doc != nil {
 		msgType = "document"; thumb = doc.GetJPEGThumbnail()
 		metadata.MediaURL = sql.NullString{String: doc.GetURL(), Valid: doc.GetURL() != ""}
 		metadata.MediaDirectPath = sql.NullString{String: doc.GetDirectPath(), Valid: doc.GetDirectPath() != ""}
@@ -177,7 +199,7 @@ func (ms *MessageService) PersistMessage(msg *events.Message) {
 		metadata.MediaEncSHA256 = doc.GetFileEncSHA256()
 		metadata.MediaSHA256 = doc.GetFileSHA256()
 		metadata.MediaLength = sql.NullInt64{Int64: int64(doc.GetFileLength()), Valid: true}
-	} else if aud := msg.Message.GetAudioMessage(); aud != nil {
+	} else if aud := protoMsg.GetAudioMessage(); aud != nil {
 		msgType = "audio"
 		metadata.MediaURL = sql.NullString{String: aud.GetURL(), Valid: aud.GetURL() != ""}
 		metadata.MediaDirectPath = sql.NullString{String: aud.GetDirectPath(), Valid: aud.GetDirectPath() != ""}
@@ -264,14 +286,15 @@ func (ms *MessageService) PersistMessage(msg *events.Message) {
 
 // PersistMediaMessage is a simplified persistence for pre-downloaded media messages.
 func (ms *MessageService) PersistMediaMessage(msg *events.Message, msgType, path string) {
+	protoMsg, isViewOnce := ms.UnwrapMessage(msg.Message)
 	chatJID := msg.Info.Chat.ToNonAD().String(); senderJID := msg.Info.Sender.ToNonAD().String()
 	var thumb []byte
 	var width, height int64
-	if img := msg.Message.GetImageMessage(); img != nil { 
+	if img := protoMsg.GetImageMessage(); img != nil { 
 		thumb = img.GetJPEGThumbnail()
 		width = int64(img.GetWidth())
 		height = int64(img.GetHeight())
-	} else if stkr := msg.Message.GetStickerMessage(); stkr != nil { 
+	} else if stkr := protoMsg.GetStickerMessage(); stkr != nil { 
 		thumb = stkr.GetPngThumbnail() 
 		width = int64(stkr.GetWidth())
 		height = int64(stkr.GetHeight())
@@ -281,6 +304,7 @@ func (ms *MessageService) PersistMediaMessage(msg *events.Message, msgType, path
 		Timestamp: msg.Info.Timestamp, IsFromMe: msg.Info.IsFromMe, Thumbnail: thumb,
 		MediaWidth: sql.NullInt64{Int64: width, Valid: width > 0},
 		MediaHeight: sql.NullInt64{Int64: height, Valid: height > 0},
+		IsViewOnce: isViewOnce,
 	})
 	ms.DB.UpdateContactTimestamp(chatJID, msg.Info.Timestamp)
 }

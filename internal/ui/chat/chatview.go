@@ -9,6 +9,7 @@ import (
 	"whats-gtk/internal/ui/chat/bubbles"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
@@ -255,6 +256,21 @@ func (cv *ChatView) SetPinnedMessage(content string) {
 	}
 }
 
+func (cv *ChatView) AddSeparator(text string) {
+	row := gtk.NewListBoxRow()
+	row.SetFocusable(false)
+	row.SetSelectable(false)
+	row.AddCSSClass("message-row")
+	row.AddCSSClass("message-row-connected") // Make it tighter
+
+	label := gtk.NewLabel(text)
+	label.AddCSSClass("date-separator")
+	row.SetChild(label)
+	row.SetHAlign(gtk.AlignCenter)
+
+	cv.MessageList.Append(row)
+}
+
 func (cv *ChatView) AddMessage(id, jid, name, text string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string) {
 	bubble, err := bubbles.NewTextBubble(name, text, isSelf, status, tStr, av)
 	if err == nil {
@@ -282,8 +298,8 @@ func (cv *ChatView) AddImage(id, jid, name, text string, tex, thumb *gdk.Texture
 	}
 }
 
-func (cv *ChatView) AddSticker(id, jid, name string, tex, thumb *gdk.Texture, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
-	bubble, err := bubbles.NewStickerBubble(name, tex, thumb, isSelf, status, tStr, av, w, h)
+func (cv *ChatView) AddSticker(id, jid, name string, anim *gdkpixbuf.PixbufAnimation, tex, thumb *gdk.Texture, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
+	bubble, err := bubbles.NewStickerBubble(name, anim, tex, thumb, isSelf, status, tStr, av, w, h)
 	if err == nil {
 		bubble.OnDownloadRequest = func() {
 			if cv.OnDownloadMedia != nil {
@@ -304,24 +320,31 @@ func (cv *ChatView) AddAudio(id, jid, name string, isSelf, isCont bool, status, 
 			}
 		}
 		bubble.OnPlayRequest = func() {
-			err := cv.AudioPlayer.Play(bubble.AudioPath(), func() {
-				glib.IdleAdd(func() {
-					bubble.SetPlaying(false)
-					bubble.SetProgress(0)
-				})
-			}, func(current, total time.Duration) {
-				if total > 0 {
-					progress := float64(current) / float64(total) * 100
+			go func() {
+				err := cv.AudioPlayer.Play(bubble.AudioPath(), func() {
 					glib.IdleAdd(func() {
-						bubble.SetProgress(progress)
+						bubble.SetPlaying(false)
+						bubble.SetProgress(0)
 					})
+				}, func(current, total time.Duration) {
+					if total > 0 {
+						progress := float64(current) / float64(total) * 100
+						glib.IdleAdd(func() {
+							bubble.SetProgress(progress)
+						})
+					}
+				})
+				if err != nil {
+					fmt.Printf("ChatView: Audio play error: %v\n", err)
+					glib.IdleAdd(func() {
+						bubble.SetPlaying(false)
+					})
+					return
 				}
-			})
-			if err != nil {
-				fmt.Printf("ChatView: Audio play error: %v\n", err)
-				return
-			}
-			bubble.SetPlaying(true)
+				glib.IdleAdd(func() {
+					bubble.SetPlaying(true)
+				})
+			}()
 		}
 		bubble.OnStopRequest = func() {
 			cv.AudioPlayer.Stop()
@@ -534,6 +557,14 @@ func (cv *ChatView) UpdateMessageReactions(id string, reactions []string) {
 func (cv *ChatView) UpdateMessagePinned(id string, pinned bool) {
 	if bubble, exists := cv.MessageRows[id]; exists {
 		glib.IdleAdd(func() { bubble.SetPinned(pinned) })
+	}
+}
+
+func (cv *ChatView) UpdateMessageSticker(id string, anim *gdkpixbuf.PixbufAnimation, tex *gdk.Texture, path string) {
+	if bubble, exists := cv.MessageRows[id]; exists {
+		if sb, ok := bubble.(*bubbles.StickerBubble); ok {
+			sb.UpdateStickerImage(anim, tex, path)
+		}
 	}
 }
 

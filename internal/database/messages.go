@@ -20,6 +20,7 @@ type Message struct {
 	Thumbnail []byte
 	IsPinned  bool
 	IsEdited  bool
+	IsViewOnce bool
 
 	// Media Metadata
 	MediaURL           sql.NullString
@@ -43,13 +44,13 @@ func (a *AppDB) SaveMessage(m Message) error {
 				msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
 				media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
 				media_width, media_height,
-				quoted_msg_id, quoted_msg_content, quoted_msg_sender, is_pinned, is_edited
-			  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				quoted_msg_id, quoted_msg_content, quoted_msg_sender, is_pinned, is_edited, is_view_once
+			  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := a.db.Exec(query, 
 		m.ID, m.ChatJID, m.SenderJID, m.Content, m.Caption, m.Type, m.Timestamp, m.Status, m.IsFromMe, m.Thumbnail,
 		m.MediaURL, m.MediaDirectPath, m.MediaKey, m.MediaMimetype, m.MediaEncSHA256, m.MediaSHA256, m.MediaLength,
 		m.MediaWidth, m.MediaHeight,
-		m.QuotedMsgID, m.QuotedMsgContent, m.QuotedMsgSender, m.IsPinned, m.IsEdited,
+		m.QuotedMsgID, m.QuotedMsgContent, m.QuotedMsgSender, m.IsPinned, m.IsEdited, m.IsViewOnce,
 	)
 	return err
 }
@@ -76,7 +77,7 @@ func (a *AppDB) GetMessage(msgID string) (*Message, error) {
 	query := `SELECT msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
 				media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
 				media_width, media_height,
-				quoted_msg_id, quoted_msg_content, quoted_msg_sender, is_pinned, is_edited
+				quoted_msg_id, quoted_msg_content, quoted_msg_sender, is_pinned, is_edited, is_view_once
 	          FROM messages WHERE msg_id = ?`
 	row := a.db.QueryRow(query, msgID)
 	var m Message
@@ -84,7 +85,7 @@ func (a *AppDB) GetMessage(msgID string) (*Message, error) {
 		&m.ID, &m.ChatJID, &m.SenderJID, &m.Content, &m.Caption, &m.Type, &m.Timestamp, &m.Status, &m.IsFromMe, &m.Thumbnail,
 		&m.MediaURL, &m.MediaDirectPath, &m.MediaKey, &m.MediaMimetype, &m.MediaEncSHA256, &m.MediaSHA256, &m.MediaLength,
 		&m.MediaWidth, &m.MediaHeight,
-		&m.QuotedMsgID, &m.QuotedMsgContent, &m.QuotedMsgSender, &m.IsPinned, &m.IsEdited,
+		&m.QuotedMsgID, &m.QuotedMsgContent, &m.QuotedMsgSender, &m.IsPinned, &m.IsEdited, &m.IsViewOnce,
 	)
 	if err != nil { return nil, err }
 	return &m, nil
@@ -103,7 +104,7 @@ func (a *AppDB) GetMessages(jids []string, limit int) ([]Message, error) {
 	query := fmt.Sprintf(`SELECT msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
 				media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
 				media_width, media_height,
-				quoted_msg_id, quoted_msg_content, quoted_msg_sender, is_pinned, is_edited
+				quoted_msg_id, quoted_msg_content, quoted_msg_sender, is_pinned, is_edited, is_view_once
 	          FROM (SELECT * FROM messages WHERE chat_jid IN (%s) ORDER BY timestamp DESC LIMIT ?)
 	          ORDER BY timestamp ASC`, strings.Join(placeholders, ","))
 	
@@ -120,7 +121,7 @@ func (a *AppDB) GetMessages(jids []string, limit int) ([]Message, error) {
 			&m.ID, &m.ChatJID, &m.SenderJID, &m.Content, &m.Caption, &m.Type, &m.Timestamp, &m.Status, &m.IsFromMe, &m.Thumbnail,
 			&m.MediaURL, &m.MediaDirectPath, &m.MediaKey, &m.MediaMimetype, &m.MediaEncSHA256, &m.MediaSHA256, &m.MediaLength,
 			&m.MediaWidth, &m.MediaHeight,
-			&m.QuotedMsgID, &m.QuotedMsgContent, &m.QuotedMsgSender, &m.IsPinned, &m.IsEdited,
+			&m.QuotedMsgID, &m.QuotedMsgContent, &m.QuotedMsgSender, &m.IsPinned, &m.IsEdited, &m.IsViewOnce,
 		)
 		if err != nil {
 			return nil, err

@@ -44,7 +44,6 @@ func (a *AppDB) SaveContact(c Contact) error {
 	return err
 }
 
-// MergeLID links a phone number JID with an LID and removes the duplicate LID entry if it exists
 func (a *AppDB) MergeLID(pnJID, lidJID string) error {
 	if pnJID == lidJID || pnJID == "" || lidJID == "" {
 		return nil
@@ -56,35 +55,50 @@ func (a *AppDB) MergeLID(pnJID, lidJID string) error {
 	}
 	defer tx.Rollback()
 
-	// 1. Update the PN record with the LID
-	_, err = tx.Exec("UPDATE contacts SET lid = ? WHERE jid = ?", lidJID, pnJID)
+	// 1. Ensure the PN record exists and has the LID set
+	_, err = tx.Exec("INSERT INTO contacts (jid, lid) VALUES (?, ?) ON CONFLICT(jid) DO UPDATE SET lid = excluded.lid", pnJID, lidJID)
 	if err != nil {
 		return err
 	}
 
-	// 2. Transfer names, messages and timestamps from LID record to PN record
-	_, err = tx.Exec(`
-		UPDATE contacts 
-		SET saved_name = COALESCE(NULLIF(saved_name, ''), (SELECT saved_name FROM contacts WHERE jid = ?)),
-		    push_name = COALESCE(NULLIF(push_name, ''), (SELECT push_name FROM contacts WHERE jid = ?)),
-		    last_message_at = (
-		        SELECT CASE 
-		            WHEN c1.last_message_at IS NULL THEN c2.last_message_at
-		            WHEN c2.last_message_at IS NULL THEN c1.last_message_at
-		            WHEN c1.last_message_at > c2.last_message_at THEN c1.last_message_at
-		            ELSE c2.last_message_at
-		        END
-		        FROM contacts c1 JOIN contacts c2 ON c2.jid = ?
-		        WHERE c1.jid = contacts.jid
-		    )
-		WHERE jid = ?`, lidJID, lidJID, lidJID, pnJID)
-
-	
-	_, err = tx.Exec("UPDATE messages SET chat_jid = ? WHERE chat_jid = ?", pnJID, lidJID)
-	_, err = tx.Exec("UPDATE messages SET sender_jid = ? WHERE sender_jid = ?", pnJID, lidJID)
-	
-	// 3. Delete the duplicate LID-only record
-	_, err = tx.Exec("DELETE FROM contacts WHERE jid = ? AND jid != ?", lidJID, pnJID)
+	// 2. Transfer data from LID record to PN record only if LID record exists
+	var dummy int
+	err = tx.QueryRow("SELECT 1 FROM contacts WHERE jid = ?", lidJID).Scan(&dummy)
+	if err == nil {
+		_, err = tx.Exec(`
+			UPDATE contacts 
+			SET saved_name = COALESCE(NULLIF(saved_name, ''), (SELECT saved_name FROM contacts WHERE jid = ?)),
+			    push_name = COALESCE(NULLIF(push_name, ''), (SELECT push_name FROM contacts WHERE jid = ?)),
+			    last_message_at = (
+			        SELECT CASE 
+			            WHEN c1.last_message_at IS NULL THEN c2.last_message_at
+			            WHEN c2.last_message_at IS NULL THEN c1.last_message_at
+			            WHEN c1.last_message_at > c2.last_message_at THEN c1.last_message_at
+			            ELSE c2.last_message_at
+			        END
+			        FROM contacts c1 JOIN contacts c2 ON c2.jid = ?
+			        WHERE c1.jid = contacts.jid
+			    )
+			WHERE jid = ?`, lidJID, lidJID, lidJID, pnJID)
+		if err != nil {
+			return err
+		}
+		
+		_, err = tx.Exec("UPDATE messages SET chat_jid = ? WHERE chat_jid = ?", pnJID, lidJID)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec("UPDATE messages SET sender_jid = ? WHERE sender_jid = ?", pnJID, lidJID)
+		if err != nil {
+			return err
+		}
+		
+		// 3. Delete the duplicate LID-only record
+		_, err = tx.Exec("DELETE FROM contacts WHERE jid = ?", lidJID)
+		if err != nil {
+			return err
+		}
+	}
 	
 	return tx.Commit()
 }

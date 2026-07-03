@@ -190,6 +190,18 @@ func (br *Bridge) setupServiceHandlers() {
 					br.App.ChatView.UpdateMessageDocument(task.ID, path)
 					return
 				}
+				if task.MsgType == "sticker" {
+					var anim *gdkpixbuf.PixbufAnimation
+					var tex *gdk.Texture
+					
+					anim, _ = gdkpixbuf.NewPixbufAnimationFromFile(path)
+					if anim != nil && anim.IsStaticImage() {
+						tex = gdk.NewTextureForPixbuf(anim.StaticImage())
+						anim = nil
+					}
+					br.App.ChatView.UpdateMessageSticker(task.ID, anim, tex, path)
+					return
+				}
 
 				pixbuf, _ := gdkpixbuf.NewPixbufFromFile(path)
 				if pixbuf == nil { return }

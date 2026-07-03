@@ -48,6 +48,10 @@ type MediaRetryEvent struct {
 	Info *events.MediaRetry
 }
 
+type UndecryptableEvent struct {
+	Info *events.UndecryptableMessage
+}
+
 func (b *Backend) registerEventHandlers() {
 	b.Client.AddEventHandler(func(evt interface{}) {
 		var appEvt AppEvent
@@ -77,6 +81,8 @@ func (b *Backend) registerEventHandlers() {
 			appEvt = &IdentityChangeEvent{Info: v}
 		case *events.MediaRetry:
 			appEvt = &MediaRetryEvent{Info: v}
+		case *events.UndecryptableMessage:
+			appEvt = &UndecryptableEvent{Info: v}
 		default:
 			if v != nil {
 				// Log the type for debugging

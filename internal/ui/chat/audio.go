@@ -1,11 +1,13 @@
 package chat
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/faiface/beep"
@@ -16,6 +18,7 @@ import (
 )
 
 type AudioPlayer struct {
+	mu          sync.Mutex
 	initialized bool
 	sampleRate  beep.SampleRate
 	ctrl        *beep.Ctrl
@@ -26,17 +29,18 @@ type AudioPlayer struct {
 	OnProgress  func(current, total time.Duration)
 	currentPath string
 	isTemp      bool
-	done        chan bool
+	cancelFunc  context.CancelFunc
 }
 
 func NewAudioPlayer() *AudioPlayer {
-	return &AudioPlayer{
-		done: make(chan bool),
-	}
+	return &AudioPlayer{}
 }
 
 func (ap *AudioPlayer) Play(path string, onStop func(), onProgress func(c, t time.Duration)) error {
-	ap.Stop()
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
+
+	ap.stopUnlocked()
 
 	var isTempWav bool
 
@@ -124,11 +128,13 @@ func (ap *AudioPlayer) Play(path string, onStop func(), onProgress func(c, t tim
 
 	resampled := beep.Resample(4, ap.format.SampleRate, ap.sampleRate, ap.streamer)
 	ap.ctrl = &beep.Ctrl{Streamer: beep.Seq(resampled, beep.Callback(func() {
-		ap.done <- true
-		ap.Stop()
+		go ap.Stop()
 	})), Paused: false}
 
 	speaker.Play(ap.ctrl)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ap.cancelFunc = cancel
 
 	// Start progress reporter
 	go func() {
@@ -136,16 +142,25 @@ func (ap *AudioPlayer) Play(path string, onStop func(), onProgress func(c, t tim
 		defer ticker.Stop()
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case <-ticker.C:
+				ap.mu.Lock()
 				if ap.ctrl == nil || ap.ctrl.Paused {
+					ap.mu.Unlock()
 					continue
 				}
-				if ap.OnProgress != nil {
-					current := ap.format.SampleRate.D(ap.streamer.Position())
-					ap.OnProgress(current, totalDuration)
+				onProgressFunc := ap.OnProgress
+				if ap.streamer == nil {
+					ap.mu.Unlock()
+					continue
 				}
-			case <-ap.done:
-				return
+				current := ap.format.SampleRate.D(ap.streamer.Position())
+				ap.mu.Unlock()
+
+				if onProgressFunc != nil {
+					onProgressFunc(current, totalDuration)
+				}
 			}
 		}
 	}()
@@ -154,6 +169,8 @@ func (ap *AudioPlayer) Play(path string, onStop func(), onProgress func(c, t tim
 }
 
 func (ap *AudioPlayer) Seek(percent float64) {
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
 	if ap.streamer == nil {
 		return
 	}
@@ -170,11 +187,17 @@ func (ap *AudioPlayer) Seek(percent float64) {
 }
 
 func (ap *AudioPlayer) Stop() {
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
+	ap.stopUnlocked()
+}
+
+func (ap *AudioPlayer) stopUnlocked() {
+	if ap.cancelFunc != nil {
+		ap.cancelFunc()
+		ap.cancelFunc = nil
+	}
 	if ap.ctrl != nil {
-		select {
-		case ap.done <- true:
-		default:
-		}
 		speaker.Clear()
 		ap.ctrl = nil
 	}

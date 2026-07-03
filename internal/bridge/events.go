@@ -16,6 +16,7 @@ import (
 	"github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 )
 
@@ -77,6 +78,8 @@ func (eh *EventHandler) HandleEvent(evt backend.AppEvent) {
 		eh.handlePushName(v)
 	case *backend.MediaRetryEvent:
 		eh.handleMediaRetry(v)
+	case *backend.UndecryptableEvent:
+		eh.handleUndecryptable(v)
 	}
 }
 
@@ -191,12 +194,20 @@ func (eh *EventHandler) handleReceipt(v *backend.ReceiptEvent) {
 	}
 }
 
-// handleContact saves contact info and handles LID/PN mapping.
 func (eh *EventHandler) handleContact(v *backend.ContactEvent) {
 	if v.Info.Action != nil {
 		jid := v.Info.JID.ToNonAD().String(); pnJID := v.Info.Action.GetPnJID()
-		if pnJID != "" && strings.HasSuffix(jid, "@lid") { eh.DB.MergeLID(pnJID+"@s.whatsapp.net", jid) }
-		eh.DB.SaveContact(database.Contact{JID: jid, SavedName: sql.NullString{String: v.Info.Action.GetFullName(), Valid: v.Info.Action.GetFullName() != ""}, PushName: sql.NullString{String: v.Info.Action.GetFirstName(), Valid: v.Info.Action.GetFirstName() != ""}})
+		
+		savedName := sql.NullString{String: v.Info.Action.GetFullName(), Valid: v.Info.Action.GetFullName() != ""}
+		pushName := sql.NullString{String: v.Info.Action.GetFirstName(), Valid: v.Info.Action.GetFirstName() != ""}
+		
+		if pnJID != "" && strings.HasSuffix(jid, "@lid") {
+			pn := pnJID + "@s.whatsapp.net"
+			eh.DB.SaveContact(database.Contact{JID: pn, LID: sql.NullString{String: jid, Valid: true}, SavedName: savedName, PushName: pushName})
+			eh.DB.MergeLID(pn, jid)
+		} else {
+			eh.DB.SaveContact(database.Contact{JID: jid, SavedName: savedName, PushName: pushName})
+		}
 	}
 }
 
@@ -230,4 +241,22 @@ func (eh *EventHandler) handleMediaRetry(v *backend.MediaRetryEvent) {
 
 	// Re-trigger download
 	eh.Chat.HandleDownloadMedia(v.Info.MessageID)
+}
+
+func protoStr(s string) *string { return &s }
+
+func (eh *EventHandler) handleUndecryptable(v *backend.UndecryptableEvent) {
+	if v.Info.IsUnavailable && v.Info.UnavailableType == "view_once" {
+		fakeMsg := &events.Message{
+			Info: v.Info.Info,
+			Message: &waProto.Message{
+				ViewOnceMessage: &waProto.FutureProofMessage{
+					Message: &waProto.Message{
+						Conversation: protoStr("[Mídia]"),
+					},
+				},
+			},
+		}
+		eh.handleMessage(&backend.MessageEvent{Info: fakeMsg})
+	}
 }

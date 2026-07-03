@@ -217,6 +217,30 @@ func loadCSS() {
 			color: #8696a0;
 			margin-right: 4px;
 		}
+		.receipt-read {
+			color: #53bdeb;
+		}
+		.date-separator {
+			background-color: #ffffff;
+			border-radius: 8px;
+			padding: 4px 12px;
+			margin: 8px auto;
+			font-size: 9pt;
+			color: #54656f;
+			box-shadow: 0 1px 1px rgba(0,0,0,0.05);
+		}
+		.media-progress {
+			margin-top: 4px;
+			min-height: 4px;
+		}
+		progressbar.media-progress trough {
+			min-height: 4px;
+			border-radius: 2px;
+		}
+		progressbar.media-progress progress {
+			background-color: #00a884;
+			border-radius: 2px;
+		}
 	`)
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), cssProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 }

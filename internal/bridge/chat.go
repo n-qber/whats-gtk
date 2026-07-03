@@ -42,6 +42,7 @@ type ChatController struct {
 
 	selectedJID   *types.JID
 	lastSender    string
+	lastDateStr   string
 	sidebarMutex  sync.Mutex
 	searchSerial  int
 	lastGroupSync map[string]time.Time
@@ -78,6 +79,12 @@ func (cc *ChatController) HandleWindowActive() {
 
 // SetLastSender updates the last sender (used by Renderer for continuation tracking).
 func (cc *ChatController) SetLastSender(s string) { cc.lastSender = s }
+
+// LastDateStr returns the date string of the last message.
+func (cc *ChatController) LastDateStr() string { return cc.lastDateStr }
+
+// SetLastDateStr updates the date string of the last message.
+func (cc *ChatController) SetLastDateStr(s string) { cc.lastDateStr = s }
 
 // IsSyncing is accessed from EventHandler. We use a separate field there,
 // but ChatController needs to check it for LID resolution decisions.
