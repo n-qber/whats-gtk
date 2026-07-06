@@ -514,6 +514,24 @@ func (c *ChatController) HandleDetach() {
 		cv.OnSendReaction = func(id, emoji string) {
 			c.HandleSendReaction(targetJID, id, emoji)
 		}
+		cv.OnLoadOlder = func() {
+			if !cv.IsSearching {
+				c.Renderer.LoadOlderMessages(targetJID.ToNonAD().String(), cv)
+			}
+		}
+		cv.OnSearchMessages = func(query string) {
+			c.Renderer.RenderMessageSearch(targetJID.ToNonAD().String(), query)
+		}
+		cv.OnCancelSearch = func() {
+			c.Renderer.CancelMessageSearch(targetJID.ToNonAD().String())
+		}
+		cv.OnMentionClick = func(mjid string) {
+			glib.IdleAdd(func() {
+				if c.App.Sidebar != nil {
+					c.App.Sidebar.SelectChat(mjid)
+				}
+			})
+		}
 		cv.OnPinMessage = func(id string, pin bool, duration uint32) {
 			c.HandlePinMessage(targetJID, id, pin, duration)
 		}

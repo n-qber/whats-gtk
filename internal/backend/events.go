@@ -32,6 +32,10 @@ type PresenceEvent struct {
 
 type OfflineSyncCompletedEvent struct{}
 
+type OfflineSyncPreviewEvent struct {
+	Info *events.OfflineSyncPreview
+}
+
 type IdentityChangeEvent struct {
 	Info *events.IdentityChange
 }
@@ -77,6 +81,8 @@ func (b *Backend) registerEventHandlers() {
 			appEvt = &PresenceEvent{Info: v}
 		case *events.OfflineSyncCompleted:
 			appEvt = &OfflineSyncCompletedEvent{}
+		case *events.OfflineSyncPreview:
+			appEvt = &OfflineSyncPreviewEvent{Info: v}
 		case *events.IdentityChange:
 			appEvt = &IdentityChangeEvent{Info: v}
 		case *events.MediaRetry:

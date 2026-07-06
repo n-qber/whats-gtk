@@ -1,6 +1,8 @@
 package bubbles
 
 import (
+	"strings"
+
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
@@ -48,7 +50,8 @@ func NewImageBubble(name, text string, tex, thumb *gdk.Texture, isSelf bool, sta
 
 	var captionLabel *gtk.Label
 	if text != "" {
-		captionLabel = gtk.NewLabel(text)
+		captionLabel = gtk.NewLabel("")
+		captionLabel.SetMarkup(text)
 		captionLabel.SetWrap(true)
 		captionLabel.SetXAlign(0)
 		captionLabel.AddCSSClass("image-caption")
@@ -94,7 +97,25 @@ func NewImageBubble(name, text string, tex, thumb *gdk.Texture, isSelf bool, sta
 		return nil, err
 	}
 
-	ib := &ImageBubble{baseBubble: base, picture: picture, placeholder: placeholder, captionLabel: captionLabel}
+	ib := &ImageBubble{
+		baseBubble: base,
+		picture:    picture,
+		placeholder: placeholder,
+		captionLabel: captionLabel,
+	}
+
+	if captionLabel != nil {
+		captionLabel.ConnectActivateLink(func(uri string) bool {
+			if strings.HasPrefix(uri, "mention:") {
+				jid := strings.TrimPrefix(uri, "mention:")
+				if base.onMentionClick != nil {
+					base.onMentionClick(jid)
+				}
+				return true
+			}
+			return false
+		})
+	}
 
 	click.ConnectPressed(func(n int, x, y float64) {
 		if ib.filePath != "" {

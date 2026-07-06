@@ -25,6 +25,7 @@ type Bubble interface {
 	SetOnQuotedClick(f func(id string))
 	SetOnReplyRequest(f func())
 	SetOnReactionRequest(f func(emoji string))
+	SetOnMentionClick(f func(jid string))
 	SetContentText(text string)
 	SetEdited(edited bool)
 	SetViewOnce(viewOnce bool)
@@ -47,6 +48,7 @@ type baseBubble struct {
 	onQuotedClick  func(id string)
 	onReplyRequest func()
 	onReactionRequest func(emoji string)
+	onMentionClick    func(jid string)
 	contentWidget  gtk.Widgetter
 	editedLabel    *gtk.Label
 	progressBar    *gtk.ProgressBar
@@ -59,6 +61,7 @@ func (b *baseBubble) Content() string { return b.content }
 func (b *baseBubble) SetOnQuotedClick(f func(id string)) { b.onQuotedClick = f }
 func (b *baseBubble) SetOnReplyRequest(f func()) { b.onReplyRequest = f }
 func (b *baseBubble) SetOnReactionRequest(f func(emoji string)) { b.onReactionRequest = f }
+func (b *baseBubble) SetOnMentionClick(f func(jid string)) { b.onMentionClick = f }
 func (b *baseBubble) IsSelf() bool { return b.isSelf }
 func (b *baseBubble) Widget() gtk.Widgetter { return b.Box }
 

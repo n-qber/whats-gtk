@@ -70,6 +70,8 @@ func (eh *EventHandler) HandleEvent(evt backend.AppEvent) {
 		eh.handleQR(v)
 	case *backend.OfflineSyncCompletedEvent:
 		eh.handleOfflineSyncCompleted()
+	case *backend.OfflineSyncPreviewEvent:
+		eh.handleOfflineSyncPreview(v)
 	case *backend.ReceiptEvent:
 		eh.handleReceipt(v)
 	case *backend.ContactEvent:
@@ -173,6 +175,12 @@ func (eh *EventHandler) handleOfflineSyncCompleted() {
 		c, _ := eh.DB.GetAllContacts(100)
 		eh.Renderer.RefreshSidebar(c)
 	}()
+}
+
+// handleOfflineSyncPreview sets the syncing flag and shows the syncing bar.
+func (eh *EventHandler) handleOfflineSyncPreview(v *backend.OfflineSyncPreviewEvent) {
+	eh.isSyncing = true
+	glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(true) })
 }
 
 // handleReceipt maps receipt types to status strings and updates DB and UI.

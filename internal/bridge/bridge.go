@@ -158,6 +158,16 @@ func (br *Bridge) setupUIHandlers() {
 		})
 	})
 
+	searchToggle := func() {
+		glib.IdleAdd(func() {
+			if br.App.ChatView != nil {
+				br.App.ChatView.ToggleSearch()
+			}
+		})
+	}
+	br.Input.Register("Control+f", searchToggle)
+	br.Input.Register("Control+F", searchToggle)
+
 	// Ctrl+Tab and Ctrl+Shift+Tab for next/prev chat
 	br.Input.Register("Control+Tab", func() {
 		glib.IdleAdd(func() {
@@ -250,6 +260,28 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 		if jid := br.Chat.SelectedJID(); jid != nil {
 			br.Chat.HandleSendReaction(*jid, id, emoji)
 		}
+	}
+	cv.OnLoadOlder = func() {
+		if jid := br.Chat.SelectedJID(); jid != nil && !cv.IsSearching {
+			br.Render.LoadOlderMessages(jid.ToNonAD().String(), cv)
+		}
+	}
+	cv.OnSearchMessages = func(query string) {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Render.RenderMessageSearch(jid.ToNonAD().String(), query)
+		}
+	}
+	cv.OnCancelSearch = func() {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Render.CancelMessageSearch(jid.ToNonAD().String())
+		}
+	}
+	cv.OnMentionClick = func(jid string) {
+		glib.IdleAdd(func() {
+			if br.App.Sidebar != nil {
+				br.App.Sidebar.SelectChat(jid)
+			}
+		})
 	}
 	cv.OnPinMessage = func(id string, pin bool, duration uint32) {
 		if jid := br.Chat.SelectedJID(); jid != nil {

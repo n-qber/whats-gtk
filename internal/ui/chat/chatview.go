@@ -43,6 +43,15 @@ type ChatView struct {
 	ReplyPreviewLabel     *gtk.Label
 	PinnedMessageBar      *gtk.Box
 	PinnedMessageLabel    *gtk.Label
+	OnLoadOlder           func()
+	IsLoadingOlder        bool
+	InsertIndex           int
+	SearchBar             *gtk.SearchBar
+	SearchEntry           *gtk.SearchEntry
+	OnSearchMessages      func(query string)
+	OnCancelSearch        func()
+	IsSearching           bool
+	OnMentionClick        func(jid string)
 }
 
 func NewChatView() (*ChatView, error) {
@@ -62,6 +71,14 @@ func NewChatView() (*ChatView, error) {
 	header.PackEnd(detachBtn)
 
 	box.Append(header)
+
+	searchBar := gtk.NewSearchBar()
+	searchEntry := gtk.NewSearchEntry()
+	searchBar.ConnectEntry(searchEntry)
+	searchBar.SetChild(searchEntry)
+	searchBar.SetKeyCaptureWidget(box)
+	searchBar.SetShowCloseButton(true)
+	box.Append(searchBar)
 
 	pinnedMessageBar := gtk.NewBox(gtk.OrientationHorizontal, 5)
 	pinnedMessageBar.AddCSSClass("pinned-message-bar")
@@ -139,7 +156,39 @@ func NewChatView() (*ChatView, error) {
 		ReplyPreviewLabel:     replyLabel,
 		PinnedMessageBar:      pinnedMessageBar,
 		PinnedMessageLabel:    pinnedLabel,
+		InsertIndex:           -1,
+		SearchBar:             searchBar,
+		SearchEntry:           searchEntry,
 	}
+
+	searchBar.Connect("notify::search-mode-enabled", func() {
+		if !searchBar.SearchMode() {
+			if cv.OnCancelSearch != nil {
+				cv.OnCancelSearch()
+			}
+		}
+	})
+
+	searchEntry.ConnectSearchChanged(func() {
+		text := searchEntry.Text()
+		if text == "" {
+			if cv.OnCancelSearch != nil {
+				cv.OnCancelSearch()
+			}
+		} else {
+			if cv.OnSearchMessages != nil {
+				cv.OnSearchMessages(text)
+			}
+		}
+	})
+
+	scrolledMsg.VAdjustment().ConnectValueChanged(func() {
+		adj := scrolledMsg.VAdjustment()
+		if adj.Value() <= 50.0 && !cv.IsLoadingOlder && cv.OnLoadOlder != nil {
+			cv.IsLoadingOlder = true
+			cv.OnLoadOlder()
+		}
+	})
 
 	detachBtn.ConnectClicked(func() {
 		if cv.OnDetach != nil {
@@ -225,6 +274,14 @@ func (cv *ChatView) SetHeader(name string, tex *gdk.Texture) {
 	}
 }
 
+func (cv *ChatView) ToggleSearch() {
+	if cv == nil || cv.SearchBar == nil { return }
+	cv.SearchBar.SetSearchMode(!cv.SearchBar.SearchMode())
+	if cv.SearchBar.SearchMode() {
+		cv.SearchEntry.GrabFocus()
+	}
+}
+
 func (cv *ChatView) SetReplyTo(id, sender, content string) {
 	cv.ReplyToID = id
 	cv.ReplyToSender = sender
@@ -268,7 +325,12 @@ func (cv *ChatView) AddSeparator(text string) {
 	row.SetChild(label)
 	row.SetHAlign(gtk.AlignCenter)
 
-	cv.MessageList.Append(row)
+	if cv.InsertIndex >= 0 {
+		cv.MessageList.Insert(row, cv.InsertIndex)
+		cv.InsertIndex++
+	} else {
+		cv.MessageList.Append(row)
+	}
 }
 
 func (cv *ChatView) AddMessage(id, jid, name, text string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string) {
@@ -398,31 +460,34 @@ func (cv *ChatView) AddPoll(id, jid, name, question string, options []string, is
 	}
 }
 
-func (cv *ChatView) registerBubble(id, jid string, b bubbles.Bubble, isCont bool) {
+func (cv *ChatView) registerBubble(id, jid string, bubble bubbles.Bubble, isCont bool) {
 	if id != "" {
-		cv.MessageRows[id] = b
+		cv.MessageRows[id] = bubble
 	}
 	if jid != "" {
-		cv.BubblesByJID[jid] = append(cv.BubblesByJID[jid], b)
+		cv.BubblesByJID[jid] = append(cv.BubblesByJID[jid], bubble)
 	}
 	
-	b.SetOnQuotedClick(func(quotedID string) {
-		cv.ScrollToMessage(quotedID)
+	bubble.SetOnQuotedClick(func(qid string) {
+		cv.ScrollToMessage(qid)
 	})
-
-	b.SetOnReplyRequest(func() {
-		sender := b.Sender()
+	bubble.SetOnReplyRequest(func() {
+		sender := bubble.Sender()
 		if sender == "" { sender = "Unknown" }
-		cv.SetReplyTo(id, sender, b.Content())
+		cv.SetReplyTo(id, sender, bubble.Content())
 	})
-
-	b.SetOnReactionRequest(func(emoji string) {
+	bubble.SetOnReactionRequest(func(emoji string) {
 		if cv.OnSendReaction != nil {
 			cv.OnSendReaction(id, emoji)
 		}
 	})
+	bubble.SetOnMentionClick(func(mjid string) {
+		if cv.OnMentionClick != nil {
+			cv.OnMentionClick(mjid)
+		}
+	})
 
-	cv.addBubble(id, b, isCont)
+	cv.addBubble(id, bubble, isCont)
 }
 
 func (cv *ChatView) ScrollToMessage(id string) {
@@ -519,10 +584,15 @@ func (cv *ChatView) addBubble(id string, b bubbles.Bubble, isCont bool) {
 		cv.MessageListRows[id] = row
 	}
 
-	cv.MessageList.Append(row)
-	glib.IdleAdd(func() {
-		cv.ScrollToBottom()
-	})
+	if cv.InsertIndex >= 0 {
+		cv.MessageList.Insert(row, cv.InsertIndex)
+		cv.InsertIndex++
+	} else {
+		cv.MessageList.Append(row)
+		glib.IdleAdd(func() {
+			cv.ScrollToBottom()
+		})
+	}
 }
 
 func (cv *ChatView) ScrollToBottom() {
