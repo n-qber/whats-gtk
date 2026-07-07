@@ -35,7 +35,10 @@ type EventHandler struct {
 	Pipeline *core.MessagePipeline
 	ctx      context.Context
 
-	isSyncing bool
+	isSyncing           bool
+	isOfflineSyncing    bool
+	offlineSyncTotal    int
+	offlineSyncReceived int
 }
 
 // NewEventHandler creates a new EventHandler.
@@ -90,7 +93,12 @@ func (eh *EventHandler) HandleEvent(evt backend.AppEvent) {
 // persists them, handles reactions, and refreshes the sidebar.
 func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 	eh.isSyncing = true
-	glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(true) })
+	progress := v.Data.Data.GetProgress()
+	fraction := float64(progress) / 100.0
+	glib.IdleAdd(func() { 
+		eh.App.Sidebar.ShowSyncing(true) 
+		eh.App.Sidebar.SetSyncProgress(fraction)
+	})
 	go func() {
 		for _, conv := range v.Data.Data.GetConversations() {
 			chatJID, _ := types.ParseJID(conv.GetID()); chatJID = chatJID.ToNonAD()
@@ -156,6 +164,15 @@ func (eh *EventHandler) handleMessage(v *backend.MessageEvent) {
 	
 	// Process message through hooks (Rendering, auto-download, etc.)
 	eh.Pipeline.Process(msg)
+
+	if eh.isOfflineSyncing {
+		eh.offlineSyncReceived++
+		if eh.offlineSyncTotal > 0 {
+			fraction := float64(eh.offlineSyncReceived) / float64(eh.offlineSyncTotal)
+			if fraction > 1.0 { fraction = 1.0 }
+			glib.IdleAdd(func() { eh.App.Sidebar.SetSyncProgress(fraction) })
+		}
+	}
 }
 
 // handleConnected hides the QR dialog, syncs contacts, and refreshes the sidebar.
@@ -195,6 +212,7 @@ func (eh *EventHandler) handleQR(v *backend.QREvent) {
 // handleOfflineSyncCompleted clears the syncing flag and refreshes the sidebar.
 func (eh *EventHandler) handleOfflineSyncCompleted() {
 	eh.isSyncing = false
+	eh.isOfflineSyncing = false
 	glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(false) })
 	go func() {
 		c, _ := eh.DB.GetAllContacts(100)
@@ -205,7 +223,13 @@ func (eh *EventHandler) handleOfflineSyncCompleted() {
 // handleOfflineSyncPreview sets the syncing flag and shows the syncing bar.
 func (eh *EventHandler) handleOfflineSyncPreview(v *backend.OfflineSyncPreviewEvent) {
 	eh.isSyncing = true
-	glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(true) })
+	eh.isOfflineSyncing = true
+	eh.offlineSyncTotal = v.Info.Messages
+	eh.offlineSyncReceived = 0
+	glib.IdleAdd(func() { 
+		eh.App.Sidebar.ShowSyncing(true)
+		eh.App.Sidebar.SetSyncProgress(0.0)
+	})
 }
 
 // handleReceipt maps receipt types to status strings and updates DB and UI.

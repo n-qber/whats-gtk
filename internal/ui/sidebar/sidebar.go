@@ -92,6 +92,18 @@ func (s *Sidebar) SetRefreshing(refreshing bool) {
 func (s *Sidebar) ShowSyncing(syncing bool) {
 	s.ProgressBar.SetVisible(syncing)
 	if syncing {
+		// Default to indeterminate pulsing
+		s.SetSyncProgress(-1.0)
+	} else {
+		if s.syncPulseId != 0 {
+			glib.SourceRemove(s.syncPulseId)
+			s.syncPulseId = 0
+		}
+	}
+}
+
+func (s *Sidebar) SetSyncProgress(fraction float64) {
+	if fraction < 0 {
 		if s.syncPulseId == 0 {
 			s.syncPulseId = glib.TimeoutAdd(100, func() bool {
 				s.ProgressBar.Pulse()
@@ -103,6 +115,7 @@ func (s *Sidebar) ShowSyncing(syncing bool) {
 			glib.SourceRemove(s.syncPulseId)
 			s.syncPulseId = 0
 		}
+		s.ProgressBar.SetFraction(fraction)
 	}
 }
 
