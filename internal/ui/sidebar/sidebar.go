@@ -110,12 +110,14 @@ func (s *Sidebar) SetSyncProgress(fraction float64) {
 				return true
 			})
 		}
+		s.ProgressBar.SetText("Syncing messages...")
 	} else {
 		if s.syncPulseId != 0 {
 			glib.SourceRemove(s.syncPulseId)
 			s.syncPulseId = 0
 		}
 		s.ProgressBar.SetFraction(fraction)
+		s.ProgressBar.SetText(fmt.Sprintf("Syncing... %d%%", int(fraction*100)))
 	}
 }
 

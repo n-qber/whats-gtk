@@ -224,7 +224,10 @@ func (eh *EventHandler) handleOfflineSyncCompleted() {
 func (eh *EventHandler) handleOfflineSyncPreview(v *backend.OfflineSyncPreviewEvent) {
 	eh.isSyncing = true
 	eh.isOfflineSyncing = true
-	eh.offlineSyncTotal = v.Info.Messages
+	eh.offlineSyncTotal = v.Info.Messages + v.Info.Receipts
+	if eh.offlineSyncTotal == 0 {
+		eh.offlineSyncTotal = v.Info.Total
+	}
 	eh.offlineSyncReceived = 0
 	glib.IdleAdd(func() { 
 		eh.App.Sidebar.ShowSyncing(true)
