@@ -122,6 +122,7 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 // handleMessage handles incoming messages: detects reactions, processes pins,
 // persists the message, and runs pipeline hooks.
 func (eh *EventHandler) handleMessage(v *backend.MessageEvent) {
+	eh.incrementOfflineSync()
 	msg := v.Info
 	if react := msg.Message.GetReactionMessage(); react != nil {
 		eh.Messages.HandleReaction(msg.Info.Chat, msg.Info.Sender, react.GetText(), react.GetKey().GetID(), msg.Info.Timestamp)
@@ -164,15 +165,6 @@ func (eh *EventHandler) handleMessage(v *backend.MessageEvent) {
 	
 	// Process message through hooks (Rendering, auto-download, etc.)
 	eh.Pipeline.Process(msg)
-
-	if eh.isOfflineSyncing {
-		eh.offlineSyncReceived++
-		if eh.offlineSyncTotal > 0 {
-			fraction := float64(eh.offlineSyncReceived) / float64(eh.offlineSyncTotal)
-			if fraction > 1.0 { fraction = 1.0 }
-			glib.IdleAdd(func() { eh.App.Sidebar.SetSyncProgress(fraction) })
-		}
-	}
 }
 
 // handleConnected hides the QR dialog, syncs contacts, and refreshes the sidebar.
@@ -235,8 +227,20 @@ func (eh *EventHandler) handleOfflineSyncPreview(v *backend.OfflineSyncPreviewEv
 	})
 }
 
+func (eh *EventHandler) incrementOfflineSync() {
+	if eh.isOfflineSyncing {
+		eh.offlineSyncReceived++
+		if eh.offlineSyncTotal > 0 {
+			fraction := float64(eh.offlineSyncReceived) / float64(eh.offlineSyncTotal)
+			if fraction > 1.0 { fraction = 1.0 }
+			glib.IdleAdd(func() { eh.App.Sidebar.SetSyncProgress(fraction) })
+		}
+	}
+}
+
 // handleReceipt maps receipt types to status strings and updates DB and UI.
 func (eh *EventHandler) handleReceipt(v *backend.ReceiptEvent) {
+	eh.incrementOfflineSync()
 	chatJID := eh.Messages.ResolveJID(v.Info.Chat).String(); status := "sent"
 	if v.Info.Type == types.ReceiptTypeDelivered { status = "delivered" }
 	if v.Info.Type == types.ReceiptTypeRead || v.Info.Type == types.ReceiptTypeReadSelf { status = "read" }
