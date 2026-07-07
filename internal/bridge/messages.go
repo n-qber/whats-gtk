@@ -100,8 +100,8 @@ func (ms *MessageService) ExtractContentFromProto(protoMsg *waProto.Message) str
 	if protoMsg.GetDocumentMessage() != nil {
 		return fmt.Sprintf("[Document: %s]", protoMsg.GetDocumentMessage().GetFileName())
 	}
-	if protoMsg.GetPollCreationMessage() != nil {
-		return fmt.Sprintf("[Poll: %s]", protoMsg.GetPollCreationMessage().GetName())
+	if pm := ms.GetPollCreationMessage(protoMsg); pm != nil {
+		return fmt.Sprintf("[Poll: %s]", pm.GetName())
 	}
 	if protoMsg.GetContactMessage() != nil {
 		return fmt.Sprintf("[Contact: %s]", protoMsg.GetContactMessage().GetDisplayName())
@@ -111,6 +111,29 @@ func (ms *MessageService) ExtractContentFromProto(protoMsg *waProto.Message) str
 	}
 
 	return ""
+}
+
+// GetPollCreationMessage extracts a PollCreationMessage regardless of its version.
+func (ms *MessageService) GetPollCreationMessage(msg *waProto.Message) *waProto.PollCreationMessage {
+	if msg == nil {
+		return nil
+	}
+	if pm := msg.GetPollCreationMessage(); pm != nil {
+		return pm
+	}
+	if pm := msg.GetPollCreationMessageV2(); pm != nil {
+		return pm
+	}
+	if pm := msg.GetPollCreationMessageV3(); pm != nil {
+		return pm
+	}
+	if pm := msg.GetPollCreationMessageV5(); pm != nil {
+		return pm
+	}
+	if pm := msg.GetPollCreationMessageV6(); pm != nil {
+		return pm
+	}
+	return nil
 }
 
 // ExtractContent extracts the text content from various WhatsApp message types.
@@ -208,6 +231,11 @@ func (ms *MessageService) PersistMessage(msg *events.Message) {
 		metadata.MediaEncSHA256 = aud.GetFileEncSHA256()
 		metadata.MediaSHA256 = aud.GetFileSHA256()
 		metadata.MediaLength = sql.NullInt64{Int64: int64(aud.GetFileLength()), Valid: true}
+	} else if poll := ms.GetPollCreationMessage(protoMsg); poll != nil {
+		msgType = "poll"
+		for _, opt := range poll.GetOptions() {
+			ms.DB.SavePollOption(msg.Info.ID, opt.GetOptionName())
+		}
 	}
 
 	// Check if file already exists on disk

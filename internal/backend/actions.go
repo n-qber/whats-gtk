@@ -178,3 +178,22 @@ func (b *Backend) SendDocument(ctx context.Context, to types.JID, data []byte, m
 		},
 	})
 }
+
+func (b *Backend) SendPollVote(ctx context.Context, chat types.JID, msgID string, sender types.JID, isFromMe bool, optionNames []string) error {
+	info := &types.MessageInfo{
+		ID: msgID,
+		MessageSource: types.MessageSource{
+			Chat:     chat,
+			Sender:   sender,
+			IsFromMe: isFromMe,
+		},
+	}
+	
+	voteMsg, err := b.Client.BuildPollVote(ctx, info, optionNames)
+	if err != nil {
+		return err
+	}
+	
+	_, err = b.Client.SendMessage(ctx, chat, voteMsg)
+	return err
+}

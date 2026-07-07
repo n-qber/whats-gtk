@@ -52,6 +52,7 @@ type ChatView struct {
 	OnCancelSearch        func()
 	IsSearching           bool
 	OnMentionClick        func(jid string)
+	OnSendPollVote        func(msgID string, selectedOptions []string)
 }
 
 func NewChatView() (*ChatView, error) {
@@ -452,11 +453,27 @@ func (cv *ChatView) AddDocument(id, jid, name, fileName string, thumb *gdk.Textu
 	}
 }
 
-func (cv *ChatView) AddPoll(id, jid, name, question string, options []string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string) {
-	bubble, err := bubbles.NewPollBubble(name, question, options, isSelf, status, tStr, av)
+func (cv *ChatView) AddPoll(id, jid, name, question string, options []string, votes map[string][]string, myJID string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string) {
+	bubble, err := bubbles.NewPollBubble(id, name, question, options, isSelf, status, tStr, av)
 	if err == nil {
+		if votes != nil {
+			bubble.UpdateVotes(votes, myJID)
+		}
+		bubble.SetOnVote(func(selected []string) {
+			if cv.OnSendPollVote != nil {
+				cv.OnSendPollVote(id, selected)
+			}
+		})
 		bubble.SetQuotedMessage(qID, qSender, qContent)
 		cv.registerBubble(id, jid, bubble, isCont)
+	}
+}
+
+func (cv *ChatView) UpdatePollVotes(msgID string, votes map[string][]string, myJID string) {
+	if bubble, ok := cv.MessageRows[msgID]; ok {
+		if pb, isPoll := bubble.(*bubbles.PollBubble); isPoll {
+			pb.UpdateVotes(votes, myJID)
+		}
 	}
 }
 

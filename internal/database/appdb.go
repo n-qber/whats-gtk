@@ -60,6 +60,20 @@ func (a *AppDB) createTables() error {
 			PRIMARY KEY (msg_id, sender_jid)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_reactions_msg ON reactions(msg_id)`,
+		`CREATE TABLE IF NOT EXISTS poll_options (
+			msg_id TEXT,
+			option_hash TEXT,
+			option_name TEXT,
+			PRIMARY KEY (msg_id, option_hash)
+		)`,
+		`CREATE TABLE IF NOT EXISTS poll_votes (
+			msg_id TEXT,
+			option_hash TEXT,
+			sender_jid TEXT,
+			PRIMARY KEY (msg_id, option_hash, sender_jid)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_poll_options_msg ON poll_options(msg_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_poll_votes_msg ON poll_votes(msg_id)`,
 	}
 
 	for _, q := range queries {

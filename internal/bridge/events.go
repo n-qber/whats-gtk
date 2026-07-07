@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"whats-gtk/internal/backend"
@@ -120,6 +121,30 @@ func (eh *EventHandler) handleMessage(v *backend.MessageEvent) {
 	}
 	if protoMsg := msg.Message.GetProtocolMessage(); protoMsg != nil && protoMsg.GetType() == waProto.ProtocolMessage_MESSAGE_EDIT {
 		eh.Messages.HandleEdit(protoMsg, msg.Info.Chat)
+		return
+	}
+
+	if pollUpdate := msg.Message.GetPollUpdateMessage(); pollUpdate != nil {
+		pollVote, err := eh.Backend.Client.DecryptPollVote(eh.ctx, msg)
+		if err == nil {
+			var selectedHashes []string
+			for _, hash := range pollVote.GetSelectedOptions() {
+				selectedHashes = append(selectedHashes, hex.EncodeToString(hash))
+			}
+			msgKey := pollUpdate.GetPollCreationMessageKey()
+			if msgKey != nil && msgKey.GetID() != "" {
+				eh.DB.UpdatePollVote(msgKey.GetID(), msg.Info.Sender.ToNonAD().String(), selectedHashes)
+				
+				votes, _ := eh.DB.GetPollVotes(msgKey.GetID())
+				myJID := eh.Backend.Client.Store.ID.ToNonAD().String()
+				glib.IdleAdd(func() {
+					cv := eh.App.GetChatViewForJID(msg.Info.Chat.ToNonAD().String())
+					if cv != nil {
+						cv.UpdatePollVotes(msgKey.GetID(), votes, myJID)
+					}
+				})
+			}
+		}
 		return
 	}
 

@@ -198,6 +198,19 @@ func (r *Renderer) RefreshMessages(jid types.JID) {
 							cv.UpdateMessageAudio(m.ID, m.Content)
 						}
 					}
+				} else if m.Type == "poll" {
+					question := "Poll"
+					if strings.HasPrefix(m.Content, "[Poll: ") {
+						question = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Poll: "), "]")
+					}
+					optsMap, _ := r.DB.GetPollOptions(m.ID)
+					var opts []string
+					for _, name := range optsMap {
+						opts = append(opts, name)
+					}
+					votes, _ := r.DB.GetPollVotes(m.ID)
+					myJID := r.Backend.Client.Store.ID.ToNonAD().String()
+					cv.AddPoll(m.ID, m.SenderJID, sName, question, opts, votes, myJID, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
 				} else if m.Type == "document" {
 					fileName := "file"
 					if m.Content != "" {
@@ -346,6 +359,19 @@ func (r *Renderer) LoadOlderMessages(jidStr string, cv *chat.ChatView) {
 							cv.UpdateMessageAudio(m.ID, m.Content)
 						}
 					}
+				} else if m.Type == "poll" {
+					question := "Poll"
+					if strings.HasPrefix(m.Content, "[Poll: ") {
+						question = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Poll: "), "]")
+					}
+					optsMap, _ := r.DB.GetPollOptions(m.ID)
+					var opts []string
+					for _, name := range optsMap {
+						opts = append(opts, name)
+					}
+					votes, _ := r.DB.GetPollVotes(m.ID)
+					myJID := r.Backend.Client.Store.ID.ToNonAD().String()
+					cv.AddPoll(m.ID, m.SenderJID, sName, question, opts, votes, myJID, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
 				} else if m.Type == "document" {
 					fileName := "file"
 					if m.Content != "" {
@@ -494,6 +520,19 @@ func (r *Renderer) RenderMessageSearch(jidStr string, query string) {
 							cv.UpdateMessageAudio(m.ID, m.Content)
 						}
 					}
+				} else if m.Type == "poll" {
+					question := "Poll"
+					if strings.HasPrefix(m.Content, "[Poll: ") {
+						question = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Poll: "), "]")
+					}
+					optsMap, _ := r.DB.GetPollOptions(m.ID)
+					var opts []string
+					for _, name := range optsMap {
+						opts = append(opts, name)
+					}
+					votes, _ := r.DB.GetPollVotes(m.ID)
+					myJID := r.Backend.Client.Store.ID.ToNonAD().String()
+					cv.AddPoll(m.ID, m.SenderJID, sName, question, opts, votes, myJID, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
 				} else if m.Type == "document" {
 					fileName := "file"
 					if m.Content != "" {
@@ -625,12 +664,12 @@ func (r *Renderer) RenderLiveMessage(msg *events.Message, isSyncing bool) {
 				} else if doc := protoMsg.GetDocumentMessage(); doc != nil {
 					texThumb := bytesToTexture(doc.GetJPEGThumbnail())
 					cv.AddDocument(msg.Info.ID, sJID, sName, doc.GetFileName(), texThumb, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
-				} else if poll := protoMsg.GetPollCreationMessage(); poll != nil {
+				} else if poll := r.Messages.GetPollCreationMessage(protoMsg); poll != nil {
 					var opts []string
 					for _, o := range poll.GetOptions() {
 						opts = append(opts, o.GetOptionName())
 					}
-					cv.AddPoll(msg.Info.ID, sJID, sName, poll.GetName(), opts, msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
+					cv.AddPoll(msg.Info.ID, sJID, sName, poll.GetName(), opts, nil, "", msg.Info.IsFromMe, isCont, "", tStr, av, qID, qSenderName, qContent)
 				} else {
 					content := r.Messages.ExtractContent(msg)
 					if content != "" {

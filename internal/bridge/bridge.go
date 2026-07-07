@@ -283,6 +283,11 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 			}
 		})
 	}
+	cv.OnSendPollVote = func(msgID string, selectedOptions []string) {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Backend.SendPollVote(context.Background(), *jid, msgID, *br.Backend.Client.Store.ID, true, selectedOptions)
+		}
+	}
 	cv.OnPinMessage = func(id string, pin bool, duration uint32) {
 		if jid := br.Chat.SelectedJID(); jid != nil {
 			br.Chat.HandlePinMessage(*jid, id, pin, duration)
