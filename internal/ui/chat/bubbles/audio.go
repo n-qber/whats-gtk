@@ -110,3 +110,7 @@ func (ab *AudioBubble) SetProgress(progress float64) {
 	ab.slider.SetValue(progress)
 	ab.updatingFromCode = false
 }
+
+func (b *AudioBubble) MediaPath() string {
+	return b.audioPath
+}

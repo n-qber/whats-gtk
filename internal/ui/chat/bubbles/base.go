@@ -28,6 +28,7 @@ type Bubble interface {
 	SetOnMentionClick(f func(jid string))
 	SetContentText(text string)
 	SetEdited(edited bool)
+	MediaPath() string
 	SetViewOnce(viewOnce bool)
 }
 
@@ -70,6 +71,10 @@ func (b *baseBubble) SetContentText(text string) {
 	if l, ok := b.contentWidget.(*gtk.Label); ok {
 		l.SetText(text)
 	}
+}
+
+func (b *baseBubble) MediaPath() string {
+	return ""
 }
 
 func (b *baseBubble) SetEdited(edited bool) {

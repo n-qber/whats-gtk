@@ -13,6 +13,7 @@ type StickerBubble struct {
 	OnDownloadRequest func()
 	animIter          *gdkpixbuf.PixbufAnimationIter
 	hasTickCallback   bool
+	filePath          string
 }
 
 func NewStickerBubble(name string, anim *gdkpixbuf.PixbufAnimation, pixbuf, thumb *gdk.Texture, isSelf bool, status, time string, avatar *gdk.Texture, realW, realH int) (*StickerBubble, error) {
@@ -129,6 +130,9 @@ func NewStickerBubble(name string, anim *gdkpixbuf.PixbufAnimation, pixbuf, thum
 }
 
 func (sb *StickerBubble) UpdateImage(tex *gdk.Texture, path string) {
+	if path != "" {
+		sb.filePath = path
+	}
 	sb.UpdateStickerImage(nil, tex, path)
 }
 
@@ -189,4 +193,8 @@ func (sb *StickerBubble) UpdateStickerImage(anim *gdkpixbuf.PixbufAnimation, tex
 			widget.SetSizeRequest(int(w), int(h))
 		}
 	}
+}
+
+func (sb *StickerBubble) MediaPath() string {
+	return sb.filePath
 }

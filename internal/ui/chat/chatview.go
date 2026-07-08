@@ -3,6 +3,8 @@ package chat
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -574,6 +576,42 @@ func (cv *ChatView) showContextMenu(id string, b bubbles.Bubble) {
 		popover.Popdown()
 	})
 	box.Append(unpinBtn)
+
+	if mPath := b.MediaPath(); mPath != "" {
+		box.Append(gtk.NewSeparator(gtk.OrientationHorizontal))
+
+		openBtn := gtk.NewButtonWithLabel("Open")
+		openBtn.SetHasFrame(false)
+		openBtn.ConnectClicked(func() {
+			exec.Command("xdg-open", mPath).Start()
+			popover.Popdown()
+		})
+		box.Append(openBtn)
+
+		folderBtn := gtk.NewButtonWithLabel("Show in Folder")
+		folderBtn.SetHasFrame(false)
+		folderBtn.ConnectClicked(func() {
+			uri := "file://" + mPath
+			cmd := exec.Command("dbus-send", "--session", "--dest=org.freedesktop.FileManager1",
+				"--type=method_call", "/org/freedesktop/FileManager1",
+				"org.freedesktop.FileManager1.ShowItems",
+				"array:string:"+uri, "string:")
+			if err := cmd.Run(); err != nil {
+				// Fallback to xdg-open on directory
+				exec.Command("xdg-open", filepath.Dir(mPath)).Start()
+			}
+			popover.Popdown()
+		})
+		box.Append(folderBtn)
+
+		copyPathBtn := gtk.NewButtonWithLabel("Copy Path")
+		copyPathBtn.SetHasFrame(false)
+		copyPathBtn.ConnectClicked(func() {
+			gdk.DisplayGetDefault().Clipboard().SetText(mPath)
+			popover.Popdown()
+		})
+		box.Append(copyPathBtn)
+	}
 
 	popover.SetChild(box)
 	popover.SetParent(b.Widget().(gtk.Widgetter))

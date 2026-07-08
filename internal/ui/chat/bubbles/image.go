@@ -154,3 +154,7 @@ func (ib *ImageBubble) UpdateImage(tex *gdk.Texture, path string) {
 func (ib *ImageBubble) SetFilePath(path string) {
 	ib.filePath = path
 }
+
+func (ib *ImageBubble) MediaPath() string {
+	return ib.filePath
+}

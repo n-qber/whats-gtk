@@ -100,3 +100,6 @@ func (db *DocumentBubble) UpdateDocument(path string) {
 	}
 }
 
+func (db *DocumentBubble) MediaPath() string {
+	return db.filePath
+}
