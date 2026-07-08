@@ -263,7 +263,12 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 	}
 	cv.OnLoadOlder = func() {
 		if jid := br.Chat.SelectedJID(); jid != nil && !cv.IsSearching {
-			br.Render.LoadOlderMessages(jid.ToNonAD().String(), cv)
+			br.Render.LoadOlderMessages(jid.ToNonAD().String(), cv, "")
+		}
+	}
+	cv.OnLoadMessageRequest = func(id string) {
+		if jid := br.Chat.SelectedJID(); jid != nil && !cv.IsSearching {
+			br.Render.LoadOlderMessages(jid.ToNonAD().String(), cv, id)
 		}
 	}
 	cv.OnSearchMessages = func(query string) {

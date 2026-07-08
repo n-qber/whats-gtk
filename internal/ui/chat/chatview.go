@@ -46,6 +46,7 @@ type ChatView struct {
 	PinnedMessageBar      *gtk.Box
 	PinnedMessageLabel    *gtk.Label
 	OnLoadOlder           func()
+	OnLoadMessageRequest  func(id string)
 	IsLoadingOlder        bool
 	InsertIndex           int
 	SearchBar             *gtk.SearchBar
@@ -513,18 +514,13 @@ func (cv *ChatView) ScrollToMessage(id string) {
 	if row, ok := cv.MessageListRows[id]; ok {
 		glib.IdleAdd(func() {
 			adj := cv.MessageScrolledWindow.VAdjustment()
-			// In GTK4 we can use row.TranslateCoordinates to get position
-			// or just use SelectRow and let the adjustment handle it if possible.
-			// Better way:
 			cv.MessageList.SelectRow(row)
-			
-			// Force scroll to row
 			row.GrabFocus()
-			
-			// Get root coordinates of the row relative to the listbox
 			_, y, _ := row.TranslateCoordinates(cv.MessageList, 0, 0)
 			adj.SetValue(y)
 		})
+	} else if cv.OnLoadMessageRequest != nil {
+		cv.OnLoadMessageRequest(id)
 	}
 }
 func (cv *ChatView) showContextMenu(id string, b bubbles.Bubble) {
@@ -578,6 +574,10 @@ func (cv *ChatView) showContextMenu(id string, b bubbles.Bubble) {
 	box.Append(unpinBtn)
 
 	if mPath := b.MediaPath(); mPath != "" {
+		if absPath, err := filepath.Abs(mPath); err == nil {
+			mPath = absPath
+		}
+		
 		box.Append(gtk.NewSeparator(gtk.OrientationHorizontal))
 
 		openBtn := gtk.NewButtonWithLabel("Open")

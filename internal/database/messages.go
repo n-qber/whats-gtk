@@ -131,6 +131,48 @@ func (a *AppDB) GetMessages(jids []string, limit int) ([]Message, error) {
 	return msgs, nil
 }
 
+func (a *AppDB) GetMessagesBetween(jids []string, start, end time.Time, limit int) ([]Message, error) {
+	if len(jids) == 0 { return nil, nil }
+	placeholders := make([]string, len(jids))
+	args := make([]interface{}, len(jids))
+	for i, j := range jids {
+		placeholders[i] = "?"
+		args[i] = j
+	}
+	args = append(args, start)
+	args = append(args, end)
+	args = append(args, limit)
+
+	query := fmt.Sprintf(`SELECT msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
+				media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
+				media_width, media_height,
+				quoted_msg_id, quoted_msg_content, quoted_msg_sender, is_pinned, is_edited, is_view_once
+	          FROM (SELECT * FROM messages WHERE chat_jid IN (%s) AND timestamp >= ? AND timestamp < ? ORDER BY timestamp DESC LIMIT ?)
+	          ORDER BY timestamp ASC`, strings.Join(placeholders, ","))
+	
+	rows, err := a.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []Message
+	for rows.Next() {
+		var m Message
+		err := rows.Scan(
+			&m.ID, &m.ChatJID, &m.SenderJID, &m.Content, &m.Caption, &m.Type, &m.Timestamp, &m.Status, &m.IsFromMe, &m.Thumbnail,
+			&m.MediaURL, &m.MediaDirectPath, &m.MediaKey, &m.MediaMimetype, &m.MediaEncSHA256, &m.MediaSHA256, &m.MediaLength,
+			&m.MediaWidth, &m.MediaHeight,
+			&m.QuotedMsgID, &m.QuotedMsgContent, &m.QuotedMsgSender, &m.IsPinned, &m.IsEdited, &m.IsViewOnce,
+		)
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, nil
+}
+
 func (a *AppDB) GetOlderMessages(jids []string, before time.Time, limit int) ([]Message, error) {
 	if len(jids) == 0 { return nil, nil }
 	placeholders := make([]string, len(jids))

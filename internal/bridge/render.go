@@ -259,7 +259,7 @@ func (r *Renderer) RefreshMessages(jid types.JID) {
 }
 
 // LoadOlderMessages fetches older messages for a chat when scrolled to the top.
-func (r *Renderer) LoadOlderMessages(jidStr string, cv *chat.ChatView) {
+func (r *Renderer) LoadOlderMessages(jidStr string, cv *chat.ChatView, targetID string) {
 	go func() {
 		before, ok := r.OldestMessageTimes[jidStr]
 		if !ok {
@@ -274,7 +274,19 @@ func (r *Renderer) LoadOlderMessages(jidStr string, cv *chat.ChatView) {
 			}
 		}
 
-		msgs, err := r.DB.GetOlderMessages(jids, before, 50)
+		var msgs []database.Message
+		var err error
+		if targetID == "" {
+			msgs, err = r.DB.GetOlderMessages(jids, before, 50)
+		} else {
+			targetMsg, e := r.DB.GetMessage(targetID)
+			if e != nil || !targetMsg.Timestamp.Before(before) {
+				glib.IdleAdd(func() { cv.IsLoadingOlder = false })
+				return
+			}
+			msgs, err = r.DB.GetMessagesBetween(jids, targetMsg.Timestamp, before, 300)
+		}
+
 		if err != nil || len(msgs) == 0 {
 			glib.IdleAdd(func() { cv.IsLoadingOlder = false })
 			return
@@ -418,6 +430,9 @@ func (r *Renderer) LoadOlderMessages(jidStr string, cv *chat.ChatView) {
 				newMax := adj.Upper()
 				if newMax > oldMax {
 					adj.SetValue(newMax - oldMax)
+				}
+				if targetID != "" {
+					cv.ScrollToMessage(targetID)
 				}
 				cv.IsLoadingOlder = false
 				return false

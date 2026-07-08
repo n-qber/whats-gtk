@@ -516,7 +516,12 @@ func (c *ChatController) HandleDetach() {
 		}
 		cv.OnLoadOlder = func() {
 			if !cv.IsSearching {
-				c.Renderer.LoadOlderMessages(targetJID.ToNonAD().String(), cv)
+				c.Renderer.LoadOlderMessages(targetJID.ToNonAD().String(), cv, "")
+			}
+		}
+		cv.OnLoadMessageRequest = func(id string) {
+			if !cv.IsSearching {
+				c.Renderer.LoadOlderMessages(targetJID.ToNonAD().String(), cv, id)
 			}
 		}
 		cv.OnSearchMessages = func(query string) {
