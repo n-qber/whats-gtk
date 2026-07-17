@@ -56,7 +56,8 @@ type ChatView struct {
 	IsSearching           bool
 	OnMentionClick        func(jid string)
 	OnSendPollVote        func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
-	
+	OnHeaderClick         func()
+
 	ctx       context.Context
 	cancelCtx context.CancelFunc
 }
@@ -210,6 +211,22 @@ func NewChatView() (*ChatView, error) {
 			cv.OnDetach()
 		}
 	})
+
+	headerTitleGesture := gtk.NewGestureClick()
+	headerTitleGesture.ConnectReleased(func(nPress int, x, y float64) {
+		if cv.OnHeaderClick != nil {
+			cv.OnHeaderClick()
+		}
+	})
+	headerLabel.AddController(headerTitleGesture)
+
+	headerAvatarGesture := gtk.NewGestureClick()
+	headerAvatarGesture.ConnectReleased(func(nPress int, x, y float64) {
+		if cv.OnHeaderClick != nil {
+			cv.OnHeaderClick()
+		}
+	})
+	headerAvatar.AddController(headerAvatarGesture)
 
 	closeReplyBtn.ConnectClicked(func() {
 		cv.CancelReply()

@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"whats-gtk/internal/ui/chat"
+	"whats-gtk/internal/ui/info"
 	"whats-gtk/internal/ui/sidebar"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -14,6 +15,8 @@ type App struct {
 	Window             *adw.ApplicationWindow
 	Sidebar            *sidebar.Sidebar
 	ChatView           *chat.ChatView
+	InfoView           *info.InfoView
+	InfoFlap           *adw.Flap
 	QRDialog           *gtk.Window
 	QRImage            *gtk.Image
 	ZoomLevel          float64
@@ -43,14 +46,28 @@ func NewApp(app *adw.Application) (*App, error) {
 		return nil, err
 	}
 
+	iv := info.NewInfoView()
+
+	infoFlap := adw.NewFlap()
+	infoFlap.SetContent(cv.Box)
+	infoFlap.SetFlap(iv.Box)
+	infoFlap.SetFlapPosition(gtk.PackEnd)
+	infoFlap.SetRevealFlap(false)
+
+	cv.OnHeaderClick = func() {
+		infoFlap.SetRevealFlap(!infoFlap.RevealFlap())
+	}
+
 	splitView.SetSidebar(s.Box)
-	splitView.SetContent(cv.Box)
+	splitView.SetContent(infoFlap)
 	window.SetContent(splitView)
 
 	a := &App{
 		Window:          window,
 		Sidebar:         s,
 		ChatView:        cv,
+		InfoView:        iv,
+		InfoFlap:        infoFlap,
 		ZoomLevel:       1.0,
 		ZoomCSSProvider: gtk.NewCSSProvider(),
 		DetachedChats:   make(map[string]*chat.ChatView),

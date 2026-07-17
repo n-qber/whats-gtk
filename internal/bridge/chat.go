@@ -15,6 +15,7 @@ import (
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/ui"
+	"whats-gtk/internal/ui/info"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
@@ -45,7 +46,8 @@ type ChatController struct {
 	lastDateStr   string
 	sidebarMutex  sync.Mutex
 	searchSerial  int
-	lastGroupSync map[string]time.Time
+	lastGroupSync   map[string]time.Time
+	cachedGroupInfo map[string]*types.GroupInfo
 }
 
 // NewChatController creates a new ChatController.
@@ -58,7 +60,8 @@ func NewChatController(b *backend.Backend, app *ui.App, db *database.AppDB, msgs
 		Contacts:      contacts,
 		Media:         media,
 		ctx:           ctx,
-		lastGroupSync: make(map[string]time.Time),
+		lastGroupSync:   make(map[string]time.Time),
+		cachedGroupInfo: make(map[string]*types.GroupInfo),
 	}
 }
 
@@ -101,9 +104,12 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 		headerName := contact.DisplayName()
 		if jid.Server == types.GroupServer { headerName = "[G] " + headerName }
 		cc.App.ChatView.SetHeader(headerName, cc.Contacts.GetAvatar(jid.String()))
+		cc.App.InfoView.SetInfo(headerName, jid.String(), cc.Contacts.GetAvatar(jid.String()))
 	} else {
 		cc.App.ChatView.SetHeader(jid.String(), cc.Contacts.GetAvatar(jid.String()))
+		cc.App.InfoView.SetInfo(jid.String(), jid.String(), cc.Contacts.GetAvatar(jid.String()))
 	}
+	cc.App.InfoFlap.SetRevealFlap(false)
 
 	cc.Renderer.RefreshMessages(jid)
 	
@@ -434,6 +440,12 @@ func (cc *ChatController) SyncGroupIfNeeded(jid types.JID) {
 	if cc.Backend == nil || cc.Backend.Client == nil { return }
 
 	lastSync, exists := cc.lastGroupSync[jid.String()]
+	
+	// If we have cached info, update UI immediately
+	if cached, ok := cc.cachedGroupInfo[jid.String()]; ok {
+		cc.updateGroupInfoUI(cached)
+	}
+
 	if !exists || time.Since(lastSync) > 30*time.Minute {
 		go func(groupJID types.JID) {
 			info, err := cc.Backend.GetGroupInfo(cc.ctx, groupJID)
@@ -442,6 +454,8 @@ func (cc *ChatController) SyncGroupIfNeeded(jid types.JID) {
 				return 
 			}
 			cc.lastGroupSync[groupJID.String()] = time.Now()
+			cc.cachedGroupInfo[groupJID.String()] = info
+			
 			for _, p := range info.Participants {
 				pn := p.PhoneNumber.ToNonAD().String(); lid := p.LID.ToNonAD().String()
 				if pn != "" && lid != "" {
@@ -450,12 +464,44 @@ func (cc *ChatController) SyncGroupIfNeeded(jid types.JID) {
 					cc.DB.SaveContact(database.Contact{JID: p.JID.ToNonAD().String()})
 				}
 			}
+			
+			cc.updateGroupInfoUI(info)
+			
 			if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == groupJID.ToNonAD().String() {
 				glib.IdleAdd(func() { cc.Renderer.RefreshMessages(groupJID) })
 			}
 		}(jid)
 	}
 }
+
+func (cc *ChatController) updateGroupInfoUI(grpInfo *types.GroupInfo) {
+	if grpInfo == nil { return }
+	
+	var participants []info.ParticipantModel
+	for _, p := range grpInfo.Participants {
+		name := p.JID.User
+		contact, err := cc.DB.GetContact(p.JID.String())
+		if err == nil && contact.DisplayName() != "" {
+			name = contact.DisplayName()
+		} else if p.DisplayName != "" {
+			name = p.DisplayName
+		}
+		
+		participants = append(participants, info.ParticipantModel{
+			Name:    name,
+			JID:     p.JID.String(),
+			IsAdmin: p.IsAdmin || p.IsSuperAdmin,
+			Avatar:  cc.Contacts.GetAvatar(p.JID.String()),
+		})
+	}
+	
+	glib.IdleAdd(func() {
+		if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == grpInfo.JID.ToNonAD().String() {
+			cc.App.InfoView.SetGroupDetails(grpInfo.Topic, participants)
+		}
+	})
+}
+
 
 // promoteTempMessage replaces a temporary message ID with the real one in the UI.
 // This deduplicates the optimistic UI pattern used by HandleSendMessage,
