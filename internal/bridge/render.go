@@ -67,6 +67,115 @@ func formatMessageDate(t time.Time) string {
 	}
 }
 
+func (r *Renderer) RenderMessageUI(cv *chat.ChatView, m database.Message, sName, tStr string, av *gdk.Texture, isCont bool, updatePinnedBar bool) {
+	qID := m.QuotedMsgID.String
+	qSender := m.QuotedMsgSender.String
+	qContent := r.formatMentions(m.QuotedMsgContent.String)
+	qSenderName := qSender
+	if qSender != "" {
+		qSenderName = r.Contacts.ResolveSenderName(qSender)
+	}
+
+	if m.Type == "image" || m.Type == "sticker" || m.Type == "video" {
+		var texImg, texThumb *gdk.Texture
+		var anim *gdkpixbuf.PixbufAnimation
+		texThumb = bytesToTexture(m.Thumbnail)
+		
+		if _, err := os.Stat(m.Content); err == nil {
+			if m.Type == "sticker" {
+				anim, _ = gdkpixbuf.NewPixbufAnimationFromFile(m.Content)
+				if anim != nil && anim.IsStaticImage() {
+					texImg = gdk.NewTextureForPixbuf(anim.StaticImage())
+					anim = nil
+				}
+			} else {
+				pixbuf, _ := gdkpixbuf.NewPixbufFromFile(m.Content)
+				if pixbuf != nil {
+					texImg = gdk.NewTextureForPixbuf(pixbuf)
+				}
+			}
+		} else if m.Type == "sticker" {
+			go r.Chat.HandleDownloadMedia(m.ID)
+		}
+		
+		mW := int(m.MediaWidth.Int64); mH := int(m.MediaHeight.Int64)
+		caption := r.formatMentions(m.Caption.String)
+		
+		imgPath := ""
+		if _, err := os.Stat(m.Content); err == nil {
+			imgPath = m.Content
+		}
+
+		if m.Type == "image" {
+			cv.AddImage(m.ID, m.SenderJID, sName, caption, texImg, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
+		} else if m.Type == "sticker" {
+			cv.AddSticker(m.ID, m.SenderJID, sName, anim, texImg, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
+		} else if m.Type == "video" {
+			cv.AddVideo(m.ID, m.SenderJID, sName, caption, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
+		}
+	} else if m.Type == "audio" {
+		cv.AddAudio(m.ID, m.SenderJID, sName, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+		if m.Content != "" {
+			if _, err := os.Stat(m.Content); err == nil {
+				cv.UpdateMessageAudio(m.ID, m.Content)
+			}
+		}
+	} else if m.Type == "poll" {
+		question := "Poll"
+		if strings.HasPrefix(m.Content, "[Poll: ") {
+			question = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Poll: "), "]")
+		}
+		optsMap, _ := r.DB.GetPollOptions(m.ID)
+		var opts []string
+		for _, name := range optsMap {
+			opts = append(opts, name)
+		}
+		votes, _ := r.DB.GetPollVotes(m.ID)
+		myJID := r.Backend.Client.Store.ID.ToNonAD().String()
+		cv.AddPoll(m.ID, m.SenderJID, sName, question, opts, votes, myJID, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+	} else if m.Type == "document" {
+		fileName := "file"
+		if m.Content != "" {
+			if strings.HasPrefix(m.Content, "[Document: ") {
+				fileName = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Document: "), "]")
+			} else if strings.Contains(m.Content, "media/") {
+				base := filepath.Base(m.Content)
+				if idx := strings.Index(base, "_"); idx != -1 {
+					fileName = base[idx+1:]
+				}
+			}
+		}
+		texThumb := bytesToTexture(m.Thumbnail)
+		cv.AddDocument(m.ID, m.SenderJID, sName, fileName, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+		if m.Content != "" && !strings.HasPrefix(m.Content, "[Document: ") {
+			if _, err := os.Stat(m.Content); err == nil {
+				cv.UpdateMessageDocument(m.ID, m.Content)
+			}
+		}
+	} else {
+		if m.Content != "" {
+			cv.AddMessage(m.ID, m.SenderJID, sName, r.formatMentions(m.Content), m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
+		}
+	}
+	
+	reacts, _ := r.DB.GetReactions(m.ID)
+	if len(reacts) > 0 {
+		cv.UpdateMessageReactions(m.ID, uniqueReactions(reacts))
+	}
+
+	if m.IsPinned {
+		cv.UpdateMessagePinned(m.ID, true)
+		if updatePinnedBar {
+			cv.SetPinnedMessage(m.Content)
+		}
+	}
+	if m.IsViewOnce {
+		if b, exists := cv.MessageRows[m.ID]; exists {
+			b.SetViewOnce(true)
+		}
+	}
+}
+
 var mentionRegex = regexp.MustCompile(`(?:\s|^)@(\d{8,15})`)
 
 // formatMentions escapes text for Pango markup and converts @phonenumber to a styled clickable link.
@@ -147,111 +256,7 @@ func (r *Renderer) RefreshMessages(jid types.JID) {
 					}
 				}
 				r.Chat.SetLastSender(m.SenderJID)
-				qID := m.QuotedMsgID.String; qSender := m.QuotedMsgSender.String; qContent := r.formatMentions(m.QuotedMsgContent.String)
-				qSenderName := qSender
-				if qSender != "" {
-					qSenderName = r.Contacts.ResolveSenderName(qSender)
-				}
-
-				if m.Type == "image" || m.Type == "sticker" || m.Type == "video" {
-					var texImg, texThumb *gdk.Texture
-					var anim *gdkpixbuf.PixbufAnimation
-					texThumb = bytesToTexture(m.Thumbnail)
-					
-					if _, err := os.Stat(m.Content); err == nil {
-						if m.Type == "sticker" {
-							anim, _ = gdkpixbuf.NewPixbufAnimationFromFile(m.Content)
-							if anim != nil && anim.IsStaticImage() {
-								texImg = gdk.NewTextureForPixbuf(anim.StaticImage())
-								anim = nil
-							}
-						} else {
-							pixbuf, _ := gdkpixbuf.NewPixbufFromFile(m.Content)
-							if pixbuf != nil {
-								texImg = gdk.NewTextureForPixbuf(pixbuf)
-							}
-						}
-					} else if m.Type == "sticker" {
-						// Auto-download missing stickers
-						go r.Chat.HandleDownloadMedia(m.ID)
-					}
-					
-					mW := int(m.MediaWidth.Int64); mH := int(m.MediaHeight.Int64)
-					caption := r.formatMentions(m.Caption.String)
-					
-					imgPath := ""
-					if _, err := os.Stat(m.Content); err == nil {
-						imgPath = m.Content
-					}
-
-					if m.Type == "image" {
-						cv.AddImage(m.ID, m.SenderJID, sName, caption, texImg, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
-					} else if m.Type == "sticker" {
-						cv.AddSticker(m.ID, m.SenderJID, sName, anim, texImg, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
-					} else if m.Type == "video" {
-						cv.AddVideo(m.ID, m.SenderJID, sName, caption, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
-					}
-				} else if m.Type == "audio" {
-					cv.AddAudio(m.ID, m.SenderJID, sName, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
-					if m.Content != "" {
-						if _, err := os.Stat(m.Content); err == nil {
-							cv.UpdateMessageAudio(m.ID, m.Content)
-						}
-					}
-				} else if m.Type == "poll" {
-					question := "Poll"
-					if strings.HasPrefix(m.Content, "[Poll: ") {
-						question = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Poll: "), "]")
-					}
-					optsMap, _ := r.DB.GetPollOptions(m.ID)
-					var opts []string
-					for _, name := range optsMap {
-						opts = append(opts, name)
-					}
-					votes, _ := r.DB.GetPollVotes(m.ID)
-					myJID := r.Backend.Client.Store.ID.ToNonAD().String()
-					cv.AddPoll(m.ID, m.SenderJID, sName, question, opts, votes, myJID, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
-				} else if m.Type == "document" {
-					fileName := "file"
-					if m.Content != "" {
-						if strings.HasPrefix(m.Content, "[Document: ") {
-							fileName = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Document: "), "]")
-						} else if strings.Contains(m.Content, "media/") {
-							// Extract original name from saved path: media/ID_FileName.ext
-							base := filepath.Base(m.Content)
-							if idx := strings.Index(base, "_"); idx != -1 {
-								fileName = base[idx+1:]
-							}
-						}
-					}
-					texThumb := bytesToTexture(m.Thumbnail)
-					cv.AddDocument(m.ID, m.SenderJID, sName, fileName, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
-					if m.Content != "" && !strings.HasPrefix(m.Content, "[Document: ") {
-						if _, err := os.Stat(m.Content); err == nil {
-							cv.UpdateMessageDocument(m.ID, m.Content)
-						}
-					}
-				} else {
-					if m.Content != "" {
-						cv.AddMessage(m.ID, m.SenderJID, sName, r.formatMentions(m.Content), m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
-					}
-				}
-				
-				// Set reactions
-				reacts, _ := r.DB.GetReactions(m.ID)
-				if len(reacts) > 0 {
-					cv.UpdateMessageReactions(m.ID, uniqueReactions(reacts))
-				}
-
-				if m.IsPinned {
-					cv.UpdateMessagePinned(m.ID, true)
-					cv.SetPinnedMessage(m.Content)
-				}
-				if m.IsViewOnce {
-					if b, exists := cv.MessageRows[m.ID]; exists {
-						b.SetViewOnce(true)
-					}
-				}
+				r.RenderMessageUI(cv, m, sName, tStr, av, isCont, true)
 			}
 			cv.ScrollToBottom()
 		})
@@ -323,104 +328,7 @@ func (r *Renderer) LoadOlderMessages(jidStr string, cv *chat.ChatView, targetID 
 					av = r.Contacts.GetAvatar(m.SenderJID)
 				}
 				
-				qID := m.QuotedMsgID.String; qSender := m.QuotedMsgSender.String; qContent := r.formatMentions(m.QuotedMsgContent.String)
-				qSenderName := qSender
-				if qSender != "" {
-					qSenderName = r.Contacts.ResolveSenderName(qSender)
-				}
-
-				if m.Type == "image" || m.Type == "sticker" || m.Type == "video" {
-					var texImg, texThumb *gdk.Texture
-					var anim *gdkpixbuf.PixbufAnimation
-					texThumb = bytesToTexture(m.Thumbnail)
-					
-					if _, err := os.Stat(m.Content); err == nil {
-						if m.Type == "sticker" {
-							anim, _ = gdkpixbuf.NewPixbufAnimationFromFile(m.Content)
-							if anim != nil && anim.IsStaticImage() {
-								texImg = gdk.NewTextureForPixbuf(anim.StaticImage())
-								anim = nil
-							}
-						} else {
-							pixbuf, _ := gdkpixbuf.NewPixbufFromFile(m.Content)
-							if pixbuf != nil {
-								texImg = gdk.NewTextureForPixbuf(pixbuf)
-							}
-						}
-					}
-					
-					mW := int(m.MediaWidth.Int64); mH := int(m.MediaHeight.Int64)
-					caption := r.formatMentions(m.Caption.String)
-					
-					imgPath := ""
-					if _, err := os.Stat(m.Content); err == nil {
-						imgPath = m.Content
-					}
-
-					if m.Type == "image" {
-						cv.AddImage(m.ID, m.SenderJID, sName, caption, texImg, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
-					} else if m.Type == "sticker" {
-						cv.AddSticker(m.ID, m.SenderJID, sName, anim, texImg, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
-					} else if m.Type == "video" {
-						cv.AddVideo(m.ID, m.SenderJID, sName, caption, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
-					}
-				} else if m.Type == "audio" {
-					cv.AddAudio(m.ID, m.SenderJID, sName, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
-					if m.Content != "" {
-						if _, err := os.Stat(m.Content); err == nil {
-							cv.UpdateMessageAudio(m.ID, m.Content)
-						}
-					}
-				} else if m.Type == "poll" {
-					question := "Poll"
-					if strings.HasPrefix(m.Content, "[Poll: ") {
-						question = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Poll: "), "]")
-					}
-					optsMap, _ := r.DB.GetPollOptions(m.ID)
-					var opts []string
-					for _, name := range optsMap {
-						opts = append(opts, name)
-					}
-					votes, _ := r.DB.GetPollVotes(m.ID)
-					myJID := r.Backend.Client.Store.ID.ToNonAD().String()
-					cv.AddPoll(m.ID, m.SenderJID, sName, question, opts, votes, myJID, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
-				} else if m.Type == "document" {
-					fileName := "file"
-					if m.Content != "" {
-						if strings.HasPrefix(m.Content, "[Document: ") {
-							fileName = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Document: "), "]")
-						} else if strings.Contains(m.Content, "media/") {
-							base := filepath.Base(m.Content)
-							if idx := strings.Index(base, "_"); idx != -1 {
-								fileName = base[idx+1:]
-							}
-						}
-					}
-					texThumb := bytesToTexture(m.Thumbnail)
-					cv.AddDocument(m.ID, m.SenderJID, sName, fileName, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
-					if m.Content != "" && !strings.HasPrefix(m.Content, "[Document: ") {
-						if _, err := os.Stat(m.Content); err == nil {
-							cv.UpdateMessageDocument(m.ID, m.Content)
-						}
-					}
-				} else {
-					if m.Content != "" {
-						cv.AddMessage(m.ID, m.SenderJID, sName, r.formatMentions(m.Content), m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
-					}
-				}
-				
-				reacts, _ := r.DB.GetReactions(m.ID)
-				if len(reacts) > 0 {
-					cv.UpdateMessageReactions(m.ID, uniqueReactions(reacts))
-				}
-				if m.IsPinned {
-					cv.UpdateMessagePinned(m.ID, true)
-				}
-				if m.IsViewOnce {
-					if b, exists := cv.MessageRows[m.ID]; exists {
-						b.SetViewOnce(true)
-					}
-				}
+				r.RenderMessageUI(cv, m, sName, tStr, av, isCont, false)
 			}
 			
 			cv.InsertIndex = -1 // Reset
@@ -487,91 +395,7 @@ func (r *Renderer) RenderMessageSearch(jidStr string, query string) {
 					}
 				}
 				r.Chat.SetLastSender(m.SenderJID)
-				qID := m.QuotedMsgID.String; qSender := m.QuotedMsgSender.String; qContent := r.formatMentions(m.QuotedMsgContent.String)
-				qSenderName := qSender
-				if qSender != "" {
-					qSenderName = r.Contacts.ResolveSenderName(qSender)
-				}
-
-				if m.Type == "image" || m.Type == "sticker" || m.Type == "video" {
-					var texImg, texThumb *gdk.Texture
-					var anim *gdkpixbuf.PixbufAnimation
-					texThumb = bytesToTexture(m.Thumbnail)
-					
-					if _, err := os.Stat(m.Content); err == nil {
-						if m.Type == "sticker" {
-							anim, _ = gdkpixbuf.NewPixbufAnimationFromFile(m.Content)
-							if anim != nil && anim.IsStaticImage() {
-								texImg = gdk.NewTextureForPixbuf(anim.StaticImage())
-								anim = nil
-							}
-						} else {
-							pixbuf, _ := gdkpixbuf.NewPixbufFromFile(m.Content)
-							if pixbuf != nil {
-								texImg = gdk.NewTextureForPixbuf(pixbuf)
-							}
-						}
-					}
-					
-					mW := int(m.MediaWidth.Int64); mH := int(m.MediaHeight.Int64)
-					caption := r.formatMentions(m.Caption.String)
-					
-					imgPath := ""
-					if _, err := os.Stat(m.Content); err == nil {
-						imgPath = m.Content
-					}
-
-					if m.Type == "image" {
-						cv.AddImage(m.ID, m.SenderJID, sName, caption, texImg, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
-					} else if m.Type == "sticker" {
-						cv.AddSticker(m.ID, m.SenderJID, sName, anim, texImg, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
-					} else if m.Type == "video" {
-						cv.AddVideo(m.ID, m.SenderJID, sName, caption, texThumb, imgPath, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent, mW, mH)
-					}
-				} else if m.Type == "audio" {
-					cv.AddAudio(m.ID, m.SenderJID, sName, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
-					if m.Content != "" {
-						if _, err := os.Stat(m.Content); err == nil {
-							cv.UpdateMessageAudio(m.ID, m.Content)
-						}
-					}
-				} else if m.Type == "poll" {
-					question := "Poll"
-					if strings.HasPrefix(m.Content, "[Poll: ") {
-						question = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Poll: "), "]")
-					}
-					optsMap, _ := r.DB.GetPollOptions(m.ID)
-					var opts []string
-					for _, name := range optsMap {
-						opts = append(opts, name)
-					}
-					votes, _ := r.DB.GetPollVotes(m.ID)
-					myJID := r.Backend.Client.Store.ID.ToNonAD().String()
-					cv.AddPoll(m.ID, m.SenderJID, sName, question, opts, votes, myJID, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
-				} else if m.Type == "document" {
-					fileName := "file"
-					if m.Content != "" {
-						if strings.HasPrefix(m.Content, "[Document: ") {
-							fileName = strings.TrimSuffix(strings.TrimPrefix(m.Content, "[Document: "), "]")
-						} else if strings.Contains(m.Content, "media/") {
-							base := filepath.Base(m.Content)
-							if idx := strings.Index(base, "_"); idx != -1 {
-								fileName = base[idx+1:]
-							}
-						}
-					}
-					texThumb := bytesToTexture(m.Thumbnail)
-					cv.AddDocument(m.ID, m.SenderJID, sName, fileName, texThumb, m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, qContent)
-					if m.Content != "" && !strings.HasPrefix(m.Content, "[Document: ") {
-						if _, err := os.Stat(m.Content); err == nil {
-							cv.UpdateMessageDocument(m.ID, m.Content)
-						}
-					}
-				} else {
-					if m.Content != "" {
-						cv.AddMessage(m.ID, m.SenderJID, sName, r.formatMentions(m.Content), m.IsFromMe, isCont, m.Status, tStr, av, qID, qSenderName, r.formatMentions(qContent))
-					}
-				}
+				r.RenderMessageUI(cv, m, sName, tStr, av, isCont, false)
 			}
 			cv.ScrollToBottom()
 		})

@@ -56,11 +56,20 @@ type ChatView struct {
 	IsSearching           bool
 	OnMentionClick        func(jid string)
 	OnSendPollVote        func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
+	
+	ctx       context.Context
+	cancelCtx context.CancelFunc
 }
 
 func NewChatView() (*ChatView, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	box := gtk.NewBox(gtk.OrientationVertical, 0)
 	box.SetName("chat-view-box")
+	
+	box.ConnectDestroy(func() {
+		cancel()
+	})
 
 	header := adw.NewHeaderBar()
 	
@@ -163,6 +172,8 @@ func NewChatView() (*ChatView, error) {
 		InsertIndex:           -1,
 		SearchBar:             searchBar,
 		SearchEntry:           searchEntry,
+		ctx:                   ctx,
+		cancelCtx:             cancel,
 	}
 
 	searchBar.Connect("notify::search-mode-enabled", func() {
@@ -222,15 +233,19 @@ func NewChatView() (*ChatView, error) {
 			return true
 		}
 		if keyval == gdk.KEY_v && (state&gdk.ControlMask != 0) {
-			clipboard := gdk.DisplayGetDefault().Clipboard()
-			if clipboard.Formats().ContainGType(gdk.GTypeTexture) {
-				clipboard.ReadTextureAsync(context.TODO(), func(res gio.AsyncResulter) {
-					tex, err := clipboard.ReadTextureFinish(res)
-					if err == nil && cv.OnPasteImage != nil {
-						cv.OnPasteImage(gdk.BaseTexture(tex))
+			if root := cv.Box.Root(); root != nil {
+				if window, ok := root.Cast().(*gtk.Window); ok {
+					clipboard := window.Clipboard()
+					if clipboard.Formats().ContainGType(gdk.GTypeTexture) {
+						clipboard.ReadTextureAsync(cv.ctx, func(res gio.AsyncResulter) {
+							tex, err := clipboard.ReadTextureFinish(res)
+							if err == nil && cv.OnPasteImage != nil {
+								cv.OnPasteImage(gdk.BaseTexture(tex))
+							}
+						})
+						return true
 					}
-				})
-				return true
+				}
 			}
 		}
 		return false
@@ -247,7 +262,7 @@ func NewChatView() (*ChatView, error) {
 			}
 		}
 
-		dialog.Open(context.TODO(), window, func(res gio.AsyncResulter) {
+		dialog.Open(cv.ctx, window, func(res gio.AsyncResulter) {
 			file, err := dialog.OpenFinish(res)
 			if err == nil {
 				if cv.OnSendFile != nil {

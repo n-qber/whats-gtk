@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync"
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/core"
 	"whats-gtk/internal/database"
@@ -35,6 +36,7 @@ type EventHandler struct {
 	Pipeline *core.MessagePipeline
 	ctx      context.Context
 
+	syncMutex           sync.RWMutex
 	isSyncing           bool
 	isOfflineSyncing    bool
 	offlineSyncTotal    int
@@ -58,7 +60,11 @@ func NewEventHandler(b *backend.Backend, app *ui.App, db *database.AppDB, msgs *
 }
 
 // IsSyncing returns whether a history sync is currently in progress.
-func (eh *EventHandler) IsSyncing() bool { return eh.isSyncing }
+func (eh *EventHandler) IsSyncing() bool {
+	eh.syncMutex.RLock()
+	defer eh.syncMutex.RUnlock()
+	return eh.isSyncing
+}
 
 // HandleEvent is the main event dispatcher. It type-switches on AppEvent
 // and routes to the appropriate handler.
@@ -92,7 +98,10 @@ func (eh *EventHandler) HandleEvent(evt backend.AppEvent) {
 // handleHistorySync processes history sync events: parses web messages,
 // persists them, handles reactions, and refreshes the sidebar.
 func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
+	eh.syncMutex.Lock()
 	eh.isSyncing = true
+	eh.syncMutex.Unlock()
+	
 	progress := v.Data.Data.GetProgress()
 	fraction := float64(progress) / 100.0
 	glib.IdleAdd(func() { 
@@ -113,7 +122,10 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 				}
 			}
 		}
+		eh.syncMutex.Lock()
 		eh.isSyncing = false
+		eh.syncMutex.Unlock()
+		
 		glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(false) })
 		c, _ := eh.DB.GetAllContacts(100); eh.Renderer.RefreshSidebar(c)
 	}()
@@ -205,8 +217,11 @@ func (eh *EventHandler) handleQR(v *backend.QREvent) {
 
 // handleOfflineSyncCompleted clears the syncing flag and refreshes the sidebar.
 func (eh *EventHandler) handleOfflineSyncCompleted() {
+	eh.syncMutex.Lock()
 	eh.isSyncing = false
 	eh.isOfflineSyncing = false
+	eh.syncMutex.Unlock()
+	
 	glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(false) })
 	go func() {
 		c, _ := eh.DB.GetAllContacts(100)
@@ -216,6 +231,7 @@ func (eh *EventHandler) handleOfflineSyncCompleted() {
 
 // handleOfflineSyncPreview sets the syncing flag and shows the syncing bar.
 func (eh *EventHandler) handleOfflineSyncPreview(v *backend.OfflineSyncPreviewEvent) {
+	eh.syncMutex.Lock()
 	eh.isSyncing = true
 	eh.isOfflineSyncing = true
 	eh.offlineSyncTotal = v.Info.Messages + v.Info.Receipts
@@ -223,6 +239,8 @@ func (eh *EventHandler) handleOfflineSyncPreview(v *backend.OfflineSyncPreviewEv
 		eh.offlineSyncTotal = v.Info.Total
 	}
 	eh.offlineSyncReceived = 0
+	eh.syncMutex.Unlock()
+
 	glib.IdleAdd(func() { 
 		eh.App.Sidebar.ShowSyncing(true)
 		eh.App.Sidebar.SetSyncProgress(0.0)
@@ -230,6 +248,9 @@ func (eh *EventHandler) handleOfflineSyncPreview(v *backend.OfflineSyncPreviewEv
 }
 
 func (eh *EventHandler) incrementOfflineSync() {
+	eh.syncMutex.Lock()
+	defer eh.syncMutex.Unlock()
+	
 	if eh.isOfflineSyncing {
 		eh.offlineSyncReceived++
 		if eh.offlineSyncTotal > 0 {
