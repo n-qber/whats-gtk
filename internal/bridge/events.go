@@ -142,12 +142,14 @@ func (eh *EventHandler) handleMessage(v *backend.MessageEvent) {
 			}
 			msgKey := pollUpdate.GetPollCreationMessageKey()
 			if msgKey != nil && msgKey.GetID() != "" {
-				eh.DB.UpdatePollVote(msgKey.GetID(), msg.Info.Sender.ToNonAD().String(), selectedHashes)
+				voterJID := eh.Messages.ResolveJID(msg.Info.Sender).ToNonAD().String()
+				eh.DB.UpdatePollVote(msgKey.GetID(), voterJID, selectedHashes)
 				
 				votes, _ := eh.DB.GetPollVotes(msgKey.GetID())
+				chatJIDStr := eh.Messages.ResolveJID(msg.Info.Chat).ToNonAD().String()
 				myJID := eh.Backend.Client.Store.ID.ToNonAD().String()
 				glib.IdleAdd(func() {
-					cv := eh.App.GetChatViewForJID(msg.Info.Chat.ToNonAD().String())
+					cv := eh.App.GetChatViewForJID(chatJIDStr)
 					if cv != nil {
 						cv.UpdatePollVotes(msgKey.GetID(), votes, myJID)
 					}

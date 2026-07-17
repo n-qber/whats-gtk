@@ -180,12 +180,19 @@ func (b *Backend) SendDocument(ctx context.Context, to types.JID, data []byte, m
 }
 
 func (b *Backend) SendPollVote(ctx context.Context, chat types.JID, msgID string, sender types.JID, isFromMe bool, optionNames []string) error {
+	// For LID groups, we must ensure the Participant in the MessageKey matches the real sender
+	// the poll was created with (LID or PN). We can get this from the message secrets store.
+	if _, realSender, err := b.Client.Store.MsgSecrets.GetMessageSecret(ctx, chat, sender, msgID); err == nil && !realSender.IsEmpty() {
+		sender = realSender
+	}
+
 	info := &types.MessageInfo{
 		ID: msgID,
 		MessageSource: types.MessageSource{
 			Chat:     chat,
 			Sender:   sender,
 			IsFromMe: isFromMe,
+			IsGroup:  chat.Server == types.GroupServer,
 		},
 	}
 	

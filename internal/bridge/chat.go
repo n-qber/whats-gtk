@@ -537,8 +537,9 @@ func (c *ChatController) HandleDetach() {
 				}
 			})
 		}
-		cv.OnSendPollVote = func(msgID string, selectedOptions []string) {
-			c.Backend.SendPollVote(context.Background(), targetJID, msgID, *c.Backend.Client.Store.ID, true, selectedOptions)
+		cv.OnSendPollVote = func(msgID string, senderJID string, isFromMe bool, selectedOptions []string) {
+			sender, _ := types.ParseJID(senderJID)
+			c.Backend.SendPollVote(context.Background(), targetJID, msgID, sender, isFromMe, selectedOptions)
 		}
 		cv.OnPinMessage = func(id string, pin bool, duration uint32) {
 			c.HandlePinMessage(targetJID, id, pin, duration)

@@ -55,7 +55,7 @@ type ChatView struct {
 	OnCancelSearch        func()
 	IsSearching           bool
 	OnMentionClick        func(jid string)
-	OnSendPollVote        func(msgID string, selectedOptions []string)
+	OnSendPollVote        func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
 }
 
 func NewChatView() (*ChatView, error) {
@@ -464,7 +464,7 @@ func (cv *ChatView) AddPoll(id, jid, name, question string, options []string, vo
 		}
 		bubble.SetOnVote(func(selected []string) {
 			if cv.OnSendPollVote != nil {
-				cv.OnSendPollVote(id, selected)
+				cv.OnSendPollVote(id, jid, isSelf, selected)
 			}
 		})
 		bubble.SetQuotedMessage(qID, qSender, qContent)

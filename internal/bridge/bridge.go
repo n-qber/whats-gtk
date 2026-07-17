@@ -13,6 +13,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
 
@@ -288,9 +289,10 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 			}
 		})
 	}
-	cv.OnSendPollVote = func(msgID string, selectedOptions []string) {
+	cv.OnSendPollVote = func(msgID string, senderJID string, isFromMe bool, selectedOptions []string) {
 		if jid := br.Chat.SelectedJID(); jid != nil {
-			br.Backend.SendPollVote(context.Background(), *jid, msgID, *br.Backend.Client.Store.ID, true, selectedOptions)
+			sender, _ := types.ParseJID(senderJID)
+			br.Backend.SendPollVote(context.Background(), *jid, msgID, sender, isFromMe, selectedOptions)
 		}
 	}
 	cv.OnPinMessage = func(id string, pin bool, duration uint32) {
