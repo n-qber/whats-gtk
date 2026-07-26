@@ -17,15 +17,23 @@ A native WhatsApp desktop client built with Go, GTK4, and libadwaita, powered by
 
 ## Building
 
-To build the project, run:
+For fast development builds (using disabled CGO optimizations and `mold` fast linking):
 
 ```bash
-go build -o whats-gtk ./cmd/whats-gtk
+make dev
+```
+
+For release builds (optimized and stripped binary):
+
+```bash
+make build
 ```
 
 ## Running
 
 ```bash
+make run
+# or run the binary directly:
 ./whats-gtk
 ```
 

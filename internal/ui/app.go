@@ -31,6 +31,7 @@ func NewApp(app *adw.Application) (*App, error) {
 	window := adw.NewApplicationWindow(&app.Application)
 	window.SetTitle("WhatsApp GTK")
 	window.SetDefaultSize(1000, 700)
+	window.SetHideOnClose(true)
 
 	loadCSS()
 

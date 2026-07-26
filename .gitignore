@@ -1,6 +1,6 @@
 # Binaries
-whats-gtk
-whats-gtk-old
+/whats-gtk
+/whats-gtk-old
 
 # Local databases (Sensitive session data)
 store.db*

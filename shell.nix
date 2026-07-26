@@ -5,6 +5,8 @@ pkgs.mkShell {
     go
     pkg-config
     gobject-introspection
+    sqlite
+    mold
   ];
 
   buildInputs = with pkgs; [
@@ -26,6 +28,9 @@ pkgs.mkShell {
 
   shellHook = ''
     export CGO_ENABLED=1
-    echo "Modern GNOME (Adwaita) Go environment ready."
+    export CGO_CFLAGS="-O1"
+    export CGO_CXXFLAGS="-O1"
+    export CGO_LDFLAGS="-fuse-ld=mold"
+    echo "Modern GNOME (Adwaita) Go environment ready with mold fast linker."
   '';
 }
