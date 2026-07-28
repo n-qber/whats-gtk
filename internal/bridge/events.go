@@ -264,18 +264,81 @@ func (eh *EventHandler) incrementOfflineSync() {
 // handleReceipt maps receipt types to status strings and updates DB and UI.
 func (eh *EventHandler) handleReceipt(v *backend.ReceiptEvent) {
 	eh.incrementOfflineSync()
-	chatJID := eh.Messages.ResolveJID(v.Info.Chat).String(); status := "sent"
-	if v.Info.Type == types.ReceiptTypeDelivered { status = "delivered" }
-	if v.Info.Type == types.ReceiptTypeRead || v.Info.Type == types.ReceiptTypeReadSelf { status = "read" }
+
+	chatJID := eh.Messages.ResolveJID(v.Info.Chat).ToNonAD()
+	chatJIDStr := chatJID.String()
+
+	var rType string
+	switch v.Info.Type {
+	case types.ReceiptTypeRead, types.ReceiptTypeReadSelf, types.ReceiptTypePlayed, types.ReceiptTypePlayedSelf:
+		rType = "read"
+	case types.ReceiptTypeDelivered, types.ReceiptTypeSender:
+		rType = "delivered"
+	default:
+		rType = "delivered"
+	}
+
+	senderJID := eh.Messages.ResolveJID(v.Info.Sender).ToNonAD().String()
+	if senderJID == "" {
+		senderJID = eh.Messages.ResolveJID(v.Info.MessageSender).ToNonAD().String()
+	}
+	if senderJID == "" {
+		senderJID = chatJIDStr
+	}
+
+	isGroup := chatJID.Server == types.GroupServer
+
+	var myJIDStr string
+	if eh.Backend != nil && eh.Backend.Client != nil && eh.Backend.Client.Store != nil && eh.Backend.Client.Store.ID != nil {
+		myJIDStr = eh.Backend.Client.Store.ID.ToNonAD().String()
+	}
+
 	for _, id := range v.Info.MessageIDs {
-		err := eh.DB.UpdateMessageStatus(id, chatJID, status)
+		if err := eh.DB.SaveReceipt(id, chatJIDStr, senderJID, rType, v.Info.Timestamp); err != nil {
+			fmt.Printf("Bridge: Error saving receipt for %s: %v\n", id, err)
+		}
+
+		var newStatus string
+		if isGroup {
+			totalParticipants := eh.Chat.GetGroupParticipantCount(chatJID)
+			
+			msgSenderJID := myJIDStr
+			if msg, err := eh.DB.GetMessage(id); err == nil && msg != nil && msg.SenderJID != "" {
+				msgSenderJID = msg.SenderJID
+			}
+
+			readCount, deliveredCount, err := eh.DB.GetGroupReceiptCounts(id, msgSenderJID)
+			if err != nil {
+				fmt.Printf("Bridge: Error getting group receipt counts for %s: %v\n", id, err)
+			}
+
+			reqReadCount := 0
+			if totalParticipants > 1 {
+				reqReadCount = totalParticipants - 1
+			}
+
+			if reqReadCount > 0 && readCount >= reqReadCount {
+				newStatus = "read"
+			} else if readCount > 0 || deliveredCount > 0 {
+				newStatus = "delivered"
+			} else {
+				newStatus = "sent"
+			}
+		} else {
+			newStatus = rType
+		}
+
+		err := eh.DB.UpdateMessageStatus(id, chatJIDStr, newStatus)
 		if err != nil {
 			fmt.Printf("Bridge: Error updating receipt status for %s: %v\n", id, err)
 		}
+
 		selectedJID := eh.Chat.SelectedJID()
-		if selectedJID != nil && selectedJID.ToNonAD().String() == chatJID {
+		if selectedJID != nil && selectedJID.ToNonAD().String() == chatJIDStr {
+			st := newStatus
+			msgID := id
 			glib.IdleAdd(func() {
-				eh.App.ChatView.UpdateMessageStatus(id, status)
+				eh.App.ChatView.UpdateMessageStatus(msgID, st)
 			})
 		}
 	}

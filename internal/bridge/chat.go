@@ -48,6 +48,7 @@ type ChatController struct {
 	searchSerial  int
 	lastGroupSync   map[string]time.Time
 	cachedGroupInfo map[string]*types.GroupInfo
+	groupMutex      sync.RWMutex
 }
 
 // NewChatController creates a new ChatController.
@@ -435,14 +436,44 @@ func (cc *ChatController) HandleOpenImage(path string) {
 	// We don't wait for the command to finish
 }
 
+// GetGroupParticipantCount returns the total number of participants in a group.
+func (cc *ChatController) GetGroupParticipantCount(jid types.JID) int {
+	cleanJID := jid.ToNonAD().String()
+
+	cc.groupMutex.RLock()
+	info, ok := cc.cachedGroupInfo[cleanJID]
+	cc.groupMutex.RUnlock()
+
+	if ok && info != nil {
+		return len(info.Participants)
+	}
+
+	if cc.Backend != nil && cc.Backend.Client != nil {
+		fetched, err := cc.Backend.GetGroupInfo(cc.ctx, jid)
+		if err == nil && fetched != nil {
+			cc.groupMutex.Lock()
+			cc.lastGroupSync[cleanJID] = time.Now()
+			cc.cachedGroupInfo[cleanJID] = fetched
+			cc.groupMutex.Unlock()
+			return len(fetched.Participants)
+		}
+	}
+	return 0
+}
+
 // SyncGroupIfNeeded fetches group info if it hasn't been synced recently (30 min throttle).
 func (cc *ChatController) SyncGroupIfNeeded(jid types.JID) {
 	if cc.Backend == nil || cc.Backend.Client == nil { return }
 
-	lastSync, exists := cc.lastGroupSync[jid.String()]
+	cleanJID := jid.ToNonAD().String()
+
+	cc.groupMutex.RLock()
+	lastSync, exists := cc.lastGroupSync[cleanJID]
+	cached, hasCached := cc.cachedGroupInfo[cleanJID]
+	cc.groupMutex.RUnlock()
 	
 	// If we have cached info, update UI immediately
-	if cached, ok := cc.cachedGroupInfo[jid.String()]; ok {
+	if hasCached && cached != nil {
 		cc.updateGroupInfoUI(cached)
 	}
 
@@ -453,8 +484,11 @@ func (cc *ChatController) SyncGroupIfNeeded(jid types.JID) {
 				fmt.Printf("Bridge: Failed to get group info for %s: %v\n", groupJID, err)
 				return 
 			}
-			cc.lastGroupSync[groupJID.String()] = time.Now()
-			cc.cachedGroupInfo[groupJID.String()] = info
+			
+			cc.groupMutex.Lock()
+			cc.lastGroupSync[groupJID.ToNonAD().String()] = time.Now()
+			cc.cachedGroupInfo[groupJID.ToNonAD().String()] = info
+			cc.groupMutex.Unlock()
 			
 			for _, p := range info.Participants {
 				pn := p.PhoneNumber.ToNonAD().String(); lid := p.LID.ToNonAD().String()

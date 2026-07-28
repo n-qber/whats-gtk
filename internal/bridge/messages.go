@@ -270,6 +270,9 @@ func (ms *MessageService) PersistMessage(msg *events.Message) {
 	metadata.ID = msg.Info.ID; metadata.ChatJID = chatJID; metadata.SenderJID = senderJID
 	metadata.Content = content; metadata.Type = msgType; metadata.Timestamp = msg.Info.Timestamp
 	metadata.IsFromMe = msg.Info.IsFromMe; metadata.Thumbnail = thumb
+	if metadata.IsFromMe && metadata.Status == "" {
+		metadata.Status = "sent"
+	}
 
 	// Extract Quoted Message Context
 	if ci := ms.ExtractContextInfo(msg); ci != nil && ci.GetStanzaID() != "" {
@@ -327,9 +330,13 @@ func (ms *MessageService) PersistMediaMessage(msg *events.Message, msgType, path
 		width = int64(stkr.GetWidth())
 		height = int64(stkr.GetHeight())
 	}
+	status := ""
+	if msg.Info.IsFromMe {
+		status = "sent"
+	}
 	ms.DB.SaveMessage(database.Message{
 		ID: msg.Info.ID, ChatJID: chatJID, SenderJID: senderJID, Content: path, Type: msgType, 
-		Timestamp: msg.Info.Timestamp, IsFromMe: msg.Info.IsFromMe, Thumbnail: thumb,
+		Timestamp: msg.Info.Timestamp, Status: status, IsFromMe: msg.Info.IsFromMe, Thumbnail: thumb,
 		MediaWidth: sql.NullInt64{Int64: width, Valid: width > 0},
 		MediaHeight: sql.NullInt64{Int64: height, Valid: height > 0},
 		IsViewOnce: isViewOnce,

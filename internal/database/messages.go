@@ -40,12 +40,44 @@ type Message struct {
 }
 
 func (a *AppDB) SaveMessage(m Message) error {
-	query := `INSERT OR REPLACE INTO messages (
+	query := `INSERT INTO messages (
 				msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
 				media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
 				media_width, media_height,
 				quoted_msg_id, quoted_msg_content, quoted_msg_sender, is_pinned, is_edited, is_view_once
-			  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			  ON CONFLICT(msg_id) DO UPDATE SET
+				chat_jid=excluded.chat_jid,
+				sender_jid=excluded.sender_jid,
+				content=CASE WHEN excluded.content != '' THEN excluded.content ELSE messages.content END,
+				caption=COALESCE(excluded.caption, messages.caption),
+				type=CASE WHEN excluded.type != '' THEN excluded.type ELSE messages.type END,
+				timestamp=excluded.timestamp,
+				status=CASE 
+					WHEN excluded.status != '' AND excluded.status IS NOT NULL THEN 
+						CASE WHEN (
+							CASE excluded.status WHEN 'read' THEN 4 WHEN 'delivered' THEN 3 WHEN 'sent' THEN 2 WHEN 'pending' THEN 1 ELSE 0 END >=
+							CASE messages.status WHEN 'read' THEN 4 WHEN 'delivered' THEN 3 WHEN 'sent' THEN 2 WHEN 'pending' THEN 1 ELSE 0 END
+						) THEN excluded.status ELSE messages.status END
+					ELSE messages.status 
+				END,
+				is_from_me=excluded.is_from_me,
+				thumbnail=COALESCE(excluded.thumbnail, messages.thumbnail),
+				media_url=COALESCE(excluded.media_url, messages.media_url),
+				media_direct_path=COALESCE(excluded.media_direct_path, messages.media_direct_path),
+				media_key=COALESCE(excluded.media_key, messages.media_key),
+				media_mimetype=COALESCE(excluded.media_mimetype, messages.media_mimetype),
+				media_enc_sha256=COALESCE(excluded.media_enc_sha256, messages.media_enc_sha256),
+				media_sha256=COALESCE(excluded.media_sha256, messages.media_sha256),
+				media_length=COALESCE(excluded.media_length, messages.media_length),
+				media_width=COALESCE(excluded.media_width, messages.media_width),
+				media_height=COALESCE(excluded.media_height, messages.media_height),
+				quoted_msg_id=COALESCE(excluded.quoted_msg_id, messages.quoted_msg_id),
+				quoted_msg_content=COALESCE(excluded.quoted_msg_content, messages.quoted_msg_content),
+				quoted_msg_sender=COALESCE(excluded.quoted_msg_sender, messages.quoted_msg_sender),
+				is_pinned=COALESCE(excluded.is_pinned, messages.is_pinned),
+				is_edited=COALESCE(excluded.is_edited, messages.is_edited),
+				is_view_once=COALESCE(excluded.is_view_once, messages.is_view_once)`
 	_, err := a.db.Exec(query, 
 		m.ID, m.ChatJID, m.SenderJID, m.Content, m.Caption, m.Type, m.Timestamp, m.Status, m.IsFromMe, m.Thumbnail,
 		m.MediaURL, m.MediaDirectPath, m.MediaKey, m.MediaMimetype, m.MediaEncSHA256, m.MediaSHA256, m.MediaLength,
@@ -56,9 +88,41 @@ func (a *AppDB) SaveMessage(m Message) error {
 }
 
 func (a *AppDB) UpdateMessageStatus(msgID string, chatJID string, status string) error {
-	query := `UPDATE messages SET status = ? WHERE msg_id = ? AND chat_jid = ?`
-	_, err := a.db.Exec(query, status, msgID, chatJID)
+	query := `UPDATE messages SET status = ? 
+	          WHERE msg_id = ? AND (chat_jid = ? OR chat_jid IS NULL OR chat_jid = '')
+	          AND (
+	              status IS NULL OR status = '' OR
+	              CASE status WHEN 'read' THEN 4 WHEN 'delivered' THEN 3 WHEN 'sent' THEN 2 WHEN 'pending' THEN 1 ELSE 0 END <=
+	              CASE ? WHEN 'read' THEN 4 WHEN 'delivered' THEN 3 WHEN 'sent' THEN 2 WHEN 'pending' THEN 1 ELSE 0 END
+	          )`
+	_, err := a.db.Exec(query, status, msgID, chatJID, status)
 	return err
+}
+
+func (a *AppDB) SaveReceipt(msgID, chatJID, userJID, receiptType string, timestamp time.Time) error {
+	query := `INSERT INTO message_receipts (msg_id, chat_jid, user_jid, receipt_type, timestamp)
+	          VALUES (?, ?, ?, ?, ?)
+	          ON CONFLICT(msg_id, user_jid, receipt_type) DO UPDATE SET timestamp = excluded.timestamp`
+	_, err := a.db.Exec(query, msgID, chatJID, userJID, receiptType, timestamp)
+	return err
+}
+
+func (a *AppDB) GetGroupReceiptCounts(msgID string, msgSenderJID string) (readCount int, deliveredCount int, err error) {
+	readQuery := `SELECT COUNT(DISTINCT user_jid) FROM message_receipts 
+	              WHERE msg_id = ? AND receipt_type = 'read' AND user_jid != ?`
+	err = a.db.QueryRow(readQuery, msgID, msgSenderJID).Scan(&readCount)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	delivQuery := `SELECT COUNT(DISTINCT user_jid) FROM message_receipts 
+	               WHERE msg_id = ? AND receipt_type IN ('delivered', 'read') AND user_jid != ?`
+	err = a.db.QueryRow(delivQuery, msgID, msgSenderJID).Scan(&deliveredCount)
+	if err != nil {
+		return readCount, 0, err
+	}
+
+	return readCount, deliveredCount, nil
 }
 
 func (a *AppDB) UpdateMessageContent(msgID, chatJID, content string, isEdited bool) error {

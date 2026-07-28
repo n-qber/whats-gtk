@@ -74,6 +74,15 @@ func (a *AppDB) createTables() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_poll_options_msg ON poll_options(msg_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_poll_votes_msg ON poll_votes(msg_id)`,
+		`CREATE TABLE IF NOT EXISTS message_receipts (
+			msg_id TEXT,
+			chat_jid TEXT,
+			user_jid TEXT,
+			receipt_type TEXT,
+			timestamp DATETIME,
+			PRIMARY KEY (msg_id, user_jid, receipt_type)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_message_receipts_msg ON message_receipts(msg_id)`,
 	}
 
 	for _, q := range queries {
