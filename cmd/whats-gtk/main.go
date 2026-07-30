@@ -95,21 +95,25 @@ func setupTray(app *ui.App, application *adw.Application) {
 			}
 
 			systray.SetOnTapped(toggleFunc)
-			systray.SetOnSecondaryTapped(toggleFunc)
 
 			mToggle := systray.AddMenuItem("Show/Hide", "Toggle WhatsApp GTK Window")
 			mQuit := systray.AddMenuItem("Quit", "Quit WhatsApp GTK")
 
-			for {
-				select {
-				case <-mToggle.ClickedCh:
-					toggleFunc()
-				case <-mQuit.ClickedCh:
-					glib.IdleAdd(func() {
-						application.Quit()
-					})
+			go func() {
+				for {
+					select {
+					case <-mToggle.ClickedCh:
+						toggleFunc()
+					case <-mQuit.ClickedCh:
+						glib.IdleAdd(func() {
+							application.Release()
+							application.Quit()
+						})
+						systray.Quit()
+						os.Exit(0)
+					}
 				}
-			}
+			}()
 		}, func() {})
 	}()
 }

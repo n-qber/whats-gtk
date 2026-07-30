@@ -44,7 +44,13 @@ func (ap *AudioPlayer) Play(path string, onStop func(), onProgress func(c, t tim
 
 	var isTempWav bool
 
-	decode := func(p string) error {
+	decode := func(p string) (decodeErr error) {
+		defer func() {
+			if r := recover(); r != nil {
+				decodeErr = fmt.Errorf("panic during decode: %v", r)
+			}
+		}()
+
 		f, err := os.Open(p)
 		if err != nil {
 			return err
