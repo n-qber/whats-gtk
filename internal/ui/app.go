@@ -23,6 +23,7 @@ type App struct {
 	ZoomCSSProvider    *gtk.CSSProvider
 	OnKeyPressed       func(key string, mods gdk.ModifierType) bool
 	OnModifiersChanged func(mods gdk.ModifierType)
+	OnSearchRequested  func()
 	DetachedChats      map[string]*chat.ChatView
 	ActiveMainJID      string
 }
@@ -80,7 +81,14 @@ func NewApp(app *adw.Application) (*App, error) {
 	keyCtrl.ConnectKeyPressed(func(keyval uint, keycode uint, state gdk.ModifierType) bool {
 		keyName := gdk.KeyvalName(keyval)
 		
-		if state&gdk.ControlMask != 0 {
+		if state&gdk.ControlMask != 0 && state&gdk.ShiftMask != 0 {
+			if keyName == "f" || keyName == "F" {
+				if a.OnSearchRequested != nil {
+					a.OnSearchRequested()
+					return true
+				}
+			}
+		} else if state&gdk.ControlMask != 0 {
 			switch keyName {
 			case "plus", "equal", "KP_Add":
 				a.Zoom(0.1)

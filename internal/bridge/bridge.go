@@ -116,6 +116,39 @@ func (br *Bridge) setupUIHandlers() {
 	br.App.Window.Connect("notify::is-active", br.Chat.HandleWindowActive)
 
 	br.App.OnKeyPressed = br.handleKeyPressed
+	br.App.OnSearchRequested = func() {
+		var searchDialog *ui.SearchDialog
+		onSearch := func(query string) {
+			if query == "" {
+				glib.IdleAdd(func() { searchDialog.Populate(nil, nil) })
+				return
+			}
+
+			glib.IdleAdd(func() { searchDialog.SetLoading(true) })
+
+			go func() {
+				msgs, err := br.DB.SearchMessages(query, 50)
+				if err != nil {
+					fmt.Println("Error searching messages:", err)
+					glib.IdleAdd(func() { searchDialog.SetLoading(false) })
+					return
+				}
+				
+				glib.IdleAdd(func() {
+					if msgs == nil {
+						msgs = []database.Message{}
+					}
+					searchDialog.Populate(msgs, func(msg database.Message) {
+						br.Chat.HandleChatSelected(msg.ChatJID)
+					})
+				})
+			}()
+		}
+		glib.IdleAdd(func() {
+			searchDialog = ui.NewSearchDialog(&br.App.Window.Window, onSearch, nil)
+			searchDialog.Window.Present()
+		})
+	}
 	br.App.OnModifiersChanged = func(mods gdk.ModifierType) {
 		show := mods&gdk.ControlMask != 0
 		glib.IdleAdd(func() {
