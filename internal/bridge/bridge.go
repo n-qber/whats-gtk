@@ -177,9 +177,7 @@ func (br *Bridge) setupUIHandlers() {
 		})
 	}
 
-	// Ctrl+0 to return to initial screen
-	br.Input.Register("Control+0", func() {
-		fmt.Println("Bridge: Ctrl+0 triggered, returning to home screen")
+	closeChat := func() {
 		glib.IdleAdd(func() {
 			br.Chat.selectedJID = nil
 			br.App.ActiveMainJID = ""
@@ -191,6 +189,17 @@ func (br *Bridge) setupUIHandlers() {
 				br.App.ChatView.SetHeader("WhatsApp GTK", nil)
 			}
 		})
+	}
+
+	// Close chat when window is hidden/minimized to tray
+	br.App.Window.Connect("hide", func() {
+		closeChat()
+	})
+
+	// Ctrl+0 to return to initial screen
+	br.Input.Register("Control+0", func() {
+		fmt.Println("Bridge: Ctrl+0 triggered, returning to home screen")
+		closeChat()
 	})
 
 	searchToggle := func() {
