@@ -300,12 +300,17 @@ func (cv *ChatView) SetHeader(name string, tex *gdk.Texture) {
 		cv.ChatHeaderLabel.SetText(name)
 	}
 	if cv.ChatHeaderImage != nil {
-		cv.ChatHeaderImage.SetText(name)
-		if tex != nil {
-			cv.ChatHeaderImage.SetCustomImage(tex)
+		if name == "WhatsApp GTK" {
+			cv.ChatHeaderImage.SetVisible(false)
 		} else {
-			// Explicitly pass untyped nil to avoid interface-with-nil-pointer panic
-			cv.ChatHeaderImage.SetCustomImage(nil)
+			cv.ChatHeaderImage.SetVisible(true)
+			cv.ChatHeaderImage.SetText(name)
+			if tex != nil {
+				cv.ChatHeaderImage.SetCustomImage(tex)
+			} else {
+				// Explicitly pass untyped nil to avoid interface-with-nil-pointer panic
+				cv.ChatHeaderImage.SetCustomImage(nil)
+			}
 		}
 	}
 }

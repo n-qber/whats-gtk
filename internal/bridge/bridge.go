@@ -182,6 +182,7 @@ func (br *Bridge) setupUIHandlers() {
 		fmt.Println("Bridge: Ctrl+0 triggered, returning to home screen")
 		glib.IdleAdd(func() {
 			br.Chat.selectedJID = nil
+			br.App.ActiveMainJID = ""
 			if br.App.Sidebar != nil {
 				br.App.Sidebar.ClearSelection()
 			}
