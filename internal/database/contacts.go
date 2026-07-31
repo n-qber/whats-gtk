@@ -19,19 +19,26 @@ type Contact struct {
 	IsArchived    bool
 }
 
-func (a *AppDB) SaveSyncData(jid string, unreadCount int, isPinned bool, isArchived bool, name string, pushName string) error {
-	query := `INSERT INTO contacts (jid, unread_count, is_pinned, is_archived, saved_name, push_name) 
-	          VALUES (?, ?, ?, ?, ?, ?)
+func (a *AppDB) SaveSyncData(jid string, unreadCount int, isPinned bool, isArchived bool, name string, pushName string, timestamp uint64) error {
+	var ts interface{}
+	if timestamp > 0 {
+		ts = time.Unix(int64(timestamp), 0)
+	}
+	
+	query := `INSERT INTO contacts (jid, unread_count, is_pinned, is_archived, saved_name, push_name, last_message_at) 
+	          VALUES (?, ?, ?, ?, ?, ?, ?)
 	          ON CONFLICT(jid) DO UPDATE SET
 	          unread_count = excluded.unread_count,
 	          is_pinned = excluded.is_pinned,
 	          is_archived = excluded.is_archived,
 	          saved_name = CASE WHEN excluded.saved_name != '' THEN excluded.saved_name ELSE contacts.saved_name END,
-	          push_name = CASE WHEN excluded.push_name != '' THEN excluded.push_name ELSE contacts.push_name END`
-	
-	sName := sql.NullString{String: name, Valid: name != ""}
-	pName := sql.NullString{String: pushName, Valid: pushName != ""}
-	_, err := a.db.Exec(query, jid, unreadCount, isPinned, isArchived, sName, pName)
+	          push_name = CASE WHEN excluded.push_name != '' THEN excluded.push_name ELSE contacts.push_name END,
+	          last_message_at = CASE 
+	              WHEN contacts.last_message_at IS NULL OR excluded.last_message_at > contacts.last_message_at 
+	              THEN excluded.last_message_at 
+	              ELSE contacts.last_message_at 
+	          END`
+	_, err := a.db.Exec(query, jid, unreadCount, isPinned, isArchived, name, pushName, ts)
 	return err
 }
 

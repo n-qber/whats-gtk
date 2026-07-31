@@ -117,7 +117,8 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 			unreadCount := int(conv.GetUnreadCount())
 			isPinned := conv.GetPinned() > 0
 			isArchived := conv.GetArchived()
-			eh.DB.SaveSyncData(chatJID.String(), unreadCount, isPinned, isArchived, conv.GetName(), "")
+			timestamp := conv.GetConversationTimestamp()
+			eh.DB.SaveSyncData(chatJID.String(), unreadCount, isPinned, isArchived, conv.GetName(), "", timestamp)
 			
 			for _, hMsg := range conv.GetMessages() {
 				pMsg, err := eh.Backend.Client.ParseWebMessage(chatJID, hMsg.GetMessage())

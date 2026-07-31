@@ -303,8 +303,10 @@ func (ms *MessageService) PersistMessage(msg *events.Message) {
 		}
 		metadata.QuotedMsgContent = sql.NullString{String: quotedContent, Valid: quotedContent != ""}
 	}
-	
-	ms.DB.SaveMessage(metadata)
+	err := ms.DB.SaveMessage(metadata)
+	if err != nil {
+		fmt.Printf("Bridge: Error saving message %s: %v\n", metadata.ID, err)
+	}
 	ms.DB.UpdateContactTimestamp(chatJID, msg.Info.Timestamp)
 	
 	if !msg.Info.IsFromMe {
