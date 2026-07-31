@@ -43,7 +43,9 @@ func NewContactService(b *backend.Backend, db *database.AppDB, ctx context.Conte
 		pendingFetch: make(map[string]bool),
 		failedFetch:  make(map[string]time.Time),
 	}
-	go cs.avatarWorker()
+	for i := 0; i < 3; i++ {
+		go cs.avatarWorker()
+	}
 	return cs
 }
 
@@ -62,7 +64,7 @@ func (cs *ContactService) avatarWorker() {
 		cs.mutex.Unlock()
 		
 		jid, _ := types.ParseJID(jStr)
-		time.Sleep(1 * time.Second)
+		time.Sleep(250 * time.Millisecond)
 		
 		info, err := cs.Backend.Client.GetProfilePictureInfo(cs.ctx, jid, &whatsmeow.GetProfilePictureParams{Preview: true})
 		
