@@ -250,19 +250,15 @@ func NewChatView() (*ChatView, error) {
 			return true
 		}
 		if keyval == gdk.KEY_v && (state&gdk.ControlMask != 0) {
-			if root := cv.Box.Root(); root != nil {
-				if window, ok := root.Cast().(*gtk.Window); ok {
-					clipboard := window.Clipboard()
-					if clipboard.Formats().ContainGType(gdk.GTypeTexture) {
-						clipboard.ReadTextureAsync(cv.ctx, func(res gio.AsyncResulter) {
-							tex, err := clipboard.ReadTextureFinish(res)
-							if err == nil && cv.OnPasteImage != nil {
-								cv.OnPasteImage(gdk.BaseTexture(tex))
-							}
-						})
-						return true
+			clipboard := gdk.DisplayGetDefault().Clipboard()
+			if clipboard.Formats().ContainGType(gdk.GTypeTexture) {
+				clipboard.ReadTextureAsync(cv.ctx, func(res gio.AsyncResulter) {
+					tex, err := clipboard.ReadTextureFinish(res)
+					if err == nil && cv.OnPasteImage != nil {
+						cv.OnPasteImage(gdk.BaseTexture(tex))
 					}
-				}
+				})
+				return true
 			}
 		}
 		return false
