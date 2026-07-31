@@ -48,6 +48,7 @@ type ChatView struct {
 	OnLoadOlder           func()
 	OnLoadMessageRequest  func(id string)
 	IsLoadingOlder        bool
+	LoadingSpinner        *gtk.Spinner
 	InsertIndex           int
 	SearchBar             *gtk.SearchBar
 	SearchEntry           *gtk.SearchEntry
@@ -108,6 +109,13 @@ func NewChatView() (*ChatView, error) {
 	messageList := gtk.NewListBox()
 	messageList.SetName("message-list")
 	messageList.SetSelectionMode(gtk.SelectionNone)
+
+	loadingSpinner := gtk.NewSpinner()
+	loadingSpinner.SetMarginTop(10)
+	loadingSpinner.SetMarginBottom(10)
+	loadingSpinner.SetHAlign(gtk.AlignCenter)
+	loadingSpinner.Hide()
+	box.Append(loadingSpinner)
 
 	scrolledMsg := gtk.NewScrolledWindow()
 	scrolledMsg.SetVExpand(true)
@@ -170,9 +178,10 @@ func NewChatView() (*ChatView, error) {
 		ReplyPreviewLabel:     replyLabel,
 		PinnedMessageBar:      pinnedMessageBar,
 		PinnedMessageLabel:    pinnedLabel,
-		InsertIndex:           -1,
+		LoadingSpinner:        loadingSpinner,
 		SearchBar:             searchBar,
 		SearchEntry:           searchEntry,
+		InsertIndex:           -1,
 		ctx:                   ctx,
 		cancelCtx:             cancel,
 	}
@@ -201,7 +210,7 @@ func NewChatView() (*ChatView, error) {
 	scrolledMsg.VAdjustment().ConnectValueChanged(func() {
 		adj := scrolledMsg.VAdjustment()
 		if adj.Value() <= 50.0 && !cv.IsLoadingOlder && cv.OnLoadOlder != nil {
-			cv.IsLoadingOlder = true
+			cv.SetLoadingOlder(true)
 			cv.OnLoadOlder()
 		}
 	})
@@ -756,7 +765,19 @@ func (cv *ChatView) SetAvatar(jid string, tex *gdk.Texture) {
 	}
 }
 
+func (cv *ChatView) SetLoadingOlder(loading bool) {
+	cv.IsLoadingOlder = loading
+	if loading {
+		cv.LoadingSpinner.Start()
+		cv.LoadingSpinner.Show()
+	} else {
+		cv.LoadingSpinner.Stop()
+		cv.LoadingSpinner.Hide()
+	}
+}
+
 func (cv *ChatView) Clear() {
+	cv.SetLoadingOlder(false)
 	cv.MessageRows = make(map[string]bubbles.Bubble)
 	cv.BubblesByJID = make(map[string][]bubbles.Bubble)
 	cv.MessageListRows = make(map[string]*gtk.ListBoxRow)

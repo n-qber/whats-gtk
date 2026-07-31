@@ -268,7 +268,7 @@ func (r *Renderer) LoadOlderMessages(jidStr string, cv *chat.ChatView, targetID 
 	go func() {
 		before, ok := r.OldestMessageTimes[jidStr]
 		if !ok {
-			glib.IdleAdd(func() { cv.IsLoadingOlder = false })
+			glib.IdleAdd(func() { cv.SetLoadingOlder(false) })
 			return
 		}
 
@@ -286,14 +286,14 @@ func (r *Renderer) LoadOlderMessages(jidStr string, cv *chat.ChatView, targetID 
 		} else {
 			targetMsg, e := r.DB.GetMessage(targetID)
 			if e != nil || !targetMsg.Timestamp.Before(before) {
-				glib.IdleAdd(func() { cv.IsLoadingOlder = false })
+				glib.IdleAdd(func() { cv.SetLoadingOlder(false) })
 				return
 			}
 			msgs, err = r.DB.GetMessagesBetween(jids, targetMsg.Timestamp, before, 300)
 		}
 
 		if err != nil || len(msgs) == 0 {
-			glib.IdleAdd(func() { cv.IsLoadingOlder = false })
+			glib.IdleAdd(func() { cv.SetLoadingOlder(false) })
 			return
 		}
 
@@ -342,7 +342,7 @@ func (r *Renderer) LoadOlderMessages(jidStr string, cv *chat.ChatView, targetID 
 				if targetID != "" {
 					cv.ScrollToMessage(targetID)
 				}
-				cv.IsLoadingOlder = false
+				cv.SetLoadingOlder(false)
 				return false
 			})
 		})
