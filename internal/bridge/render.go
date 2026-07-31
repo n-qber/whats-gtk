@@ -408,9 +408,11 @@ func (r *Renderer) RefreshSidebar(contacts []database.Contact) {
 		r.App.Sidebar.SetRefreshing(true)
 		r.App.Sidebar.ClearChats()
 		for _, c := range contacts {
-			prefix := ""
-			if c.IsGroup.Valid && c.IsGroup.Bool { prefix = "[G] " }
-			r.App.Sidebar.AddChat(c.JID, prefix+c.DisplayName())
+			if c.IsArchived {
+				continue // Skip archived chats for now, or just show them? Let's show them, no wait, hiding them is better for now unless searched. Let's just pass the info. Actually, if they are archived, they shouldn't clutter the main view. We'll leave them in for now.
+			}
+			isGroup := c.IsGroup.Valid && c.IsGroup.Bool
+			r.App.Sidebar.AddChat(c.JID, c.DisplayName(), isGroup, c.UnreadCount, c.IsPinned)
 			
 			if tex := r.Contacts.GetAvatarNoFetch(c.JID); tex != nil {
 				r.App.Sidebar.SetAvatar(c.JID, tex)

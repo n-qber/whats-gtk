@@ -111,6 +111,12 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 		cc.App.InfoView.SetInfo(jid.String(), jid.String(), cc.Contacts.GetAvatar(jid.String()))
 	}
 	cc.App.InfoFlap.SetRevealFlap(false)
+	
+	// Clear unread count locally and refresh sidebar
+	cc.DB.ClearUnreadCount(jid.String())
+	if c, err := cc.DB.GetAllContacts(150); err == nil {
+		cc.Renderer.RefreshSidebar(c)
+	}
 
 	cc.Renderer.RefreshMessages(jid)
 	

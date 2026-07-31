@@ -112,6 +112,13 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 		for _, conv := range v.Data.Data.GetConversations() {
 			chatJID, _ := types.ParseJID(conv.GetID()); chatJID = chatJID.ToNonAD()
 			eh.DB.SaveContact(database.Contact{JID: chatJID.String(), IsGroup: sql.NullBool{Bool: chatJID.Server == types.GroupServer, Valid: true}})
+			
+			// Save sync metadata
+			unreadCount := int(conv.GetUnreadCount())
+			isPinned := conv.GetPinned() > 0
+			isArchived := conv.GetArchived()
+			eh.DB.SaveSyncData(chatJID.String(), unreadCount, isPinned, isArchived, conv.GetName(), "")
+			
 			for _, hMsg := range conv.GetMessages() {
 				pMsg, err := eh.Backend.Client.ParseWebMessage(chatJID, hMsg.GetMessage())
 				if err == nil {

@@ -190,21 +190,29 @@ func (s *Sidebar) ShowIndices(show bool) {
 	}
 }
 
-func (s *Sidebar) AddChat(jid, name string) {
+func (s *Sidebar) AddChat(jid, name string, isGroup bool, unreadCount int, isPinned bool) {
 	if _, exists := s.chatRows[jid]; exists {
 		return
 	}
 
 	row := adw.NewActionRow()
-	row.SetTitle(glib.MarkupEscapeText(name))
+	
+	title := name
+	if isGroup {
+		title = "[G] " + title
+	}
+	if unreadCount > 0 {
+		title = fmt.Sprintf("(%d) %s", unreadCount, title)
+		// Can add bold or style class later
+	}
+	if isPinned {
+		title = "📌 " + title
+	}
+	
+	row.SetTitle(glib.MarkupEscapeText(title))
 	row.SetName(jid)
 	
-	// Clean name for initials (remove [G] and unread count)
-	cleanName := name
-	if idx := strings.Index(name, "] "); idx != -1 { cleanName = name[idx+2:] }
-	if idx := strings.Index(cleanName, ") "); idx != -1 { cleanName = cleanName[idx+2:] }
-
-	avatar := adw.NewAvatar(32, cleanName, true)
+	avatar := adw.NewAvatar(32, name, true)
 	row.AddPrefix(avatar)
 	
 	// Add index label

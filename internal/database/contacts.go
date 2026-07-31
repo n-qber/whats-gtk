@@ -14,6 +14,25 @@ type Contact struct {
 	AvatarPath    sql.NullString
 	IsGroup       sql.NullBool
 	LastMessageAt sql.NullTime
+	UnreadCount   int
+	IsPinned      bool
+	IsArchived    bool
+}
+
+func (a *AppDB) SaveSyncData(jid string, unreadCount int, isPinned bool, isArchived bool, name string, pushName string) error {
+	query := `INSERT INTO contacts (jid, unread_count, is_pinned, is_archived, saved_name, push_name) 
+	          VALUES (?, ?, ?, ?, ?, ?)
+	          ON CONFLICT(jid) DO UPDATE SET
+	          unread_count = excluded.unread_count,
+	          is_pinned = excluded.is_pinned,
+	          is_archived = excluded.is_archived,
+	          saved_name = CASE WHEN excluded.saved_name != '' THEN excluded.saved_name ELSE contacts.saved_name END,
+	          push_name = CASE WHEN excluded.push_name != '' THEN excluded.push_name ELSE contacts.push_name END`
+	
+	sName := sql.NullString{String: name, Valid: name != ""}
+	pName := sql.NullString{String: pushName, Valid: pushName != ""}
+	_, err := a.db.Exec(query, jid, unreadCount, isPinned, isArchived, sName, pName)
+	return err
 }
 
 func (a *AppDB) SaveContact(c Contact) error {
@@ -114,7 +133,7 @@ func (a *AppDB) UpdateContactTimestamp(jid string, timestamp time.Time) error {
 
 func (a *AppDB) GetContact(jid string) (*Contact, error) {
 	// Prioritize rows that have a name
-	query := `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at 
+	query := `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
 	          FROM contacts 
 	          WHERE jid = ? OR lid = ? 
 	          ORDER BY (saved_name IS NOT NULL AND saved_name != '') DESC, (push_name IS NOT NULL AND push_name != '') DESC 
@@ -122,7 +141,7 @@ func (a *AppDB) GetContact(jid string) (*Contact, error) {
 	row := a.db.QueryRow(query, jid, jid)
 	
 	var c Contact
-	err := row.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt)
+	err := row.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt, &c.UnreadCount, &c.IsPinned, &c.IsArchived)
 	if err != nil {
 		return nil, err
 	}
@@ -131,10 +150,10 @@ func (a *AppDB) GetContact(jid string) (*Contact, error) {
 
 func (a *AppDB) GetAllContacts(limit int) ([]Contact, error) {
 	// Hide raw LIDs that are already mapped to a PN
-	query := `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at 
+	query := `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
 	          FROM contacts 
 	          WHERE (jid NOT LIKE '%@lid') OR (lid IS NULL OR lid = '')
-	          ORDER BY last_message_at DESC, saved_name ASC, jid ASC 
+	          ORDER BY is_pinned DESC, last_message_at DESC, saved_name ASC, jid ASC 
 	          LIMIT ?`
 	rows, err := a.db.Query(query, limit)
 	if err != nil {
@@ -145,7 +164,7 @@ func (a *AppDB) GetAllContacts(limit int) ([]Contact, error) {
 	var contacts []Contact
 	for rows.Next() {
 		var c Contact
-		err := rows.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt)
+		err := rows.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt, &c.UnreadCount, &c.IsPinned, &c.IsArchived)
 		if err != nil {
 			return nil, err
 		}
@@ -162,11 +181,12 @@ func (a *AppDB) SearchContacts(term string, limit int) ([]Contact, error) {
 
 	pattern := "%" + cleanTerm + "%"
 	prefixPattern := cleanTerm + "%"
-	query := `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at 
+	query := `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
 	          FROM contacts 
 	          WHERE (IFNULL(saved_name, '') LIKE ? OR IFNULL(push_name, '') LIKE ? OR jid LIKE ?)
 	          AND (jid NOT LIKE '%@lid' OR lid IS NULL OR lid = '')
 	          ORDER BY 
+	              is_pinned DESC,
 	              CASE 
 	                  WHEN IFNULL(saved_name, '') = ? COLLATE NOCASE THEN 1
 	                  WHEN IFNULL(saved_name, '') LIKE ? THEN 2
@@ -186,7 +206,7 @@ func (a *AppDB) SearchContacts(term string, limit int) ([]Contact, error) {
 	var contacts []Contact
 	for rows.Next() {
 		var c Contact
-		err := rows.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt)
+		err := rows.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt, &c.UnreadCount, &c.IsPinned, &c.IsArchived)
 		if err != nil {
 			return nil, err
 		}
@@ -196,7 +216,7 @@ func (a *AppDB) SearchContacts(term string, limit int) ([]Contact, error) {
 }
 
 func (a *AppDB) GetUnresolvedPNs(limit int) ([]Contact, error) {
-	query := `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at 
+	query := `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
 	          FROM contacts 
 	          WHERE jid NOT LIKE '%@lid' AND lid IS NULL AND is_group = 0
 	          ORDER BY last_message_at DESC 
@@ -210,7 +230,7 @@ func (a *AppDB) GetUnresolvedPNs(limit int) ([]Contact, error) {
 	var contacts []Contact
 	for rows.Next() {
 		var c Contact
-		err := rows.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt)
+		err := rows.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt, &c.UnreadCount, &c.IsPinned, &c.IsArchived)
 		if err != nil {
 			return nil, err
 		}
@@ -220,18 +240,23 @@ func (a *AppDB) GetUnresolvedPNs(limit int) ([]Contact, error) {
 }
 
 func (a *AppDB) GetContactByLID(lid string) (*Contact, error) {
-	query := `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at 
+	query := `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
 	          FROM contacts 
 	          WHERE lid = ? 
 	          LIMIT 1`
 	row := a.db.QueryRow(query, lid)
 	
 	var c Contact
-	err := row.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt)
+	err := row.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt, &c.UnreadCount, &c.IsPinned, &c.IsArchived)
 	if err != nil {
 		return nil, err
 	}
 	return &c, nil
+}
+
+func (a *AppDB) ClearUnreadCount(jid string) error {
+	_, err := a.db.Exec(`UPDATE contacts SET unread_count = 0 WHERE jid = ? OR lid = ?`, jid, jid)
+	return err
 }
 
 func (c *Contact) DisplayName() string {
