@@ -220,7 +220,7 @@ func (r *Renderer) RefreshMessages(jid types.JID) {
 			}
 		}
 
-		msgs, err := r.DB.GetMessages(jids, 50)
+		msgs, err := r.DB.GetMessages(jids, 100)
 		if err != nil {
 			fmt.Printf("Bridge: GetMessages failed: %v\n", err)
 			return

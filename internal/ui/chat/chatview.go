@@ -696,6 +696,12 @@ func (cv *ChatView) ScrollToBottom() {
 	glib.TimeoutAdd(50, func() bool {
 		adj := cv.MessageScrolledWindow.VAdjustment()
 		adj.SetValue(adj.Upper() - adj.PageSize())
+		
+		if adj.Value() <= 50.0 && !cv.IsLoadingOlder && cv.OnLoadOlder != nil {
+			cv.SetLoadingOlder(true)
+			cv.OnLoadOlder()
+		}
+		
 		return false
 	})
 }
