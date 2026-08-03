@@ -98,7 +98,12 @@ func (cs *ContactService) avatarWorker() {
 					}
 				})
 			}
+		} else {
+			cs.mutex.Lock()
+			cs.failedFetch[jStr] = time.Now()
+			cs.mutex.Unlock()
 		}
+		
 		cs.mutex.Lock()
 		cs.pendingFetch[jStr] = false
 		cs.mutex.Unlock()
@@ -133,6 +138,12 @@ func (cs *ContactService) GetAvatar(j string) *gdk.Texture {
 
 	cs.mutex.Lock()
 	if !cs.pendingFetch[j] {
+		// Do not retry fetch for 24 hours if it failed or didn't exist
+		if failTime, ok := cs.failedFetch[j]; ok && time.Since(failTime) < 24*time.Hour {
+			cs.mutex.Unlock()
+			return nil
+		}
+		
 		cs.pendingFetch[j] = true
 		select {
 		case cs.avatarQueue <- j:
