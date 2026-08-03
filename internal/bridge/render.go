@@ -11,6 +11,7 @@ import (
 	"time"
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/database"
+	"whats-gtk/internal/events"
 	"whats-gtk/internal/ui"
 	"whats-gtk/internal/ui/chat"
 
@@ -18,7 +19,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"go.mau.fi/whatsmeow/types"
-	"go.mau.fi/whatsmeow/types/events"
+	meowEvents "go.mau.fi/whatsmeow/types/events"
 )
 
 // Renderer handles all UI rendering — message display, sidebar refresh,
@@ -29,6 +30,7 @@ type Renderer struct {
 	Contacts *ContactService
 	Backend  *backend.Backend
 	Messages *MessageService
+	EventBus *events.EventBus
 	ctx      context.Context
 
 	OldestMessageTimes map[string]time.Time
@@ -37,17 +39,33 @@ type Renderer struct {
 	Chat *ChatController
 }
 
-// NewRenderer creates a new Renderer.
-func NewRenderer(app *ui.App, db *database.AppDB, contacts *ContactService, b *backend.Backend, msgs *MessageService, ctx context.Context) *Renderer {
-	return &Renderer{
+// NewRenderer creates a new Renderer and subscribes to events.
+func NewRenderer(app *ui.App, db *database.AppDB, contacts *ContactService, b *backend.Backend, msgs *MessageService, ctx context.Context, bus *events.EventBus) *Renderer {
+	r := &Renderer{
 		App:                app,
 		DB:                 db,
 		Contacts:           contacts,
 		Backend:            b,
 		Messages:           msgs,
+		EventBus:           bus,
 		ctx:                ctx,
 		OldestMessageTimes: make(map[string]time.Time),
 	}
+	r.setupSubscriptions()
+	return r
+}
+
+func (r *Renderer) setupSubscriptions() {
+	ch := r.EventBus.Subscribe(events.EventMessageReceived)
+	go func() {
+		for ev := range ch {
+			if payload, ok := ev.Data.(events.LiveMessagePayload); ok {
+				if msg, ok := payload.Msg.(*meowEvents.Message); ok {
+					r.RenderLiveMessage(msg, payload.IsSyncing)
+				}
+			}
+		}
+	}()
 }
 
 func formatMessageDate(t time.Time) string {
@@ -432,7 +450,7 @@ func (r *Renderer) RefreshSidebar(contacts []database.Contact) {
 
 // RenderLiveMessage renders an incoming live message from the pipeline to the UI.
 // It handles sidebar reordering, auto-read marking, and message rendering.
-func (r *Renderer) RenderLiveMessage(msg *events.Message, isSyncing bool) {
+func (r *Renderer) RenderLiveMessage(msg *meowEvents.Message, isSyncing bool) {
 	resolvedChat := r.Messages.ResolveJID(msg.Info.Chat)
 	selectedJID := r.Chat.SelectedJID()
 	if !isSyncing || (selectedJID != nil && resolvedChat.ToNonAD().String() == selectedJID.ToNonAD().String()) {

@@ -7,6 +7,7 @@ import (
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/core"
 	"whats-gtk/internal/database"
+	"whats-gtk/internal/events"
 	"whats-gtk/internal/ui"
 	"whats-gtk/internal/ui/chat"
 
@@ -14,7 +15,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"go.mau.fi/whatsmeow/types"
-	"go.mau.fi/whatsmeow/types/events"
+	meowEvents "go.mau.fi/whatsmeow/types/events"
 )
 
 // Bridge is the thin orchestrator that wires together all sub-services.
@@ -25,6 +26,7 @@ type Bridge struct {
 	Backend  *backend.Backend
 	App      *ui.App
 	DB       *database.AppDB
+	EventBus *events.EventBus
 	ctx      context.Context
 
 	// Sub-services
@@ -39,13 +41,13 @@ type Bridge struct {
 }
 
 // NewBridge creates all sub-services and wires them together.
-func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Context) *Bridge {
+func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Context, bus *events.EventBus) *Bridge {
 	pipeline := core.NewMessagePipeline()
 	input := core.NewInputManager()
 	contacts := NewContactService(b, db, ctx)
 	media := NewMediaService(b, db, ctx)
 	msgs := NewMessageService(db, b, contacts, a, ctx)
-	rend := NewRenderer(a, db, contacts, b, msgs, ctx)
+	rend := NewRenderer(a, db, contacts, b, msgs, ctx, bus)
 	chat := NewChatController(b, a, db, msgs, contacts, media, ctx)
 	evts := NewEventHandler(b, a, db, msgs, chat, contacts, media, rend, pipeline, ctx)
 
@@ -58,6 +60,7 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 		Backend:  b,
 		App:      a,
 		DB:       db,
+		EventBus: bus,
 		ctx:      ctx,
 		Events:   evts,
 		Chat:     chat,
@@ -94,16 +97,22 @@ func (br *Bridge) Start(ctx context.Context) {
 // and rendering incoming messages to the UI.
 func (br *Bridge) registerDefaultHooks() {
 	// Hook to auto-download stickers
-	br.Pipeline.AddHook(func(ctx context.Context, msg *events.Message) error {
+	br.Pipeline.AddHook(func(ctx context.Context, msg *meowEvents.Message) error {
 		if stkr := msg.Message.GetStickerMessage(); stkr != nil {
 			go br.Chat.HandleDownloadMedia(msg.Info.ID)
 		}
 		return nil
 	})
 
-	// Hook to render incoming messages in the UI
-	br.Pipeline.AddHook(func(ctx context.Context, msg *events.Message) error {
-		br.Render.RenderLiveMessage(msg, br.Events.IsSyncing())
+	// Hook to publish incoming messages to EventBus
+	br.Pipeline.AddHook(func(ctx context.Context, msg *meowEvents.Message) error {
+		br.EventBus.Publish(events.Event{
+			Type: events.EventMessageReceived,
+			Data: events.LiveMessagePayload{
+				Msg:       msg,
+				IsSyncing: br.Events.IsSyncing(),
+			},
+		})
 		return nil
 	})
 }

@@ -9,6 +9,7 @@ import (
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/bridge"
 	"whats-gtk/internal/database"
+	"whats-gtk/internal/events"
 	"whats-gtk/internal/ui"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
@@ -58,15 +59,18 @@ func main() {
 			log.Fatal("Failed to create backend:", err)
 		}
 
+		// Initialize EventBus
+		bus := events.NewEventBus()
+
 		// Initialize UI
-		app, err := ui.NewApp(application)
+		app, err := ui.NewApp(application, bus)
 		if err != nil {
 			log.Fatal("Failed to create app UI:", err)
 		}
 		mainApp = app
 
 		// Initialize Bridge
-		br := bridge.NewBridge(b, app, appDB, ctx)
+		br := bridge.NewBridge(b, app, appDB, ctx, bus)
 		br.Start(ctx)
 
 		setupTray(app, application)

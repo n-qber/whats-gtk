@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"whats-gtk/internal/events"
 	"whats-gtk/internal/ui/chat"
 	"whats-gtk/internal/ui/info"
 	"whats-gtk/internal/ui/sidebar"
@@ -26,9 +27,10 @@ type App struct {
 	OnSearchRequested  func()
 	DetachedChats      map[string]*chat.ChatView
 	ActiveMainJID      string
+	EventBus           *events.EventBus
 }
 
-func NewApp(app *adw.Application) (*App, error) {
+func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 	window := adw.NewApplicationWindow(&app.Application)
 	window.SetTitle("WhatsApp GTK")
 	window.SetDefaultSize(1000, 700)
