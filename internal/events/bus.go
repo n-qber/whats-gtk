@@ -6,10 +6,12 @@ import "sync"
 type EventType string
 
 const (
-	EventMessageReceived EventType = "MessageReceived"
-	EventMessageUpdated  EventType = "MessageUpdated"
-	EventChatUpdated     EventType = "ChatUpdated"
-	EventContactsUpdated EventType = "ContactsUpdated"
+	EventMessageReceived      EventType = "MessageReceived"
+	EventMessageUpdated       EventType = "MessageUpdated"
+	EventChatUpdated          EventType = "ChatUpdated"
+	EventContactsUpdated      EventType = "ContactsUpdated"
+	EventChatMessagesLoaded   EventType = "ChatMessagesLoaded"
+	EventLiveMessageReceived  EventType = "LiveMessageReceived"
 )
 
 type LiveMessagePayload struct {
