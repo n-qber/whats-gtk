@@ -550,11 +550,11 @@ func (cc *ChatController) promoteTempMessage(targetJID types.JID, tempID, realID
 	glib.IdleAdd(func() {
 		if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
 			cc.App.ChatView.UpdateMessageStatus(tempID, "sent")
-			if b, exists := cc.App.ChatView.MessageRows[tempID]; exists {
-				cc.App.ChatView.MessageRows[realID] = b; delete(cc.App.ChatView.MessageRows, tempID)
+			if b, exists := cc.App.ChatView.MessageList.MessageRows[tempID]; exists {
+				cc.App.ChatView.MessageList.MessageRows[realID] = b; delete(cc.App.ChatView.MessageList.MessageRows, tempID)
 			}
-			if r, exists := cc.App.ChatView.MessageListRows[tempID]; exists {
-				cc.App.ChatView.MessageListRows[realID] = r; delete(cc.App.ChatView.MessageListRows, tempID)
+			if r, exists := cc.App.ChatView.MessageList.MessageListRows[tempID]; exists {
+				cc.App.ChatView.MessageList.MessageListRows[realID] = r; delete(cc.App.ChatView.MessageList.MessageListRows, tempID)
 			}
 		}
 	})
@@ -618,7 +618,7 @@ func (c *ChatController) HandleDetach() {
 		}
 		cv.OnSearchResultClick = func(id string) {
 			glib.IdleAdd(func() {
-				cv.SearchBar.SetSearchMode(false)
+				cv.SearchBar.Close()
 			})
 			c.Renderer.CancelMessageSearchAndJump(targetJID.ToNonAD().String(), id)
 		}

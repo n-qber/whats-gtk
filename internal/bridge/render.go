@@ -188,7 +188,7 @@ func (r *Renderer) RenderMessageUI(cv *chat.ChatView, m database.Message, sName,
 		}
 	}
 	if m.IsViewOnce {
-		if b, exists := cv.MessageRows[m.ID]; exists {
+			if b, exists := cv.MessageList.MessageRows[m.ID]; exists {
 			b.SetViewOnce(true)
 		}
 	}
@@ -329,10 +329,10 @@ func (r *Renderer) LoadOlderMessages(jidStr string, cv *chat.ChatView, targetID 
 		}
 
 		glib.IdleAdd(func() {
-			adj := cv.MessageScrolledWindow.VAdjustment()
+			adj := cv.MessageList.ScrolledWindow.VAdjustment()
 			oldMax := adj.Upper()
 			
-			cv.InsertIndex = 0
+			cv.MessageList.InsertIndex = 0
 			var lastDateStr string
 
 			for _, m := range msgs {
@@ -352,7 +352,7 @@ func (r *Renderer) LoadOlderMessages(jidStr string, cv *chat.ChatView, targetID 
 				r.RenderMessageUI(cv, m, sName, tStr, av, isCont, false)
 			}
 			
-			cv.InsertIndex = -1 // Reset
+			cv.MessageList.InsertIndex = -1 // Reset
 			
 			// Adjust scroll to prevent jump
 			glib.TimeoutAdd(50, func() bool {
@@ -539,7 +539,7 @@ func (r *Renderer) RenderLiveMessage(msg *meowEvents.Message, isSyncing bool) {
 					}
 				}
 				if isViewOnce {
-					if b, exists := cv.MessageRows[msg.Info.ID]; exists {
+					if b, exists := cv.MessageList.MessageRows[msg.Info.ID]; exists {
 						b.SetViewOnce(true)
 					}
 				}

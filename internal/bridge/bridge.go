@@ -339,7 +339,7 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 	cv.OnSearchResultClick = func(id string) {
 		if jid := br.Chat.SelectedJID(); jid != nil {
 			glib.IdleAdd(func() {
-				cv.SearchBar.SetSearchMode(false)
+					cv.SearchBar.Close()
 			})
 			br.Render.CancelMessageSearchAndJump(jid.ToNonAD().String(), id)
 		}
