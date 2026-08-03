@@ -8,6 +8,8 @@ import (
 	"whats-gtk/internal/ui/sidebar"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
+	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 )
@@ -75,7 +77,10 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 		ZoomLevel:       1.0,
 		ZoomCSSProvider: gtk.NewCSSProvider(),
 		DetachedChats:   make(map[string]*chat.ChatView),
+		EventBus:        bus,
 	}
+
+	a.setupSubscriptions()
 
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), a.ZoomCSSProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
@@ -126,6 +131,199 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 	window.AddController(keyCtrl)
 
 	return a, nil
+}
+
+func (a *App) setupSubscriptions() {
+	ch := a.EventBus.Subscribe(events.EventChatMessagesLoaded)
+	go func() {
+		for ev := range ch {
+			if payload, ok := ev.Data.(events.ChatMessagesPayload); ok {
+				glib.IdleAdd(func() {
+					cv := a.GetChatViewForJID(payload.JID)
+					if cv == nil { return }
+					
+					if !payload.Append {
+						cv.Clear()
+					}
+					
+					// If we're appending (loading older), we might need to handle scrolling gracefully.
+					// For now, we'll just insert/append them.
+					// Since they are older messages, ChatView's Messagelist needs to insert at top or we just append.
+					// Wait, the order in payload is oldest first? Or oldest last?
+					// In chat.go we preserve the order from database (newest to oldest or oldest to newest).
+					// Assuming oldest to newest is what we send.
+					for _, m := range payload.Messages {
+						if m.DateSeparator != "" {
+							cv.AddSeparator(m.DateSeparator)
+						}
+						
+						if m.Type == "text" {
+							cv.AddMessage(m.ID, m.JID, m.SenderName, m.Content, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText)
+						} else if m.Type == "image" || m.Type == "video" || m.Type == "sticker" {
+							var texImg, texThumb *gdk.Texture
+							texThumb = bytesToTexture(m.Thumbnail)
+							
+							if m.Content != "" && m.Type != "sticker" {
+								pixbuf, _ := gdkpixbuf.NewPixbufFromFile(m.Content)
+								if pixbuf != nil {
+									texImg = gdk.NewTextureForPixbuf(pixbuf)
+								}
+							}
+							
+							if m.Type == "image" {
+								cv.AddImage(m.ID, m.JID, m.SenderName, m.Content, texImg, texThumb, m.DocumentPath, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
+							} else if m.Type == "sticker" {
+								cv.AddSticker(m.ID, m.JID, m.SenderName, m.StickerAnim, texImg, texThumb, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
+							} else if m.Type == "video" {
+								cv.AddVideo(m.ID, m.JID, m.SenderName, m.Content, texThumb, m.DocumentPath, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
+							}
+						} else if m.Type == "audio" {
+							cv.AddAudio(m.ID, m.JID, m.SenderName, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText)
+							if m.AudioPath != "" {
+								cv.UpdateMessageAudio(m.ID, m.AudioPath)
+							}
+						} else if m.Type == "document" {
+							texThumb := bytesToTexture(m.Thumbnail)
+							cv.AddDocument(m.ID, m.JID, m.SenderName, m.Content, texThumb, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText)
+							if m.DocumentPath != "" {
+								cv.UpdateMessageDocument(m.ID, m.DocumentPath)
+							}
+						} else if m.Type == "poll" {
+							cv.AddPoll(m.ID, m.JID, m.SenderName, m.Content, m.PollOptions, m.PollVotes, m.MyJID, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText)
+						}
+						
+						if len(m.Reactions) > 0 {
+							cv.UpdateMessageReactions(m.ID, m.Reactions)
+						}
+						if m.IsPinned {
+							cv.UpdateMessagePinned(m.ID, true)
+						}
+						if m.IsViewOnce {
+							if b, exists := cv.MessageList.MessageRows[m.ID]; exists {
+								b.SetViewOnce(true)
+							}
+						}
+						if m.IsForwarded {
+							cv.UpdateMessageForwarded(m.ID, true)
+						}
+					}
+					
+					if !payload.Append {
+						cv.ScrollToBottom()
+					}
+				})
+			}
+		}
+	}()
+
+	chLive := a.EventBus.Subscribe(events.EventLiveMessageReceived)
+	go func() {
+		for ev := range chLive {
+			if payload, ok := ev.Data.(events.LiveUIMessagePayload); ok {
+				glib.IdleAdd(func() {
+					cv := a.GetChatViewForJID(payload.JID)
+					if cv == nil { return }
+					
+					m := payload.Message
+					if m.DateSeparator != "" {
+						cv.AddSeparator(m.DateSeparator)
+					}
+					
+					if m.Type == "text" {
+						cv.AddMessage(m.ID, m.JID, m.SenderName, m.Content, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText)
+					} else if m.Type == "image" || m.Type == "video" || m.Type == "sticker" {
+						var texImg, texThumb *gdk.Texture
+						texThumb = bytesToTexture(m.Thumbnail)
+						
+						if m.Content != "" && m.Type != "sticker" {
+							pixbuf, _ := gdkpixbuf.NewPixbufFromFile(m.Content)
+							if pixbuf != nil {
+								texImg = gdk.NewTextureForPixbuf(pixbuf)
+							}
+						}
+						
+						if m.Type == "image" {
+							cv.AddImage(m.ID, m.JID, m.SenderName, m.Content, texImg, texThumb, m.DocumentPath, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
+						} else if m.Type == "sticker" {
+							cv.AddSticker(m.ID, m.JID, m.SenderName, m.StickerAnim, texImg, texThumb, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
+						} else if m.Type == "video" {
+							cv.AddVideo(m.ID, m.JID, m.SenderName, m.Content, texThumb, m.DocumentPath, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
+						}
+					} else if m.Type == "audio" {
+						cv.AddAudio(m.ID, m.JID, m.SenderName, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText)
+						if m.AudioPath != "" {
+							cv.UpdateMessageAudio(m.ID, m.AudioPath)
+						}
+					} else if m.Type == "document" {
+						texThumb := bytesToTexture(m.Thumbnail)
+						cv.AddDocument(m.ID, m.JID, m.SenderName, m.Content, texThumb, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText)
+						if m.DocumentPath != "" {
+							cv.UpdateMessageDocument(m.ID, m.DocumentPath)
+						}
+					} else if m.Type == "poll" {
+						cv.AddPoll(m.ID, m.JID, m.SenderName, m.Content, m.PollOptions, m.PollVotes, m.MyJID, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText)
+					}
+					
+					if len(m.Reactions) > 0 {
+						cv.UpdateMessageReactions(m.ID, m.Reactions)
+					}
+					if m.IsPinned {
+						cv.UpdateMessagePinned(m.ID, true)
+					}
+					if m.IsViewOnce {
+						if b, exists := cv.MessageList.MessageRows[m.ID]; exists {
+							b.SetViewOnce(true)
+						}
+					}
+					if m.IsForwarded {
+						cv.UpdateMessageForwarded(m.ID, true)
+					}
+
+					cv.ScrollToBottom()
+				})
+			}
+		}
+	}()
+
+	chSidebar := a.EventBus.Subscribe(events.EventChatUpdated)
+	go func() {
+		for ev := range chSidebar {
+			if jid, ok := ev.Data.(string); ok {
+				glib.IdleAdd(func() {
+					a.Sidebar.MoveChatToTop(jid)
+				})
+			}
+		}
+	}()
+
+	chContacts := a.EventBus.Subscribe(events.EventContactsUpdated)
+	go func() {
+		for ev := range chContacts {
+			if items, ok := ev.Data.([]events.SidebarItem); ok {
+				glib.IdleAdd(func() {
+					a.Sidebar.SetRefreshing(true)
+					a.Sidebar.ClearChats()
+					for _, item := range items {
+						a.Sidebar.AddChat(item.JID, item.Name, item.IsGroup, item.UnreadCount, item.IsPinned)
+						if item.Avatar != nil {
+							a.Sidebar.SetAvatar(item.JID, item.Avatar)
+						}
+					}
+					a.Sidebar.SetRefreshing(false)
+				})
+			}
+		}
+	}()
+}
+
+func bytesToTexture(data []byte) *gdk.Texture {
+	if len(data) == 0 { return nil }
+	loader := gdkpixbuf.NewPixbufLoader()
+	loader.Write(data)
+	loader.Close()
+	pix := loader.Pixbuf()
+	if pix == nil { return nil }
+	return gdk.NewTextureForPixbuf(pix)
 }
 
 func loadCSS() {

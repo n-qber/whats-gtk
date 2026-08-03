@@ -32,7 +32,6 @@ type EventHandler struct {
 	Chat     *ChatController
 	Contacts *ContactService
 	Media    *MediaService
-	Renderer *Renderer
 	Pipeline *core.MessagePipeline
 	ctx      context.Context
 
@@ -44,7 +43,7 @@ type EventHandler struct {
 }
 
 // NewEventHandler creates a new EventHandler.
-func NewEventHandler(b *backend.Backend, app *ui.App, db *database.AppDB, msgs *MessageService, chat *ChatController, contacts *ContactService, media *MediaService, rend *Renderer, pipeline *core.MessagePipeline, ctx context.Context) *EventHandler {
+func NewEventHandler(b *backend.Backend, app *ui.App, db *database.AppDB, msgs *MessageService, chat *ChatController, contacts *ContactService, media *MediaService, pipeline *core.MessagePipeline, ctx context.Context) *EventHandler {
 	return &EventHandler{
 		Backend:  b,
 		App:      app,
@@ -53,7 +52,6 @@ func NewEventHandler(b *backend.Backend, app *ui.App, db *database.AppDB, msgs *
 		Chat:     chat,
 		Contacts: contacts,
 		Media:    media,
-		Renderer: rend,
 		Pipeline: pipeline,
 		ctx:      ctx,
 	}
@@ -135,7 +133,7 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 		eh.syncMutex.Unlock()
 		
 		glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(false) })
-		c, _ := eh.DB.GetAllContacts(100); eh.Renderer.RefreshSidebar(c)
+		eh.Chat.RefreshSidebarUI()
 	}()
 }
 
@@ -196,8 +194,7 @@ func (eh *EventHandler) handleConnected() {
 	})
 	go func() {
 		eh.Contacts.Sync(eh.ctx)
-		c, _ := eh.DB.GetAllContacts(200)
-		eh.Renderer.RefreshSidebar(c)
+		eh.Chat.RefreshSidebarUI()
 	}()
 }
 
@@ -232,8 +229,7 @@ func (eh *EventHandler) handleOfflineSyncCompleted() {
 	
 	glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(false) })
 	go func() {
-		c, _ := eh.DB.GetAllContacts(100)
-		eh.Renderer.RefreshSidebar(c)
+		eh.Chat.RefreshSidebarUI()
 	}()
 }
 

@@ -20,7 +20,7 @@ import (
 
 // Bridge is the thin orchestrator that wires together all sub-services.
 // It creates, configures, and connects: EventHandler, ChatController,
-// MessageService, Renderer, ContactService, MediaService, InputManager,
+// MessageService, ContactService, MediaService, InputManager,
 // and MessagePipeline.
 type Bridge struct {
 	Backend  *backend.Backend
@@ -33,7 +33,6 @@ type Bridge struct {
 	Events   *EventHandler
 	Chat     *ChatController
 	Messages *MessageService
-	Render   *Renderer
 	Contacts *ContactService
 	Media    *MediaService
 	Input    *core.InputManager
@@ -47,13 +46,11 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 	contacts := NewContactService(b, db, ctx)
 	media := NewMediaService(b, db, ctx)
 	msgs := NewMessageService(db, b, contacts, a, ctx)
-	rend := NewRenderer(a, db, contacts, b, msgs, ctx, bus)
-	chat := NewChatController(b, a, db, msgs, contacts, media, ctx)
-	evts := NewEventHandler(b, a, db, msgs, chat, contacts, media, rend, pipeline, ctx)
+	mapper := NewViewMapper(contacts, db, b.Client.Store.ID.ToNonAD().String())
+	chat := NewChatController(b, a, db, msgs, contacts, media, ctx, bus, mapper)
+	evts := NewEventHandler(b, a, db, msgs, chat, contacts, media, pipeline, ctx)
 
 	// Wire back-references (these can't be set in constructors due to circular init)
-	rend.Chat = chat
-	chat.Renderer = rend
 	msgs.GetSelectedJID = chat.SelectedJID
 
 	br := &Bridge{
@@ -65,7 +62,6 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 		Events:   evts,
 		Chat:     chat,
 		Messages: msgs,
-		Render:   rend,
 		Contacts: contacts,
 		Media:    media,
 		Input:    input,
@@ -86,10 +82,8 @@ func (br *Bridge) Start(ctx context.Context) {
 	br.Backend.SetEventHandler(br.Events.HandleEvent)
 	br.Backend.Connect()
 	go func() {
-		c, err := br.DB.GetAllContacts(100)
-		if err == nil && len(c) > 0 {
-			br.Render.RefreshSidebar(c)
-		}
+		// Initial sync
+		br.Chat.RefreshSidebarUI()
 	}()
 }
 
@@ -150,7 +144,7 @@ func (br *Bridge) setupUIHandlers() {
 					searchDialog.Populate(msgs, func(msg database.Message) {
 						targetJID, _ := types.ParseJID(msg.ChatJID)
 						br.Chat.HandleChatSelected(msg.ChatJID)
-						br.Render.RefreshMessagesAround(targetJID, msg.ID)
+						br.Chat.RefreshMessagesAround(targetJID, msg.ID)
 					})
 				})
 			}()
@@ -318,22 +312,22 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 	}
 	cv.OnLoadOlder = func() {
 		if jid := br.Chat.SelectedJID(); jid != nil && !cv.IsSearching {
-			br.Render.LoadOlderMessages(jid.ToNonAD().String(), cv, "")
+			br.Chat.LoadOlderMessages(jid.ToNonAD().String(), "")
 		}
 	}
 	cv.OnLoadMessageRequest = func(id string) {
 		if jid := br.Chat.SelectedJID(); jid != nil && !cv.IsSearching {
-			br.Render.LoadOlderMessages(jid.ToNonAD().String(), cv, id)
+			br.Chat.LoadOlderMessages(jid.ToNonAD().String(), id)
 		}
 	}
 	cv.OnSearchMessages = func(query string) {
 		if jid := br.Chat.SelectedJID(); jid != nil {
-			br.Render.RenderMessageSearch(jid.ToNonAD().String(), query)
+			br.Chat.RenderMessageSearch(jid.ToNonAD().String(), query)
 		}
 	}
 	cv.OnCancelSearch = func() {
 		if jid := br.Chat.SelectedJID(); jid != nil {
-			br.Render.CancelMessageSearch(jid.ToNonAD().String())
+			br.Chat.CancelMessageSearch(jid.ToNonAD().String())
 		}
 	}
 	cv.OnSearchResultClick = func(id string) {
@@ -341,7 +335,7 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 			glib.IdleAdd(func() {
 					cv.SearchBar.Close()
 			})
-			br.Render.CancelMessageSearchAndJump(jid.ToNonAD().String(), id)
+			br.Chat.CancelMessageSearchAndJump(jid.ToNonAD().String(), id)
 		}
 	}
 	cv.OnMentionClick = func(jid string) {

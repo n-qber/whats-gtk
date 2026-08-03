@@ -14,6 +14,7 @@ import (
 	"time"
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/database"
+	"whats-gtk/internal/events"
 	"whats-gtk/internal/ui"
 	"whats-gtk/internal/ui/info"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"go.mau.fi/whatsmeow"
+	meowEvents "go.mau.fi/whatsmeow/types/events"
 	"go.mau.fi/whatsmeow/types"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"google.golang.org/protobuf/proto"
@@ -38,8 +40,11 @@ type ChatController struct {
 	Messages *MessageService
 	Contacts *ContactService
 	Media    *MediaService
-	Renderer *Renderer
+	Mapper   *ViewMapper
+	EventBus *events.EventBus
 	ctx      context.Context
+	
+	OldestMessageTimes map[string]time.Time
 
 	selectedJID   *types.JID
 	lastSender    string
@@ -52,17 +57,93 @@ type ChatController struct {
 }
 
 // NewChatController creates a new ChatController.
-func NewChatController(b *backend.Backend, app *ui.App, db *database.AppDB, msgs *MessageService, contacts *ContactService, media *MediaService, ctx context.Context) *ChatController {
-	return &ChatController{
-		Backend:       b,
-		App:           app,
-		DB:            db,
-		Messages:      msgs,
-		Contacts:      contacts,
-		Media:         media,
-		ctx:           ctx,
-		lastGroupSync:   make(map[string]time.Time),
-		cachedGroupInfo: make(map[string]*types.GroupInfo),
+func NewChatController(b *backend.Backend, app *ui.App, db *database.AppDB, msgs *MessageService, contacts *ContactService, media *MediaService, ctx context.Context, bus *events.EventBus, mapper *ViewMapper) *ChatController {
+	cc := &ChatController{
+		Backend:            b,
+		App:                app,
+		DB:                 db,
+		Messages:           msgs,
+		Contacts:           contacts,
+		Media:              media,
+		Mapper:             mapper,
+		EventBus:           bus,
+		ctx:                ctx,
+		lastGroupSync:      make(map[string]time.Time),
+		cachedGroupInfo:    make(map[string]*types.GroupInfo),
+		OldestMessageTimes: make(map[string]time.Time),
+	}
+	cc.setupSubscriptions()
+	return cc
+}
+
+func (cc *ChatController) setupSubscriptions() {
+	ch := cc.EventBus.Subscribe(events.EventMessageReceived)
+	go func() {
+		for ev := range ch {
+			if payload, ok := ev.Data.(events.LiveMessagePayload); ok {
+				if msg, ok := payload.Msg.(*meowEvents.Message); ok {
+					cc.HandleLiveMessage(msg, payload.IsSyncing)
+				}
+			}
+		}
+	}()
+}
+
+func (cc *ChatController) HandleLiveMessage(msg *meowEvents.Message, isSyncing bool) {
+	resolvedChat := cc.Messages.ResolveJID(msg.Info.Chat)
+	selectedJID := cc.selectedJID
+	if !isSyncing || (selectedJID != nil && resolvedChat.ToNonAD().String() == selectedJID.ToNonAD().String()) {
+		jidStr := resolvedChat.ToNonAD().String()
+
+		// Automatically mark as read if this chat is currently selected
+		if selectedJID != nil && jidStr == selectedJID.ToNonAD().String() {
+			if cc.App.Window.IsActive() {
+				go cc.Backend.MarkRead(cc.ctx, msg.Info.Chat, []string{msg.Info.ID}, msg.Info.Sender, time.Now())
+			}
+		}
+
+		// Notify UI to move chat to top in sidebar
+		cc.EventBus.Publish(events.Event{
+			Type: events.EventChatUpdated,
+			Data: jidStr,
+		})
+
+		// Fetch the persisted message from DB
+		dbMsg, err := cc.DB.GetMessage(msg.Info.ID)
+		if err == nil {
+			tStr := msg.Info.Timestamp.Format("15:04")
+			sName := ""
+			var av *gdk.Texture
+			isCont := false // we don't know easily for a live message unless we check last, but UI can handle it or we pass it
+			
+			resolvedSender := cc.Messages.ResolveJID(msg.Info.Sender)
+			sJID := resolvedSender.ToNonAD().String()
+			isCont = sJID == cc.lastSender
+			
+			if msg.Info.Chat.Server == types.GroupServer && !msg.Info.IsFromMe {
+				if !isCont {
+					sName = cc.Contacts.ResolveSenderName(sJID)
+					av = cc.Contacts.GetAvatar(sJID)
+				}
+			}
+			cc.lastSender = sJID
+			
+			uiMsg := cc.Mapper.MapMessage(*dbMsg, sName, tStr, av, isCont)
+			dateStr := cc.Mapper.FormatMessageDate(msg.Info.Timestamp)
+			if dateStr != cc.lastDateStr {
+				uiMsg.DateSeparator = dateStr
+				cc.lastDateStr = dateStr
+			}
+
+			cc.EventBus.Publish(events.Event{
+				Type: events.EventLiveMessageReceived,
+				Data: events.LiveUIMessagePayload{
+					JID:       jidStr,
+					Message:   uiMsg,
+					IsSyncing: isSyncing,
+				},
+			})
+		}
 	}
 }
 
@@ -81,7 +162,7 @@ func (cc *ChatController) HandleWindowActive() {
 	}
 }
 
-// SetLastSender updates the last sender (used by Renderer for continuation tracking).
+// SetLastSender updates the last sender (used for continuation tracking).
 func (cc *ChatController) SetLastSender(s string) { cc.lastSender = s }
 
 // LastDateStr returns the date string of the last message.
@@ -114,11 +195,9 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 	
 	// Clear unread count locally and refresh sidebar
 	cc.DB.ClearUnreadCount(jid.String())
-	if c, err := cc.DB.GetAllContacts(150); err == nil {
-		cc.Renderer.RefreshSidebar(c)
-	}
+	cc.RefreshSidebarUI()
 
-	cc.Renderer.RefreshMessages(jid)
+	cc.RefreshMessages(jid)
 	
 	// Mark as read
 	if cc.Backend != nil && cc.Backend.Client != nil {
@@ -194,6 +273,78 @@ func (cc *ChatController) HandleSendMessage(targetJID types.JID, text string, re
 	}()
 }
 
+// RefreshMessagesAround loads messages centered around targetID.
+func (cc *ChatController) RefreshMessagesAround(jid types.JID, targetID string) {
+	go func() {
+		jids := []string{jid.ToNonAD().String()}
+		if contact, err := cc.DB.GetContact(jid.ToNonAD().String()); err == nil {
+			if contact.LID.Valid && contact.LID.String != "" {
+				jids = append(jids, contact.LID.String)
+			}
+		}
+
+		msgs, err := cc.DB.GetMessagesAround(jids, targetID, 50)
+		if err != nil || len(msgs) == 0 {
+			cc.RefreshMessages(jid)
+			return
+		}
+
+		if len(msgs) > 0 {
+			cc.OldestMessageTimes[jid.ToNonAD().String()] = msgs[0].Timestamp
+		}
+
+		var uiMsgs []events.UIMessage
+		var lastSender string
+		var localLastDateStr string
+
+		for _, m := range msgs {
+			sName := ""
+			var av *gdk.Texture
+			isCont := m.SenderJID == lastSender
+			
+			if jid.Server == types.GroupServer && !m.IsFromMe {
+				if !isCont {
+					sName = cc.Contacts.ResolveSenderName(m.SenderJID)
+					av = cc.Contacts.GetAvatar(m.SenderJID)
+				}
+			}
+			lastSender = m.SenderJID
+			
+			dateStr := cc.Mapper.FormatMessageDate(m.Timestamp)
+			tStr := m.Timestamp.Format("15:04")
+			
+			uiMsg := cc.Mapper.MapMessage(m, sName, tStr, av, isCont)
+			if dateStr != localLastDateStr {
+				uiMsg.DateSeparator = dateStr
+				localLastDateStr = dateStr
+			} else {
+				uiMsg.DateSeparator = ""
+			}
+			uiMsgs = append(uiMsgs, uiMsg)
+		}
+
+		cc.EventBus.Publish(events.Event{
+			Type: events.EventChatMessagesLoaded,
+			Data: events.ChatMessagesPayload{
+				JID:      jid.ToNonAD().String(),
+				Messages: uiMsgs,
+				Append:   false,
+			},
+		})
+	}()
+}
+
+// CancelMessageSearch clears the search state and restores the original chat messages.
+func (cc *ChatController) CancelMessageSearch(jidStr string) {
+	targetJID, _ := types.ParseJID(jidStr)
+	cc.RefreshMessages(targetJID)
+}
+
+func (cc *ChatController) CancelMessageSearchAndJump(jidStr string, targetID string) {
+	targetJID, _ := types.ParseJID(jidStr)
+	cc.RefreshMessagesAround(targetJID, targetID)
+}
+
 // HandleSearch performs a debounced search on contacts.
 func (cc *ChatController) HandleSearch(t string) {
 	cc.sidebarMutex.Lock()
@@ -221,7 +372,22 @@ func (cc *ChatController) HandleSearch(t string) {
 			fmt.Printf("Bridge: Search failed: %v\n", err)
 			return
 		}
-		cc.Renderer.RefreshSidebar(c)
+		var items []events.SidebarItem
+		for _, contact := range c {
+			tex := cc.Contacts.GetAvatarNoFetch(contact.JID)
+			items = append(items, events.SidebarItem{
+				JID: contact.JID,
+				Name: contact.DisplayName(),
+				IsGroup: contact.IsGroup.Valid && contact.IsGroup.Bool,
+				UnreadCount: contact.UnreadCount,
+				IsPinned: contact.IsPinned,
+				Avatar: tex,
+			})
+		}
+		cc.EventBus.Publish(events.Event{
+			Type: events.EventContactsUpdated,
+			Data: items,
+		})
 	}()
 }
 
@@ -508,7 +674,7 @@ func (cc *ChatController) SyncGroupIfNeeded(jid types.JID) {
 			cc.updateGroupInfoUI(info)
 			
 			if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == groupJID.ToNonAD().String() {
-				glib.IdleAdd(func() { cc.Renderer.RefreshMessages(groupJID) })
+				cc.RefreshMessages(groupJID)
 			}
 		}(jid)
 	}
@@ -602,25 +768,28 @@ func (c *ChatController) HandleDetach() {
 		}
 		cv.OnLoadOlder = func() {
 			if !cv.IsSearching {
-				c.Renderer.LoadOlderMessages(targetJID.ToNonAD().String(), cv, "")
+				c.LoadOlderMessages(targetJID.ToNonAD().String(), "")
 			}
 		}
 		cv.OnLoadMessageRequest = func(id string) {
 			if !cv.IsSearching {
-				c.Renderer.LoadOlderMessages(targetJID.ToNonAD().String(), cv, id)
+				c.LoadOlderMessages(targetJID.ToNonAD().String(), id)
 			}
 		}
 		cv.OnSearchMessages = func(query string) {
-			c.Renderer.RenderMessageSearch(targetJID.ToNonAD().String(), query)
+			c.HandleSearch(query)
 		}
 		cv.OnCancelSearch = func() {
-			c.Renderer.CancelMessageSearch(targetJID.ToNonAD().String())
+			c.CancelMessageSearch(targetJID.ToNonAD().String())
+		}
+		cv.OnCancelSearchAndJump = func(id string) {
+			c.CancelMessageSearchAndJump(targetJID.ToNonAD().String(), id)
 		}
 		cv.OnSearchResultClick = func(id string) {
 			glib.IdleAdd(func() {
 				cv.SearchBar.Close()
 			})
-			c.Renderer.CancelMessageSearchAndJump(targetJID.ToNonAD().String(), id)
+			c.CancelMessageSearchAndJump(targetJID.ToNonAD().String(), id)
 		}
 		cv.OnMentionClick = func(mjid string) {
 			glib.IdleAdd(func() {
@@ -655,7 +824,7 @@ func (c *ChatController) HandleDetach() {
 
 		// Load chat history for this JID
 		// We can reuse the logic from HandleChatSelected for just loading the DB history
-		c.Renderer.RefreshMessages(targetJID)
+		c.RefreshMessages(targetJID)
 		
 		// Clear main chat view since it's now detached
 		c.App.ChatView.Clear()
@@ -663,4 +832,221 @@ func (c *ChatController) HandleDetach() {
 		c.App.ActiveMainJID = ""
 		c.selectedJID = nil
 	})
+}
+
+// RefreshMessages loads messages from the database and publishes them via EventBus.
+func (cc *ChatController) RefreshMessages(jid types.JID) {
+	go func() {
+		jids := []string{jid.ToNonAD().String()}
+		if contact, err := cc.DB.GetContact(jid.ToNonAD().String()); err == nil {
+			if contact.LID.Valid && contact.LID.String != "" {
+				jids = append(jids, contact.LID.String)
+			}
+		}
+
+		msgs, err := cc.DB.GetMessages(jids, 50)
+		if err != nil {
+			fmt.Printf("Controller: GetMessages failed: %v\n", err)
+			return
+		}
+		
+		if len(msgs) > 0 {
+			cc.OldestMessageTimes[jid.ToNonAD().String()] = msgs[0].Timestamp
+		}
+
+		var uiMsgs []events.UIMessage
+		var lastSender string
+		var localLastDateStr string
+
+		for _, m := range msgs {
+			sName := ""
+			var av *gdk.Texture
+			isCont := m.SenderJID == lastSender
+			
+			if jid.Server == types.GroupServer && !m.IsFromMe {
+				if !isCont {
+					sName = cc.Contacts.ResolveSenderName(m.SenderJID)
+					av = cc.Contacts.GetAvatar(m.SenderJID)
+				}
+			}
+			lastSender = m.SenderJID
+			
+			dateStr := cc.Mapper.FormatMessageDate(m.Timestamp)
+			tStr := m.Timestamp.Format("15:04")
+			
+			uiMsg := cc.Mapper.MapMessage(m, sName, tStr, av, isCont)
+			if dateStr != localLastDateStr {
+				uiMsg.DateSeparator = dateStr
+				localLastDateStr = dateStr
+			} else {
+				uiMsg.DateSeparator = ""
+			}
+			uiMsgs = append(uiMsgs, uiMsg)
+		}
+
+		// Update the controller's global tracking at the end for future live messages
+		if len(uiMsgs) > 0 {
+			cc.lastDateStr = localLastDateStr
+		}
+
+		cc.EventBus.Publish(events.Event{
+			Type: events.EventChatMessagesLoaded,
+			Data: events.ChatMessagesPayload{
+				JID:      jid.ToNonAD().String(),
+				Messages: uiMsgs,
+				Append:   false,
+			},
+		})
+	}()
+}
+
+func (cc *ChatController) RenderMessageSearch(jidStr string, query string) {
+	go func() {
+		jids := []string{jidStr}
+		if contact, err := cc.DB.GetContact(jidStr); err == nil {
+			if contact.LID.Valid && contact.LID.String != "" {
+				jids = append(jids, contact.LID.String)
+			}
+		}
+
+		msgs, err := cc.DB.SearchMessagesInChat(jids, query, 100)
+		if err != nil {
+			fmt.Printf("Controller: SearchMessagesInChat failed: %v\n", err)
+			return
+		}
+
+		var uiMsgs []events.UIMessage
+		var lastSender string
+		var localLastDateStr string
+
+		for _, m := range msgs {
+			sName := ""
+			var av *gdk.Texture
+			isCont := m.SenderJID == lastSender
+			
+			targetJID, _ := types.ParseJID(jidStr)
+			if targetJID.Server == types.GroupServer && !m.IsFromMe {
+				if !isCont {
+					sName = cc.Contacts.ResolveSenderName(m.SenderJID)
+					av = cc.Contacts.GetAvatar(m.SenderJID)
+				}
+			}
+			lastSender = m.SenderJID
+			
+			dateStr := cc.Mapper.FormatMessageDate(m.Timestamp)
+			tStr := m.Timestamp.Format("15:04")
+			
+			uiMsg := cc.Mapper.MapMessage(m, sName, tStr, av, isCont)
+			if dateStr != localLastDateStr {
+				uiMsg.DateSeparator = dateStr
+				localLastDateStr = dateStr
+			} else {
+				uiMsg.DateSeparator = ""
+			}
+			uiMsgs = append(uiMsgs, uiMsg)
+		}
+
+		cc.EventBus.Publish(events.Event{
+			Type: events.EventChatMessagesLoaded,
+			Data: events.ChatMessagesPayload{
+				JID:      jidStr,
+				Messages: uiMsgs,
+				Append:   false,
+			},
+		})
+	}()
+}
+
+func (cc *ChatController) LoadOlderMessages(jidStr string, targetID string) {
+	go func() {
+		before, ok := cc.OldestMessageTimes[jidStr]
+		if !ok {
+			return // Cannot load older
+		}
+
+		jids := []string{jidStr}
+		if contact, err := cc.DB.GetContact(jidStr); err == nil {
+			if contact.LID.Valid && contact.LID.String != "" {
+				jids = append(jids, contact.LID.String)
+			}
+		}
+
+		var msgs []database.Message
+		var err error
+		if targetID == "" {
+			msgs, err = cc.DB.GetOlderMessages(jids, before, 50)
+		} else {
+			targetMsg, e := cc.DB.GetMessage(targetID)
+			if e != nil || !targetMsg.Timestamp.Before(before) {
+				return
+			}
+			msgs, err = cc.DB.GetMessagesBetween(jids, targetMsg.Timestamp, before, 300)
+		}
+
+		if err != nil || len(msgs) == 0 {
+			return
+		}
+
+		cc.OldestMessageTimes[jidStr] = msgs[0].Timestamp
+
+		var uiMsgs []events.UIMessage
+		var localLastDateStr string
+		for _, m := range msgs {
+			sName := ""
+			var av *gdk.Texture
+			isCont := false // older messages reset continuation explicitly for safety
+			
+			targetJID, _ := types.ParseJID(jidStr)
+			if targetJID.Server == types.GroupServer && !m.IsFromMe {
+				sName = cc.Contacts.ResolveSenderName(m.SenderJID)
+				av = cc.Contacts.GetAvatar(m.SenderJID)
+			}
+			
+			dateStr := cc.Mapper.FormatMessageDate(m.Timestamp)
+			tStr := m.Timestamp.Format("15:04")
+			
+			uiMsg := cc.Mapper.MapMessage(m, sName, tStr, av, isCont)
+			if dateStr != localLastDateStr {
+				uiMsg.DateSeparator = dateStr
+				localLastDateStr = dateStr
+			} else {
+				uiMsg.DateSeparator = ""
+			}
+			uiMsgs = append(uiMsgs, uiMsg)
+		}
+
+		cc.EventBus.Publish(events.Event{
+			Type: events.EventChatMessagesLoaded,
+			Data: events.ChatMessagesPayload{
+				JID:      jidStr,
+				Messages: uiMsgs,
+				Append:   true,
+			},
+		})
+	}()
+}
+
+// RefreshSidebarUI fetches contacts and publishes them as SidebarItems.
+func (cc *ChatController) RefreshSidebarUI() {
+	if c, err := cc.DB.GetAllContacts(200); err == nil {
+		var items []events.SidebarItem
+		for _, contact := range c {
+			if contact.IsArchived {
+				continue
+			}
+			tex := cc.Contacts.GetAvatarNoFetch(contact.JID)
+			items = append(items, events.SidebarItem{
+				JID:         contact.JID,
+				Name:        contact.DisplayName(),
+				IsGroup:     contact.IsGroup.Valid && contact.IsGroup.Bool,
+				UnreadCount: contact.UnreadCount,
+				IsPinned:    contact.IsPinned,
+				Avatar:      tex,
+			})
+		}
+		cc.EventBus.Publish(events.Event{
+			Type: events.EventContactsUpdated,
+			Data: items,
+		})
+	}
 }

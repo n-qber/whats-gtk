@@ -29,6 +29,7 @@ type ChatView struct {
 	OnLoadMessageRequest func(id string)
 	OnSearchMessages     func(query string)
 	OnCancelSearch       func()
+	OnCancelSearchAndJump func(id string)
 	OnSearchResultClick  func(id string)
 	OnMentionClick       func(jid string)
 	OnSendPollVote       func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
