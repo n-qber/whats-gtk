@@ -54,6 +54,7 @@ type ChatView struct {
 	SearchEntry           *gtk.SearchEntry
 	OnSearchMessages      func(query string)
 	OnCancelSearch        func()
+	OnSearchResultClick   func(id string)
 	IsSearching           bool
 	OnMentionClick        func(jid string)
 	OnSendPollVote        func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
@@ -185,6 +186,19 @@ func NewChatView() (*ChatView, error) {
 		ctx:                   ctx,
 		cancelCtx:             cancel,
 	}
+
+	messageList.ConnectRowActivated(func(row *gtk.ListBoxRow) {
+		if cv.IsSearching {
+			for id, r := range cv.MessageListRows {
+				if r == row {
+					if cv.OnSearchResultClick != nil {
+						cv.OnSearchResultClick(id)
+					}
+					break
+				}
+			}
+		}
+	})
 
 	searchBar.Connect("notify::search-mode-enabled", func() {
 		if !searchBar.SearchMode() {
@@ -548,19 +562,48 @@ func (cv *ChatView) registerBubble(id, jid string, bubble bubbles.Bubble, isCont
 			cv.OnMentionClick(mjid)
 		}
 	})
+	bubble.SetOnBubbleClick(func() {
+		if (cv.IsSearching || cv.SearchBar.SearchMode()) && id != "" {
+			if cv.OnSearchResultClick != nil {
+				cv.OnSearchResultClick(id)
+			}
+		}
+	})
 
 	cv.addBubble(id, bubble, isCont)
 }
 
-func (cv *ChatView) ScrollToMessage(id string) {
+func (cv *ChatView) HighlightMessage(id string) {
 	if row, ok := cv.MessageListRows[id]; ok {
 		glib.IdleAdd(func() {
-			adj := cv.MessageScrolledWindow.VAdjustment()
-			cv.MessageList.SelectRow(row)
-			row.GrabFocus()
-			_, y, _ := row.TranslateCoordinates(cv.MessageList, 0, 0)
-			adj.SetValue(y)
+			row.AddCSSClass("highlighted-row")
+			glib.TimeoutAdd(1500, func() bool {
+				row.RemoveCSSClass("highlighted-row")
+				return false
+			})
 		})
+	}
+}
+
+func (cv *ChatView) ScrollToMessage(id string) {
+	if row, ok := cv.MessageListRows[id]; ok {
+		attempts := 0
+		var tryScroll func() bool
+		tryScroll = func() bool {
+			attempts++
+			_, destY, success := row.TranslateCoordinates(cv.MessageList, 0, 0)
+			if success && destY >= 0 {
+				adj := cv.MessageScrolledWindow.VAdjustment()
+				adj.SetValue(destY)
+				cv.HighlightMessage(id)
+				return false
+			}
+			if attempts >= 10 {
+				return false
+			}
+			return true
+		}
+		glib.TimeoutAdd(50, tryScroll)
 	} else if cv.OnLoadMessageRequest != nil {
 		cv.OnLoadMessageRequest(id)
 	}
@@ -677,6 +720,18 @@ func (cv *ChatView) addBubble(id string, b bubbles.Bubble, isCont bool) {
 	})
 	row.AddController(click)
 
+	leftClick := gtk.NewGestureClick()
+	leftClick.SetButton(1) // Left click
+	leftClick.SetPropagationPhase(gtk.PhaseCapture)
+	leftClick.ConnectPressed(func(n int, x, y float64) {
+		if cv.IsSearching && id != "" {
+			if cv.OnSearchResultClick != nil {
+				cv.OnSearchResultClick(id)
+			}
+		}
+	})
+	row.AddController(leftClick)
+
 	if id != "" {
 		cv.MessageListRows[id] = row
 	}
@@ -686,23 +741,13 @@ func (cv *ChatView) addBubble(id string, b bubbles.Bubble, isCont bool) {
 		cv.InsertIndex++
 	} else {
 		cv.MessageList.Append(row)
-		glib.IdleAdd(func() {
-			cv.ScrollToBottom()
-		})
 	}
 }
 
 func (cv *ChatView) ScrollToBottom() {
-	glib.TimeoutAdd(50, func() bool {
+	glib.IdleAdd(func() {
 		adj := cv.MessageScrolledWindow.VAdjustment()
-		adj.SetValue(adj.Upper() - adj.PageSize())
-		
-		if adj.Value() <= 50.0 && !cv.IsLoadingOlder && cv.OnLoadOlder != nil {
-			cv.SetLoadingOlder(true)
-			cv.OnLoadOlder()
-		}
-		
-		return false
+		adj.SetValue(adj.Upper())
 	})
 }
 
@@ -730,6 +775,12 @@ func (cv *ChatView) UpdateMessageReactions(id string, reactions []string) {
 func (cv *ChatView) UpdateMessagePinned(id string, pinned bool) {
 	if bubble, exists := cv.MessageRows[id]; exists {
 		glib.IdleAdd(func() { bubble.SetPinned(pinned) })
+	}
+}
+
+func (cv *ChatView) UpdateMessageForwarded(id string, forwarded bool) {
+	if bubble, exists := cv.MessageRows[id]; exists {
+		glib.IdleAdd(func() { bubble.SetForwarded(forwarded) })
 	}
 }
 

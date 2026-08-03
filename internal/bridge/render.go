@@ -174,6 +174,9 @@ func (r *Renderer) RenderMessageUI(cv *chat.ChatView, m database.Message, sName,
 			b.SetViewOnce(true)
 		}
 	}
+	if m.IsForwarded {
+		cv.UpdateMessageForwarded(m.ID, true)
+	}
 }
 
 var mentionRegex = regexp.MustCompile(`(?:\s|^)@(\d{8,15})`)
@@ -220,7 +223,7 @@ func (r *Renderer) RefreshMessages(jid types.JID) {
 			}
 		}
 
-		msgs, err := r.DB.GetMessages(jids, 100)
+		msgs, err := r.DB.GetMessages(jids, 50)
 		if err != nil {
 			fmt.Printf("Bridge: GetMessages failed: %v\n", err)
 			return
@@ -528,6 +531,63 @@ func (r *Renderer) RenderLiveMessage(msg *events.Message, isSyncing bool) {
 	}
 }
 
+// RefreshMessagesAround loads messages centered around targetID and renders them without scrolling to bottom.
+func (r *Renderer) RefreshMessagesAround(jid types.JID, targetID string) {
+	go func() {
+		jids := []string{jid.ToNonAD().String()}
+		if contact, err := r.DB.GetContact(jid.ToNonAD().String()); err == nil {
+			if contact.LID.Valid && contact.LID.String != "" {
+				jids = append(jids, contact.LID.String)
+			}
+		}
+
+		msgs, err := r.DB.GetMessagesAround(jids, targetID, 50)
+		if err != nil || len(msgs) == 0 {
+			r.RefreshMessages(jid)
+			return
+		}
+
+		seen := make(map[string]bool)
+		for i := len(msgs) - 1; i >= 0; i-- {
+			if !msgs[i].IsFromMe && !seen[msgs[i].SenderJID] {
+				r.Contacts.GetAvatar(msgs[i].SenderJID)
+				seen[msgs[i].SenderJID] = true
+			}
+		}
+		
+		if len(msgs) > 0 {
+			r.OldestMessageTimes[jid.ToNonAD().String()] = msgs[0].Timestamp
+		}
+
+		glib.IdleAdd(func() {
+			cv := r.App.GetChatViewForJID(jid.ToNonAD().String())
+			if cv == nil { return }
+			cv.Clear(); r.Chat.SetLastSender(""); r.Chat.SetLastDateStr("")
+			cv.IsSearching = false
+
+			for _, m := range msgs {
+				dateStr := formatMessageDate(m.Timestamp)
+				if dateStr != r.Chat.LastDateStr() {
+					cv.AddSeparator(dateStr)
+					r.Chat.SetLastDateStr(dateStr)
+				}
+				
+				tStr := m.Timestamp.Format("15:04"); sName := ""; var av *gdk.Texture; isCont := m.SenderJID == r.Chat.LastSender()
+				if jid.Server == types.GroupServer && !m.IsFromMe {
+					if !isCont {
+						sName = r.Contacts.ResolveSenderName(m.SenderJID)
+						av = r.Contacts.GetAvatar(m.SenderJID)
+					}
+				}
+				r.Chat.SetLastSender(m.SenderJID)
+				r.RenderMessageUI(cv, m, sName, tStr, av, isCont, false)
+			}
+			
+			cv.ScrollToMessage(targetID)
+		})
+	}()
+}
+
 // CancelMessageSearch clears the search state and restores the original chat messages.
 func (r *Renderer) CancelMessageSearch(jidStr string) {
 	glib.IdleAdd(func() {
@@ -538,4 +598,16 @@ func (r *Renderer) CancelMessageSearch(jidStr string) {
 	})
 	targetJID, _ := types.ParseJID(jidStr)
 	r.RefreshMessages(targetJID)
+}
+
+// CancelMessageSearchAndJump clears search mode, restores chat history, and jumps to target message with highlight.
+func (r *Renderer) CancelMessageSearchAndJump(jidStr string, targetID string) {
+	glib.IdleAdd(func() {
+		cv := r.App.GetChatViewForJID(jidStr)
+		if cv != nil {
+			cv.IsSearching = false
+		}
+	})
+	targetJID, _ := types.ParseJID(jidStr)
+	r.RefreshMessagesAround(targetJID, targetID)
 }

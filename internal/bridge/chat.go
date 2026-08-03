@@ -616,6 +616,12 @@ func (c *ChatController) HandleDetach() {
 		cv.OnCancelSearch = func() {
 			c.Renderer.CancelMessageSearch(targetJID.ToNonAD().String())
 		}
+		cv.OnSearchResultClick = func(id string) {
+			glib.IdleAdd(func() {
+				cv.SearchBar.SetSearchMode(false)
+			})
+			c.Renderer.CancelMessageSearchAndJump(targetJID.ToNonAD().String(), id)
+		}
 		cv.OnMentionClick = func(mjid string) {
 			glib.IdleAdd(func() {
 				if c.App.Sidebar != nil {

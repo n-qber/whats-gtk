@@ -9,8 +9,10 @@ import (
 
 type ImageBubble struct {
 	*baseBubble
+	overlay           *gtk.Overlay
 	picture           *gtk.Picture
 	placeholder       *gtk.Box
+	downloadBtn       *gtk.Box
 	captionLabel      *gtk.Label
 	OnDownloadRequest func()
 	OnOpenRequest     func(path string)
@@ -21,6 +23,7 @@ func NewImageBubble(name, text string, tex, thumb *gdk.Texture, isSelf bool, sta
 	mainBox := gtk.NewBox(gtk.OrientationVertical, 5)
 
 	overlay := gtk.NewOverlay()
+	overlay.AddCSSClass("image-container")
 
 	picture := gtk.NewPicture()
 	picture.SetContentFit(gtk.ContentFitCover)
@@ -29,20 +32,63 @@ func NewImageBubble(name, text string, tex, thumb *gdk.Texture, isSelf bool, sta
 
 	placeholder := gtk.NewBox(gtk.OrientationVertical, 0)
 	placeholder.AddCSSClass("image-placeholder")
-	placeholder.SetSizeRequest(200, 150)
-	placeholder.SetHAlign(gtk.AlignCenter)
-	placeholder.SetVAlign(gtk.AlignCenter)
-	placeholder.SetHExpand(false)
-	placeholder.SetVExpand(false)
-	
+	placeholder.SetHAlign(gtk.AlignFill)
+	placeholder.SetVAlign(gtk.AlignFill)
+
+	downloadBtn := gtk.NewBox(gtk.OrientationHorizontal, 0)
+	downloadBtn.AddCSSClass("image-download-button")
+	downloadBtn.SetHAlign(gtk.AlignCenter)
+	downloadBtn.SetVAlign(gtk.AlignCenter)
+	downloadBtn.SetHExpand(true)
+	downloadBtn.SetVExpand(true)
+
 	downloadIcon := gtk.NewImageFromIconName("folder-download-symbolic")
-	downloadIcon.SetPixelSize(48)
+	downloadIcon.SetPixelSize(28)
 	downloadIcon.SetVAlign(gtk.AlignCenter)
 	downloadIcon.SetHAlign(gtk.AlignCenter)
-	placeholder.Append(downloadIcon)
+	downloadBtn.Append(downloadIcon)
 
-	overlay.SetChild(picture)
-	overlay.AddOverlay(placeholder)
+	placeholder.Append(downloadBtn)
+
+	// Determine target dimensions
+	targetW, targetH := 240.0, 160.0
+	if realW > 0 && realH > 0 {
+		w, h := float64(realW), float64(realH)
+		if w > 300 || h > 300 {
+			ratio := 300.0 / w
+			if h > w { ratio = 300.0 / h }
+			w *= ratio
+			h *= ratio
+		}
+		if w >= 120 && h >= 120 {
+			targetW, targetH = w, h
+		}
+	}
+
+	displayTex := tex
+	if displayTex == nil && thumb != nil {
+		displayTex = thumb
+	}
+
+	if displayTex != nil {
+		picture.SetPaintable(displayTex)
+		picture.SetSizeRequest(int(targetW), int(targetH))
+		picture.Show()
+		overlay.SetChild(picture)
+
+		if tex == nil {
+			// Thumbnail is shown, overlay ONLY the circular download button in center
+			downloadBtn.Show()
+			overlay.AddOverlay(downloadBtn)
+		}
+	} else {
+		// No thumbnail and no full image -> show placeholder container
+		picture.Hide()
+		placeholder.Show()
+		placeholder.SetSizeRequest(int(targetW), int(targetH))
+		overlay.SetChild(placeholder)
+	}
+
 	overlay.SetHAlign(gtk.AlignStart)
 	overlay.SetVAlign(gtk.AlignStart)
 
@@ -56,32 +102,6 @@ func NewImageBubble(name, text string, tex, thumb *gdk.Texture, isSelf bool, sta
 		captionLabel.SetXAlign(0)
 		captionLabel.AddCSSClass("image-caption")
 		mainBox.Append(captionLabel)
-	}
-
-	displayTex := tex
-	if displayTex == nil && thumb != nil {
-		displayTex = thumb
-	}
-
-	if displayTex != nil {
-		placeholder.Hide()
-		picture.SetPaintable(displayTex)
-
-		w, h := float64(displayTex.Width()), float64(displayTex.Height())
-		if realW > 0 && realH > 0 {
-			w, h = float64(realW), float64(realH)
-		}
-
-		if w > 300 || h > 300 {
-			ratio := 300.0 / w
-			if h > w { ratio = 300.0 / h }
-			w *= ratio
-			h *= ratio
-		}
-		picture.SetSizeRequest(int(w), int(h))
-	} else {
-		picture.Hide()
-		placeholder.Show()
 	}
 
 	click := gtk.NewGestureClick()
@@ -98,9 +118,11 @@ func NewImageBubble(name, text string, tex, thumb *gdk.Texture, isSelf bool, sta
 	}
 
 	ib := &ImageBubble{
-		baseBubble: base,
-		picture:    picture,
-		placeholder: placeholder,
+		baseBubble:   base,
+		overlay:      overlay,
+		picture:      picture,
+		placeholder:  placeholder,
+		downloadBtn:  downloadBtn,
 		captionLabel: captionLabel,
 	}
 
@@ -138,6 +160,9 @@ func (ib *ImageBubble) UpdateImage(tex *gdk.Texture, path string) {
 	}
 	if tex != nil {
 		ib.placeholder.Hide()
+		if ib.downloadBtn != nil {
+			ib.downloadBtn.Hide()
+		}
 		ib.picture.Show()
 		ib.picture.SetPaintable(tex)
 		w, h := float64(tex.Width()), float64(tex.Height())
@@ -148,6 +173,9 @@ func (ib *ImageBubble) UpdateImage(tex *gdk.Texture, path string) {
 			h *= ratio
 		}
 		ib.picture.SetSizeRequest(int(w), int(h))
+		if ib.overlay != nil {
+			ib.overlay.SetChild(ib.picture)
+		}
 	}
 }
 

@@ -30,12 +30,15 @@ type Bubble interface {
 	SetEdited(edited bool)
 	MediaPath() string
 	SetViewOnce(viewOnce bool)
+	SetForwarded(forwarded bool)
+	SetOnBubbleClick(f func())
 }
 
 type baseBubble struct {
 	Box            *gtk.Box
 	BubbleBox      *gtk.Box
 	QuotedBox      *gtk.Box
+	ForwardedBox   *gtk.Box
 	QuotedEventBox *gtk.GestureClick
 	StatusLabel    *gtk.Label
 	PinIcon        *gtk.Image
@@ -50,6 +53,7 @@ type baseBubble struct {
 	onReplyRequest func()
 	onReactionRequest func(emoji string)
 	onMentionClick    func(jid string)
+	onBubbleClick     func()
 	contentWidget  gtk.Widgetter
 	editedLabel    *gtk.Label
 	progressBar    *gtk.ProgressBar
@@ -63,6 +67,7 @@ func (b *baseBubble) SetOnQuotedClick(f func(id string)) { b.onQuotedClick = f }
 func (b *baseBubble) SetOnReplyRequest(f func()) { b.onReplyRequest = f }
 func (b *baseBubble) SetOnReactionRequest(f func(emoji string)) { b.onReactionRequest = f }
 func (b *baseBubble) SetOnMentionClick(f func(jid string)) { b.onMentionClick = f }
+func (b *baseBubble) SetOnBubbleClick(f func()) { b.onBubbleClick = f }
 func (b *baseBubble) IsSelf() bool { return b.isSelf }
 func (b *baseBubble) Widget() gtk.Widgetter { return b.Box }
 
@@ -99,8 +104,31 @@ func (b *baseBubble) SetViewOnce(viewOnce bool) {
 	})
 }
 
+func (b *baseBubble) SetForwarded(forwarded bool) {
+	glib.IdleAdd(func() {
+		if b.ForwardedBox != nil {
+			if forwarded {
+				b.ForwardedBox.Show()
+			} else {
+				b.ForwardedBox.Hide()
+			}
+		}
+	})
+}
+
 func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSelf bool, hasBubble bool, status string, time string, avatar *gdk.Texture) (*baseBubble, error) {
 	alignmentBox := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	var bb *baseBubble
+
+	bClick := gtk.NewGestureClick()
+	bClick.SetButton(1)
+	bClick.SetPropagationPhase(gtk.PhaseCapture)
+	bClick.ConnectPressed(func(n int, x, y float64) {
+		if bb != nil && bb.onBubbleClick != nil {
+			bb.onBubbleClick()
+		}
+	})
+	alignmentBox.AddController(bClick)
 	
 	var avatarImg *adw.Avatar
 	if !isSelf {
@@ -130,6 +158,20 @@ func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSel
 			bubbleBox.SetHAlign(gtk.AlignStart)
 		}
 	}
+
+	forwardedBox := gtk.NewBox(gtk.OrientationHorizontal, 4)
+	forwardedBox.AddCSSClass("forwarded-indicator")
+	forwardedBox.Hide()
+	
+	forwardedIcon := gtk.NewImageFromIconName("mail-forward-symbolic")
+	forwardedIcon.SetPixelSize(12)
+	
+	forwardedLabel := gtk.NewLabel("Encaminhada")
+	forwardedLabel.AddCSSClass("forwarded-label")
+	
+	forwardedBox.Append(forwardedIcon)
+	forwardedBox.Append(forwardedLabel)
+	bubbleBox.Append(forwardedBox)
 
 	if name != "" && !isSelf {
 		nameLabel := gtk.NewLabel("")
@@ -236,8 +278,6 @@ func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSel
 	hover := gtk.NewEventControllerMotion()
 	alignmentBox.AddController(hover)
 
-	var bb *baseBubble
-
 	popover := gtk.NewPopover()
 	hbox := gtk.NewBox(gtk.OrientationHorizontal, 5)
 	hbox.SetMarginTop(6); hbox.SetMarginBottom(6); hbox.SetMarginStart(6); hbox.SetMarginEnd(6)
@@ -288,6 +328,7 @@ func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSel
 		Box:          alignmentBox,
 		BubbleBox:    bubbleBox,
 		QuotedBox:    quotedBox,
+		ForwardedBox: forwardedBox,
 		StatusLabel:  statusLabel,
 		AvatarImg:    avatarImg,
 		ReactionsBox: reactionsBox,

@@ -139,7 +139,9 @@ func (br *Bridge) setupUIHandlers() {
 						msgs = []database.Message{}
 					}
 					searchDialog.Populate(msgs, func(msg database.Message) {
+						targetJID, _ := types.ParseJID(msg.ChatJID)
 						br.Chat.HandleChatSelected(msg.ChatJID)
+						br.Render.RefreshMessagesAround(targetJID, msg.ID)
 					})
 				})
 			}()
@@ -323,6 +325,14 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 	cv.OnCancelSearch = func() {
 		if jid := br.Chat.SelectedJID(); jid != nil {
 			br.Render.CancelMessageSearch(jid.ToNonAD().String())
+		}
+	}
+	cv.OnSearchResultClick = func(id string) {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			glib.IdleAdd(func() {
+				cv.SearchBar.SetSearchMode(false)
+			})
+			br.Render.CancelMessageSearchAndJump(jid.ToNonAD().String(), id)
 		}
 	}
 	cv.OnMentionClick = func(jid string) {

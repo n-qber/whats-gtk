@@ -274,34 +274,37 @@ func (ms *MessageService) PersistMessage(msg *events.Message) {
 		metadata.Status = "sent"
 	}
 
-	// Extract Quoted Message Context
-	if ci := ms.ExtractContextInfo(msg); ci != nil && ci.GetStanzaID() != "" {
-		metadata.QuotedMsgID = sql.NullString{String: ci.GetStanzaID(), Valid: true}
-		metadata.QuotedMsgSender = sql.NullString{String: ci.GetParticipant(), Valid: ci.GetParticipant() != ""}
-		
-		// Extract quoted content (this is simplified, might need more types)
-		quotedContent := ""
-		if qm := ci.GetQuotedMessage(); qm != nil {
-			if qm.GetConversation() != "" {
-				quotedContent = qm.GetConversation()
-			} else if qm.GetExtendedTextMessage() != nil {
-				quotedContent = qm.GetExtendedTextMessage().GetText()
-			} else if qm.GetImageMessage() != nil {
-				quotedContent = "[Image]"
-				if qm.GetImageMessage().GetCaption() != "" { quotedContent += ": " + qm.GetImageMessage().GetCaption() }
-			} else if qm.GetVideoMessage() != nil {
-				quotedContent = "[Video]"
-				if qm.GetVideoMessage().GetCaption() != "" { quotedContent += ": " + qm.GetVideoMessage().GetCaption() }
-			} else if qm.GetAudioMessage() != nil {
-				quotedContent = "[Audio]"
-			} else if qm.GetStickerMessage() != nil {
-				quotedContent = "[Sticker]"
-			} else if qm.GetDocumentMessage() != nil {
-				quotedContent = "[Document]"
-				if qm.GetDocumentMessage().GetFileName() != "" { quotedContent += ": " + qm.GetDocumentMessage().GetFileName() }
+	// Extract ContextInfo
+	if ci := ms.ExtractContextInfo(msg); ci != nil {
+		metadata.IsForwarded = ci.GetIsForwarded()
+		if ci.GetStanzaID() != "" {
+			metadata.QuotedMsgID = sql.NullString{String: ci.GetStanzaID(), Valid: true}
+			metadata.QuotedMsgSender = sql.NullString{String: ci.GetParticipant(), Valid: ci.GetParticipant() != ""}
+			
+			// Extract quoted content (this is simplified, might need more types)
+			quotedContent := ""
+			if qm := ci.GetQuotedMessage(); qm != nil {
+				if qm.GetConversation() != "" {
+					quotedContent = qm.GetConversation()
+				} else if qm.GetExtendedTextMessage() != nil {
+					quotedContent = qm.GetExtendedTextMessage().GetText()
+				} else if qm.GetImageMessage() != nil {
+					quotedContent = "[Image]"
+					if qm.GetImageMessage().GetCaption() != "" { quotedContent += ": " + qm.GetImageMessage().GetCaption() }
+				} else if qm.GetVideoMessage() != nil {
+					quotedContent = "[Video]"
+					if qm.GetVideoMessage().GetCaption() != "" { quotedContent += ": " + qm.GetVideoMessage().GetCaption() }
+				} else if qm.GetAudioMessage() != nil {
+					quotedContent = "[Audio]"
+				} else if qm.GetStickerMessage() != nil {
+					quotedContent = "[Sticker]"
+				} else if qm.GetDocumentMessage() != nil {
+					quotedContent = "[Document]"
+					if qm.GetDocumentMessage().GetFileName() != "" { quotedContent += ": " + qm.GetDocumentMessage().GetFileName() }
+				}
 			}
+			metadata.QuotedMsgContent = sql.NullString{String: quotedContent, Valid: quotedContent != ""}
 		}
-		metadata.QuotedMsgContent = sql.NullString{String: quotedContent, Valid: quotedContent != ""}
 	}
 	err := ms.DB.SaveMessage(metadata)
 	if err != nil {
@@ -318,7 +321,7 @@ func (ms *MessageService) PersistMessage(msg *events.Message) {
 }
 
 // PersistMediaMessage is a simplified persistence for pre-downloaded media messages.
-func (ms *MessageService) PersistMediaMessage(msg *events.Message, msgType, path string) {
+func (ms *MessageService) PersistMediaMessage(msg *events.Message, msgType string, path string) {
 	protoMsg, isViewOnce := ms.UnwrapMessage(msg.Message)
 	chatJID := msg.Info.Chat.ToNonAD().String(); senderJID := msg.Info.Sender.ToNonAD().String()
 	var thumb []byte

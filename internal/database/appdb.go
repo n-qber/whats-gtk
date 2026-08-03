@@ -116,6 +116,7 @@ func (a *AppDB) createTables() error {
 	a.ensureColumn("messages", "is_pinned", "BOOLEAN DEFAULT 0")
 	a.ensureColumn("messages", "is_edited", "BOOLEAN DEFAULT 0")
 	a.ensureColumn("messages", "is_view_once", "BOOLEAN DEFAULT 0")
+	a.ensureColumn("messages", "is_forwarded", "BOOLEAN DEFAULT 0")
 
 	// Create unique index for lid to handle mapping and prevent duplicates
 	_, _ = a.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_lid ON contacts(lid) WHERE lid IS NOT NULL")

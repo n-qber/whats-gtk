@@ -165,10 +165,25 @@ func loadCSS() {
 			border-radius: 8px;
 			border: 1px dashed rgba(0,0,0,0.1);
 		}
+		.image-container {
+			border-radius: 8px;
+			overflow: hidden;
+		}
 		.image-placeholder {
-			background-color: rgba(0,0,0,0.05);
-			border-radius: 4px;
-			border: 1px dashed rgba(0,0,0,0.1);
+			background-color: rgba(0, 0, 0, 0.12);
+			border-radius: 8px;
+		}
+		.image-download-button {
+			background-color: rgba(0, 0, 0, 0.55);
+			color: #ffffff;
+			border-radius: 50%;
+			width: 48px;
+			height: 48px;
+			margin: auto;
+			box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+		}
+		.image-download-button:hover {
+			background-color: rgba(0, 0, 0, 0.75);
 		}
 		.message-sticker { margin: 4px; }
 		.reactions-container {
@@ -266,6 +281,25 @@ func loadCSS() {
 		progressbar.media-progress progress {
 			background-color: #00a884;
 			border-radius: 2px;
+		}
+		.forwarded-indicator {
+			color: #667781;
+			margin-bottom: 2px;
+		}
+		.forwarded-label {
+			font-size: 8.5pt;
+			font-style: italic;
+			color: #667781;
+		}
+		.highlighted-row {
+			background-color: rgba(0, 168, 132, 0.18);
+			border-radius: 4px;
+			transition: background-color 0.8s ease-out;
+		}
+		.highlighted-row .message-bubble {
+			background-color: #d9fdd3;
+			box-shadow: 0 0 0 2px #00a884, 0 2px 8px rgba(0, 168, 132, 0.4);
+			transition: background-color 0.8s ease-out, box-shadow 0.8s ease-out;
 		}
 	`)
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), cssProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
