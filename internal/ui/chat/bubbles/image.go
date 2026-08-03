@@ -48,8 +48,6 @@ func NewImageBubble(name, text string, tex, thumb *gdk.Texture, isSelf bool, sta
 	downloadIcon.SetHAlign(gtk.AlignCenter)
 	downloadBtn.Append(downloadIcon)
 
-	placeholder.Append(downloadBtn)
-
 	// Determine target dimensions
 	targetW, targetH := 240.0, 160.0
 	if realW > 0 && realH > 0 {
@@ -75,18 +73,19 @@ func NewImageBubble(name, text string, tex, thumb *gdk.Texture, isSelf bool, sta
 		picture.SetSizeRequest(int(targetW), int(targetH))
 		picture.Show()
 		overlay.SetChild(picture)
-
-		if tex == nil {
-			// Thumbnail is shown, overlay ONLY the circular download button in center
-			downloadBtn.Show()
-			overlay.AddOverlay(downloadBtn)
-		}
 	} else {
 		// No thumbnail and no full image -> show placeholder container
 		picture.Hide()
 		placeholder.Show()
 		placeholder.SetSizeRequest(int(targetW), int(targetH))
 		overlay.SetChild(placeholder)
+	}
+	
+	overlay.AddOverlay(downloadBtn)
+	if tex == nil {
+		downloadBtn.Show()
+	} else {
+		downloadBtn.Hide()
 	}
 
 	overlay.SetHAlign(gtk.AlignStart)

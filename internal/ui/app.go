@@ -163,8 +163,8 @@ func (a *App) setupSubscriptions() {
 							var texImg, texThumb *gdk.Texture
 							texThumb = bytesToTexture(m.Thumbnail)
 							
-							if m.Content != "" && m.Type != "sticker" {
-								pixbuf, _ := gdkpixbuf.NewPixbufFromFile(m.Content)
+							if m.DocumentPath != "" && m.Type != "sticker" {
+								pixbuf, _ := gdkpixbuf.NewPixbufFromFile(m.DocumentPath)
 								if pixbuf != nil {
 									texImg = gdk.NewTextureForPixbuf(pixbuf)
 								}
@@ -308,6 +308,9 @@ func (a *App) setupSubscriptions() {
 						if item.Avatar != nil {
 							a.Sidebar.SetAvatar(item.JID, item.Avatar)
 						}
+					}
+					if a.ActiveMainJID != "" {
+						a.Sidebar.SelectChat(a.ActiveMainJID)
 					}
 					a.Sidebar.SetRefreshing(false)
 				})
