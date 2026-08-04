@@ -827,8 +827,7 @@ func (c *ChatController) HandleDetach() {
 		c.RefreshMessages(targetJID)
 		
 		// Clear main chat view since it's now detached
-		c.App.ChatView.Clear()
-		c.App.ChatView.SetHeader("Select a chat", nil)
+		c.App.ChatView.SetNoConversation()
 		c.App.ActiveMainJID = ""
 		c.selectedJID = nil
 	})

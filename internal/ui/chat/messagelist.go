@@ -104,7 +104,7 @@ func NewMessageList() *MessageList {
 
 	ml.ScrolledWindow.VAdjustment().ConnectValueChanged(func() {
 		adj := ml.ScrolledWindow.VAdjustment()
-		if adj.Value() <= 50.0 && !ml.IsLoadingOlder && ml.OnLoadOlder != nil {
+		if len(ml.MessageRows) > 0 && adj.Value() <= 50.0 && !ml.IsLoadingOlder && ml.OnLoadOlder != nil {
 			ml.SetLoadingOlder(true)
 			ml.OnLoadOlder()
 		}
@@ -134,6 +134,7 @@ func (ml *MessageList) SetPinnedMessage(content string) {
 }
 
 func (ml *MessageList) Clear() {
+	ml.SetLoadingOlder(false)
 	for ml.ListBox.FirstChild() != nil {
 		ml.ListBox.Remove(ml.ListBox.FirstChild())
 	}

@@ -36,6 +36,8 @@ func NewStickerBubble(name string, anim *gdkpixbuf.PixbufAnimation, pixbuf, thum
 	downloadIcon.SetPixelSize(48)
 	downloadIcon.SetVAlign(gtk.AlignCenter)
 	downloadIcon.SetHAlign(gtk.AlignCenter)
+	downloadIcon.SetVExpand(true)
+	downloadIcon.SetHExpand(true)
 	placeholder.Append(downloadIcon)
 
 	overlay.SetChild(picture)

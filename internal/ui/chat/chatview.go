@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 
+	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
@@ -11,29 +12,31 @@ import (
 
 type ChatView struct {
 	Box         *gtk.Box
+	Stack       *gtk.Stack
+	EmptyState  *adw.StatusPage
 	TopBar      *TopBar
 	SearchBar   *SearchBar
 	MessageList *MessageList
 	InputBar    *InputBar
 
 	// High-level Callbacks (consumed by bridge)
-	OnSendMessage        func(text string, replyToID string)
-	OnPasteImage         func(tex *gdk.Texture)
-	OnSendFile           func(path string)
-	OnDownloadMedia      func(id string)
-	OnOpenImage          func(path string)
-	OnSendReaction       func(id, emoji string)
-	OnPinMessage         func(id string, pin bool, duration uint32)
-	OnDetach             func()
-	OnLoadOlder          func()
-	OnLoadMessageRequest func(id string)
-	OnSearchMessages     func(query string)
-	OnCancelSearch       func()
+	OnSendMessage         func(text string, replyToID string)
+	OnPasteImage          func(tex *gdk.Texture)
+	OnSendFile            func(path string)
+	OnDownloadMedia       func(id string)
+	OnOpenImage           func(path string)
+	OnSendReaction        func(id, emoji string)
+	OnPinMessage          func(id string, pin bool, duration uint32)
+	OnDetach              func()
+	OnLoadOlder           func()
+	OnLoadMessageRequest  func(id string)
+	OnSearchMessages      func(query string)
+	OnCancelSearch        func()
 	OnCancelSearchAndJump func(id string)
-	OnSearchResultClick  func(id string)
-	OnMentionClick       func(jid string)
-	OnSendPollVote       func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
-	OnHeaderClick        func()
+	OnSearchResultClick   func(id string)
+	OnMentionClick        func(jid string)
+	OnSendPollVote        func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
+	OnHeaderClick         func()
 
 	// Direct Field Accessors for legacy compatibility
 	IsSearching bool
@@ -154,18 +157,59 @@ func NewChatView() (*ChatView, error) {
 		}
 	}
 
-	// Build the layout
-	box.Append(cv.TopBar.Header)
-	box.Append(cv.SearchBar.Widget)
-	box.Append(cv.MessageList.Widget)
-	box.Append(cv.InputBar.Box)
+	// Build layout using a Stack for Empty State vs Active Chat View
+	cv.Stack = gtk.NewStack()
+
+	// 1. Static Empty View Container (with HeaderBar for close button & window controls)
+	emptyBox := gtk.NewBox(gtk.OrientationVertical, 0)
+	emptyHeaderBar := adw.NewHeaderBar()
+
+	statusPage := adw.NewStatusPage()
+	statusPage.SetTitle("No Conversation")
+	statusPage.SetDescription("Select a chat from the sidebar to start messaging")
+	statusPage.SetIconName("chat-symbolic")
+	statusPage.SetVExpand(true)
+	statusPage.SetHExpand(true)
+	cv.EmptyState = statusPage
+
+	emptyBox.Append(emptyHeaderBar)
+	emptyBox.Append(statusPage)
+
+	// 2. Active Chat Box Container
+	chatBox := gtk.NewBox(gtk.OrientationVertical, 0)
+	chatBox.Append(cv.TopBar.Header)
+	chatBox.Append(cv.SearchBar.Widget)
+	chatBox.Append(cv.MessageList.Widget)
+	chatBox.Append(cv.InputBar.Box)
+
+	cv.Stack.AddNamed(emptyBox, "empty")
+	cv.Stack.AddNamed(chatBox, "chat")
+
+	// Set initial state to static empty background
+	cv.Stack.SetVisibleChildName("empty")
+
+	box.Append(cv.Stack)
 
 	return cv, nil
 }
 
 // Proxies for legacy compatibility
 
+func (cv *ChatView) SetNoConversation() {
+	cv.Clear()
+	if cv.Stack != nil {
+		cv.Stack.SetVisibleChildName("empty")
+	}
+}
+
 func (cv *ChatView) SetHeader(name string, tex *gdk.Texture) {
+	if name == "" || name == "WhatsApp GTK" || name == "Select a chat" {
+		cv.SetNoConversation()
+		return
+	}
+	if cv.Stack != nil {
+		cv.Stack.SetVisibleChildName("chat")
+	}
 	cv.TopBar.SetInfo(name, tex)
 }
 

@@ -190,8 +190,7 @@ func (br *Bridge) setupUIHandlers() {
 				br.App.Sidebar.ClearSelection()
 			}
 			if br.App.ChatView != nil {
-				br.App.ChatView.Clear()
-				br.App.ChatView.SetHeader("WhatsApp GTK", nil)
+				br.App.ChatView.SetNoConversation()
 			}
 		})
 	}
