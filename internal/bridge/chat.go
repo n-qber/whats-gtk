@@ -46,11 +46,12 @@ type ChatController struct {
 	
 	OldestMessageTimes map[string]time.Time
 
-	selectedJID   *types.JID
-	lastSender    string
-	lastDateStr   string
-	sidebarMutex  sync.Mutex
-	searchSerial  int
+	selectedJID     *types.JID
+	lastSender      string
+	lastDateStr     string
+	activeProfileID int64
+	sidebarMutex    sync.Mutex
+	searchSerial    int
 	lastGroupSync   map[string]time.Time
 	cachedGroupInfo map[string]*types.GroupInfo
 	groupMutex      sync.RWMutex
@@ -58,6 +59,7 @@ type ChatController struct {
 
 // NewChatController creates a new ChatController.
 func NewChatController(b *backend.Backend, app *ui.App, db *database.AppDB, msgs *MessageService, contacts *ContactService, media *MediaService, ctx context.Context, bus *events.EventBus, mapper *ViewMapper) *ChatController {
+	activeProfileID, _ := db.GetActiveProfileID()
 	cc := &ChatController{
 		Backend:            b,
 		App:                app,
@@ -68,6 +70,7 @@ func NewChatController(b *backend.Backend, app *ui.App, db *database.AppDB, msgs
 		Mapper:             mapper,
 		EventBus:           bus,
 		ctx:                ctx,
+		activeProfileID:    activeProfileID,
 		lastGroupSync:      make(map[string]time.Time),
 		cachedGroupInfo:    make(map[string]*types.GroupInfo),
 		OldestMessageTimes: make(map[string]time.Time),
@@ -356,9 +359,9 @@ func (cc *ChatController) HandleSearch(t string) {
 		var c []database.Contact
 		var err error
 		if strings.TrimSpace(t) == "" {
-			c, err = cc.DB.GetAllContacts(100)
+			c, err = cc.DB.GetAllContacts(cc.activeProfileID, 100)
 		} else {
-			c, err = cc.DB.SearchContacts(t, 200)
+			c, err = cc.DB.SearchContacts(cc.activeProfileID, t, 200)
 		}
 		
 		cc.sidebarMutex.Lock()
@@ -1027,7 +1030,7 @@ func (cc *ChatController) LoadOlderMessages(jidStr string, targetID string) {
 
 // RefreshSidebarUI fetches contacts and publishes them as SidebarItems.
 func (cc *ChatController) RefreshSidebarUI() {
-	if c, err := cc.DB.GetAllContacts(200); err == nil {
+	if c, err := cc.DB.GetAllContacts(cc.activeProfileID, 200); err == nil {
 		var items []events.SidebarItem
 		for _, contact := range c {
 			if contact.IsArchived {
@@ -1049,3 +1052,18 @@ func (cc *ChatController) RefreshSidebarUI() {
 		})
 	}
 }
+
+func (cc *ChatController) GetActiveProfileID() int64 {
+	return cc.activeProfileID
+}
+
+func (cc *ChatController) SetActiveProfileID(id int64) {
+	cc.activeProfileID = id
+	_ = cc.DB.SetActiveProfileID(id)
+	cc.RefreshSidebarUI()
+	cc.EventBus.Publish(events.Event{
+		Type: events.EventActiveProfileChanged,
+		Data: id,
+	})
+}
+

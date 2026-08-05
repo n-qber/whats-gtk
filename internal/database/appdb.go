@@ -83,6 +83,21 @@ func (a *AppDB) createTables() error {
 			PRIMARY KEY (msg_id, user_jid, receipt_type)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_message_receipts_msg ON message_receipts(msg_id)`,
+		`CREATE TABLE IF NOT EXISTS profiles (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS profile_contacts (
+			profile_id INTEGER NOT NULL,
+			jid TEXT NOT NULL,
+			PRIMARY KEY (profile_id, jid),
+			FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS app_settings (
+			key TEXT PRIMARY KEY,
+			value TEXT
+		)`,
 	}
 
 	for _, q := range queries {

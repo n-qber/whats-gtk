@@ -3,6 +3,7 @@ package sidebar
 import (
 	"fmt"
 	"strings"
+	"whats-gtk/internal/database"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
@@ -10,30 +11,55 @@ import (
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 )
 
+type ProfileItem struct {
+	ID   int64
+	Name string
+}
+
 type Sidebar struct {
-	Box            *gtk.Box
-	ListBox        *gtk.ListBox
-	SearchEntry    *gtk.SearchEntry
-	ProgressBar    *gtk.ProgressBar
-	OnChatSelected func(jid string)
-	OnSearch       func(text string)
-	
-	chatRows       map[string]*adw.ActionRow
-	chatAvatars    map[string]*adw.Avatar
-	chatIndices    map[string]*gtk.Label
-	isRefreshing   bool
-	syncPulseId    glib.SourceHandle
+	Box               *gtk.Box
+	ListBox           *gtk.ListBox
+	SearchEntry       *gtk.SearchEntry
+	ProgressBar       *gtk.ProgressBar
+	ProfileCombo      *gtk.ComboBoxText
+	ManageProfilesBtn *gtk.Button
+	OnChatSelected    func(jid string)
+	OnSearch          func(text string)
+	OnProfileSelected func(profileID int64)
+	OnManageProfiles  func()
+
+	profileItems []ProfileItem
+	chatRows     map[string]*adw.ActionRow
+	chatAvatars  map[string]*adw.Avatar
+	chatIndices  map[string]*gtk.Label
+	isRefreshing bool
+	syncPulseId  glib.SourceHandle
 }
 
 func NewSidebar() (*Sidebar, error) {
 	box := gtk.NewBox(gtk.OrientationVertical, 0)
-	
+
+	profileBar := gtk.NewBox(gtk.OrientationHorizontal, 6)
+	profileBar.SetMarginTop(6)
+	profileBar.SetMarginStart(6)
+	profileBar.SetMarginEnd(6)
+
+	profileCombo := gtk.NewComboBoxText()
+	profileCombo.SetHExpand(true)
+	profileBar.Append(profileCombo)
+
+	manageBtn := gtk.NewButtonFromIconName("preferences-system-symbolic")
+	manageBtn.SetTooltipText("Manage Profiles")
+	profileBar.Append(manageBtn)
+
+	box.Append(profileBar)
+
 	searchEntry := gtk.NewSearchEntry()
-	searchEntry.SetMarginTop(6)
+	searchEntry.SetMarginTop(4)
 	searchEntry.SetMarginBottom(6)
 	searchEntry.SetMarginStart(6)
 	searchEntry.SetMarginEnd(6)
-	
+
 	box.Append(searchEntry)
 
 	progressBar := gtk.NewProgressBar()
@@ -44,22 +70,42 @@ func NewSidebar() (*Sidebar, error) {
 
 	scrolled := gtk.NewScrolledWindow()
 	scrolled.SetVExpand(true)
-	
+
 	listBox := gtk.NewListBox()
 	listBox.AddCSSClass("navigation-sidebar")
 	scrolled.SetChild(listBox)
-	
+
 	box.Append(scrolled)
 
 	s := &Sidebar{
-		Box:         box,
-		ListBox:     listBox,
-		SearchEntry: searchEntry,
-		ProgressBar: progressBar,
-		chatRows:    make(map[string]*adw.ActionRow),
-		chatAvatars: make(map[string]*adw.Avatar),
-		chatIndices: make(map[string]*gtk.Label),
+		Box:               box,
+		ListBox:           listBox,
+		SearchEntry:       searchEntry,
+		ProgressBar:       progressBar,
+		ProfileCombo:      profileCombo,
+		ManageProfilesBtn: manageBtn,
+		chatRows:          make(map[string]*adw.ActionRow),
+		chatAvatars:       make(map[string]*adw.Avatar),
+		chatIndices:       make(map[string]*gtk.Label),
 	}
+
+	profileCombo.ConnectChanged(func() {
+		if s.isRefreshing {
+			return
+		}
+		idx := profileCombo.Active()
+		if idx >= 0 && int(idx) < len(s.profileItems) {
+			if s.OnProfileSelected != nil {
+				s.OnProfileSelected(s.profileItems[int(idx)].ID)
+			}
+		}
+	})
+
+	manageBtn.ConnectClicked(func() {
+		if s.OnManageProfiles != nil {
+			s.OnManageProfiles()
+		}
+	})
 
 	searchEntry.ConnectSearchChanged(func() {
 		if s.OnSearch != nil {
@@ -277,3 +323,27 @@ func (s *Sidebar) SetAvatar(jid string, tex *gdk.Texture) {
 		}
 	}
 }
+
+func (s *Sidebar) SetProfiles(profiles []database.Profile, activeID int64) {
+	s.isRefreshing = true
+	defer func() { s.isRefreshing = false }()
+
+	s.ProfileCombo.RemoveAll()
+	s.profileItems = nil
+
+	// Add Default "All Chats"
+	s.profileItems = append(s.profileItems, ProfileItem{ID: 0, Name: "All Chats"})
+	s.ProfileCombo.AppendText("All Chats")
+
+	activeIdx := 0
+	for i, p := range profiles {
+		s.profileItems = append(s.profileItems, ProfileItem{ID: p.ID, Name: p.Name})
+		s.ProfileCombo.AppendText(p.Name)
+		if p.ID == activeID {
+			activeIdx = i + 1
+		}
+	}
+
+	s.ProfileCombo.SetActive(activeIdx)
+}
+

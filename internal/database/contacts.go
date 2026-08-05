@@ -155,14 +155,30 @@ func (a *AppDB) GetContact(jid string) (*Contact, error) {
 	return &c, nil
 }
 
-func (a *AppDB) GetAllContacts(limit int) ([]Contact, error) {
-	// Hide raw LIDs that are already mapped to a PN
-	query := `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
-	          FROM contacts 
-	          WHERE (jid NOT LIKE '%@lid') OR (lid IS NULL OR lid = '')
-	          ORDER BY is_pinned DESC, last_message_at DESC, saved_name ASC, jid ASC 
-	          LIMIT ?`
-	rows, err := a.db.Query(query, limit)
+func (a *AppDB) GetAllContacts(profileID int64, limit int) ([]Contact, error) {
+	var query string
+	var rows *sql.Rows
+	var err error
+
+	if profileID > 0 {
+		query = `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
+		          FROM contacts 
+		          WHERE ((jid NOT LIKE '%@lid') OR (lid IS NULL OR lid = ''))
+		            AND (
+		                jid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?)
+		                OR lid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?)
+		            )
+		          ORDER BY is_pinned DESC, last_message_at DESC, saved_name ASC, jid ASC 
+		          LIMIT ?`
+		rows, err = a.db.Query(query, profileID, profileID, limit)
+	} else {
+		query = `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
+		          FROM contacts 
+		          WHERE (jid NOT LIKE '%@lid') OR (lid IS NULL OR lid = '')
+		          ORDER BY is_pinned DESC, last_message_at DESC, saved_name ASC, jid ASC 
+		          LIMIT ?`
+		rows, err = a.db.Query(query, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -180,31 +196,58 @@ func (a *AppDB) GetAllContacts(limit int) ([]Contact, error) {
 	return contacts, nil
 }
 
-func (a *AppDB) SearchContacts(term string, limit int) ([]Contact, error) {
+func (a *AppDB) SearchContacts(profileID int64, term string, limit int) ([]Contact, error) {
 	cleanTerm := strings.TrimSpace(term)
 	if cleanTerm == "" {
-		return a.GetAllContacts(limit)
+		return a.GetAllContacts(profileID, limit)
 	}
 
 	pattern := "%" + cleanTerm + "%"
 	prefixPattern := cleanTerm + "%"
-	query := `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
-	          FROM contacts 
-	          WHERE (IFNULL(saved_name, '') LIKE ? OR IFNULL(push_name, '') LIKE ? OR jid LIKE ?)
-	          AND (jid NOT LIKE '%@lid' OR lid IS NULL OR lid = '')
-	          ORDER BY 
-	              is_pinned DESC,
-	              CASE 
-	                  WHEN IFNULL(saved_name, '') = ? COLLATE NOCASE THEN 1
-	                  WHEN IFNULL(saved_name, '') LIKE ? THEN 2
-	                  WHEN IFNULL(push_name, '') = ? COLLATE NOCASE THEN 3
-	                  WHEN IFNULL(push_name, '') LIKE ? THEN 4
-	                  ELSE 5 
-	              END,
-	              last_message_at DESC 
-	          LIMIT ?`
 
-	rows, err := a.db.Query(query, pattern, pattern, pattern, cleanTerm, prefixPattern, cleanTerm, prefixPattern, limit)
+	var query string
+	var rows *sql.Rows
+	var err error
+
+	if profileID > 0 {
+		query = `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
+		          FROM contacts 
+		          WHERE (IFNULL(saved_name, '') LIKE ? OR IFNULL(push_name, '') LIKE ? OR jid LIKE ?)
+		          AND (jid NOT LIKE '%@lid' OR lid IS NULL OR lid = '')
+		          AND (
+		              jid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?)
+		              OR lid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?)
+		          )
+		          ORDER BY 
+		              is_pinned DESC,
+		              CASE 
+		                  WHEN IFNULL(saved_name, '') = ? COLLATE NOCASE THEN 1
+		                  WHEN IFNULL(saved_name, '') LIKE ? THEN 2
+		                  WHEN IFNULL(push_name, '') = ? COLLATE NOCASE THEN 3
+		                  WHEN IFNULL(push_name, '') LIKE ? THEN 4
+		                  ELSE 5 
+		              END,
+		              last_message_at DESC 
+		          LIMIT ?`
+		rows, err = a.db.Query(query, pattern, pattern, pattern, profileID, profileID, cleanTerm, prefixPattern, cleanTerm, prefixPattern, limit)
+	} else {
+		query = `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
+		          FROM contacts 
+		          WHERE (IFNULL(saved_name, '') LIKE ? OR IFNULL(push_name, '') LIKE ? OR jid LIKE ?)
+		          AND (jid NOT LIKE '%@lid' OR lid IS NULL OR lid = '')
+		          ORDER BY 
+		              is_pinned DESC,
+		              CASE 
+		                  WHEN IFNULL(saved_name, '') = ? COLLATE NOCASE THEN 1
+		                  WHEN IFNULL(saved_name, '') LIKE ? THEN 2
+		                  WHEN IFNULL(push_name, '') = ? COLLATE NOCASE THEN 3
+		                  WHEN IFNULL(push_name, '') LIKE ? THEN 4
+		                  ELSE 5 
+		              END,
+		              last_message_at DESC 
+		          LIMIT ?`
+		rows, err = a.db.Query(query, pattern, pattern, pattern, cleanTerm, prefixPattern, cleanTerm, prefixPattern, limit)
+	}
 	if err != nil {
 		return nil, err
 	}

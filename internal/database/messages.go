@@ -404,17 +404,37 @@ func (a *AppDB) SearchMessagesInChat(jids []string, queryStr string, limit int) 
 	return msgs, nil
 }
 
-func (a *AppDB) SearchMessages(query string, limit int) ([]Message, error) {
-	q := `SELECT msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
-			media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
-			media_width, media_height,
-			quoted_msg_id, quoted_msg_content, quoted_msg_sender, is_pinned, is_edited, is_view_once, is_forwarded
-		  FROM messages 
-		  WHERE content LIKE ? OR caption LIKE ? 
-		  ORDER BY timestamp DESC LIMIT ?`
-	
+func (a *AppDB) SearchMessages(profileID int64, query string, limit int) ([]Message, error) {
+	var q string
+	var rows *sql.Rows
+	var err error
+
 	searchStr := "%" + query + "%"
-	rows, err := a.db.Query(q, searchStr, searchStr, limit)
+
+	if profileID > 0 {
+		q = `SELECT msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
+				media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
+				media_width, media_height,
+				quoted_msg_id, quoted_msg_content, quoted_msg_sender, is_pinned, is_edited, is_view_once, is_forwarded
+			  FROM messages 
+			  WHERE (content LIKE ? OR caption LIKE ?)
+			    AND (
+			        chat_jid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?)
+			        OR chat_jid IN (SELECT lid FROM contacts WHERE jid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?))
+			    )
+			  ORDER BY timestamp DESC LIMIT ?`
+		rows, err = a.db.Query(q, searchStr, searchStr, profileID, profileID, limit)
+	} else {
+		q = `SELECT msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
+				media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
+				media_width, media_height,
+				quoted_msg_id, quoted_msg_content, quoted_msg_sender, is_pinned, is_edited, is_view_once, is_forwarded
+			  FROM messages 
+			  WHERE content LIKE ? OR caption LIKE ? 
+			  ORDER BY timestamp DESC LIMIT ?`
+		rows, err = a.db.Query(q, searchStr, searchStr, limit)
+	}
+
 	if err != nil {
 		return nil, err
 	}

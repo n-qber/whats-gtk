@@ -83,8 +83,19 @@ func (br *Bridge) Start(ctx context.Context) {
 	br.Backend.Connect()
 	go func() {
 		// Initial sync
+		br.RefreshProfilesUI()
 		br.Chat.RefreshSidebarUI()
 	}()
+}
+
+func (br *Bridge) RefreshProfilesUI() {
+	profiles, _ := br.DB.GetProfiles()
+	activeID := br.Chat.GetActiveProfileID()
+	glib.IdleAdd(func() {
+		if br.App.Sidebar != nil {
+			br.App.Sidebar.SetProfiles(profiles, activeID)
+		}
+	})
 }
 
 // registerDefaultHooks registers pipeline hooks for auto-downloading stickers
@@ -115,6 +126,21 @@ func (br *Bridge) registerDefaultHooks() {
 func (br *Bridge) setupUIHandlers() {
 	br.App.Sidebar.OnChatSelected = br.Chat.HandleChatSelected
 	br.App.Sidebar.OnSearch = br.Chat.HandleSearch
+
+	br.App.Sidebar.OnProfileSelected = func(profileID int64) {
+		br.Chat.SetActiveProfileID(profileID)
+	}
+	br.App.Sidebar.OnManageProfiles = func() {
+		ui.ShowProfileManagerDialog(&br.App.Window.Window, br.DB, func() {
+			br.RefreshProfilesUI()
+		}, func(profileID int64) {
+			br.Chat.SetActiveProfileID(profileID)
+			br.RefreshProfilesUI()
+		})
+	}
+
+	br.RefreshProfilesUI()
+
 	br.WireChatView(br.App.ChatView)
 	br.App.Window.Connect("notify::is-active", br.Chat.HandleWindowActive)
 
@@ -130,7 +156,8 @@ func (br *Bridge) setupUIHandlers() {
 			glib.IdleAdd(func() { searchDialog.SetLoading(true) })
 
 			go func() {
-				msgs, err := br.DB.SearchMessages(query, 50)
+				activeProfileID := br.Chat.GetActiveProfileID()
+				msgs, err := br.DB.SearchMessages(activeProfileID, query, 50)
 				if err != nil {
 					fmt.Println("Error searching messages:", err)
 					glib.IdleAdd(func() { searchDialog.SetLoading(false) })

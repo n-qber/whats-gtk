@@ -12,6 +12,8 @@ const (
 	EventContactsUpdated      EventType = "ContactsUpdated"
 	EventChatMessagesLoaded   EventType = "ChatMessagesLoaded"
 	EventLiveMessageReceived  EventType = "LiveMessageReceived"
+	EventProfilesUpdated      EventType = "ProfilesUpdated"
+	EventActiveProfileChanged EventType = "ActiveProfileChanged"
 )
 
 type LiveMessagePayload struct {
