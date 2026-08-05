@@ -46,6 +46,7 @@ func NewSidebar() (*Sidebar, error) {
 
 	profileCombo := gtk.NewComboBoxText()
 	profileCombo.SetHExpand(true)
+	profileCombo.SetFocusable(false)
 	profileBar.Append(profileCombo)
 
 	manageBtn := gtk.NewButtonFromIconName("preferences-system-symbolic")
@@ -99,6 +100,9 @@ func NewSidebar() (*Sidebar, error) {
 				s.OnProfileSelected(s.profileItems[int(idx)].ID)
 			}
 		}
+		glib.IdleAdd(func() {
+			s.ListBox.GrabFocus()
+		})
 	})
 
 	manageBtn.ConnectClicked(func() {
