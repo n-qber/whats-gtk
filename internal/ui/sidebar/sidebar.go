@@ -240,25 +240,37 @@ func (s *Sidebar) ShowIndices(show bool) {
 	}
 }
 
-func (s *Sidebar) AddChat(jid, name string, isGroup bool, unreadCount int, isPinned bool) {
-	if _, exists := s.chatRows[jid]; exists {
-		return
-	}
-
-	row := adw.NewActionRow()
-	
+func formatChatTitle(name string, isGroup bool, unreadCount int, isPinned bool) string {
 	title := name
 	if isGroup {
 		title = "[G] " + title
 	}
 	if unreadCount > 0 {
 		title = fmt.Sprintf("(%d) %s", unreadCount, title)
-		// Can add bold or style class later
 	}
 	if isPinned {
 		title = "📌 " + title
 	}
-	
+	return title
+}
+
+func (s *Sidebar) UpdateChatRow(jid, name string, isGroup bool, unreadCount int, isPinned bool) {
+	if row, exists := s.chatRows[jid]; exists {
+		title := formatChatTitle(name, isGroup, unreadCount, isPinned)
+		row.SetTitle(glib.MarkupEscapeText(title))
+		return
+	}
+	s.AddChat(jid, name, isGroup, unreadCount, isPinned)
+}
+
+func (s *Sidebar) AddChat(jid, name string, isGroup bool, unreadCount int, isPinned bool) {
+	if _, exists := s.chatRows[jid]; exists {
+		s.UpdateChatRow(jid, name, isGroup, unreadCount, isPinned)
+		return
+	}
+
+	row := adw.NewActionRow()
+	title := formatChatTitle(name, isGroup, unreadCount, isPinned)
 	row.SetTitle(glib.MarkupEscapeText(title))
 	row.SetName(jid)
 	

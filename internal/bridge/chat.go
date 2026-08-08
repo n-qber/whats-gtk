@@ -182,7 +182,13 @@ func (cc *ChatController) SetLastDateStr(s string) { cc.lastDateStr = s }
 // resolves LID if needed, and syncs group info for group chats.
 func (cc *ChatController) HandleChatSelected(jidStr string) {
 	jid, err := types.ParseJID(jidStr); if err != nil { return }
-	jid = cc.Messages.ResolveJID(jid); cc.selectedJID = &jid; cc.lastSender = "" 
+	jid = cc.Messages.ResolveJID(jid)
+	
+	if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == jid.ToNonAD().String() {
+		return
+	}
+
+	cc.selectedJID = &jid; cc.lastSender = "" 
 	cc.App.ActiveMainJID = jid.ToNonAD().String()
 	
 	if contact, err := cc.DB.GetContact(jid.String()); err == nil {
@@ -196,9 +202,16 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 	}
 	cc.App.InfoFlap.SetRevealFlap(false)
 	
-	// Clear unread count locally and refresh sidebar
+	// Clear unread count locally and update sidebar row in-place
 	cc.DB.ClearUnreadCount(jid.String())
-	cc.RefreshSidebarUI()
+	if contact, err := cc.DB.GetContact(jid.String()); err == nil {
+		cc.App.Sidebar.UpdateChatRow(jid.String(), contact.DisplayName(), contact.IsGroup.Valid && contact.IsGroup.Bool, 0, contact.IsPinned)
+	}
+
+	// Immediately clear previous messages so user doesn't see old messages under new header
+	if cc.App.ChatView != nil {
+		cc.App.ChatView.Clear()
+	}
 
 	cc.RefreshMessages(jid)
 	
@@ -675,10 +688,6 @@ func (cc *ChatController) SyncGroupIfNeeded(jid types.JID) {
 			}
 			
 			cc.updateGroupInfoUI(info)
-			
-			if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == groupJID.ToNonAD().String() {
-				cc.RefreshMessages(groupJID)
-			}
 		}(jid)
 	}
 }

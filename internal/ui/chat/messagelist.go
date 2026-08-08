@@ -145,10 +145,27 @@ func (ml *MessageList) Clear() {
 }
 
 func (ml *MessageList) ScrollToBottom() {
-	glib.IdleAdd(func() {
+	attempts := 0
+	var prevUpper float64 = -1
+	var tryScroll func() bool
+	tryScroll = func() bool {
+		attempts++
 		adj := ml.ScrolledWindow.VAdjustment()
-		adj.SetValue(adj.Upper())
-	})
+		upper := adj.Upper()
+		pageSize := adj.PageSize()
+		target := upper - pageSize
+		if target < 0 {
+			target = 0
+		}
+		adj.SetValue(target)
+
+		if upper != prevUpper && attempts < 5 {
+			prevUpper = upper
+			return true
+		}
+		return false
+	}
+	glib.TimeoutAdd(20, tryScroll)
 }
 
 func (ml *MessageList) HighlightMessage(id string) {
