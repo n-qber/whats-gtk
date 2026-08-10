@@ -19,12 +19,22 @@ type Contact struct {
 	IsArchived    bool
 }
 
+type RowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanContact(s RowScanner) (Contact, error) {
+	var c Contact
+	err := s.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt, &c.UnreadCount, &c.IsPinned, &c.IsArchived)
+	return c, err
+}
+
 func (a *AppDB) SaveSyncData(jid string, unreadCount int, isPinned bool, isArchived bool, name string, pushName string, timestamp uint64) error {
 	var ts interface{}
 	if timestamp > 0 {
 		ts = time.Unix(int64(timestamp), 0)
 	}
-	
+
 	query := `INSERT INTO contacts (jid, unread_count, is_pinned, is_archived, saved_name, push_name, last_message_at) 
 	          VALUES (?, ?, ?, ?, ?, ?, ?)
 	          ON CONFLICT(jid) DO UPDATE SET
@@ -43,7 +53,6 @@ func (a *AppDB) SaveSyncData(jid string, unreadCount int, isPinned bool, isArchi
 }
 
 func (a *AppDB) SaveContact(c Contact) error {
-	// 1. If we are saving an LID, check if it's already mapped to a PN
 	if strings.HasSuffix(c.JID, "@lid") {
 		var pn string
 		err := a.db.QueryRow("SELECT jid FROM contacts WHERE lid = ?", c.JID).Scan(&pn)
@@ -81,13 +90,11 @@ func (a *AppDB) MergeLID(pnJID, lidJID string) error {
 	}
 	defer tx.Rollback()
 
-	// 1. Ensure the PN record exists and has the LID set
 	_, err = tx.Exec("INSERT INTO contacts (jid, lid) VALUES (?, ?) ON CONFLICT(jid) DO UPDATE SET lid = excluded.lid", pnJID, lidJID)
 	if err != nil {
 		return err
 	}
 
-	// 2. Transfer data from LID record to PN record only if LID record exists
 	var dummy int
 	err = tx.QueryRow("SELECT 1 FROM contacts WHERE jid = ?", lidJID).Scan(&dummy)
 	if err == nil {
@@ -109,7 +116,7 @@ func (a *AppDB) MergeLID(pnJID, lidJID string) error {
 		if err != nil {
 			return err
 		}
-		
+
 		_, err = tx.Exec("UPDATE messages SET chat_jid = ? WHERE chat_jid = ?", pnJID, lidJID)
 		if err != nil {
 			return err
@@ -118,19 +125,17 @@ func (a *AppDB) MergeLID(pnJID, lidJID string) error {
 		if err != nil {
 			return err
 		}
-		
-		// 3. Delete the duplicate LID-only record
+
 		_, err = tx.Exec("DELETE FROM contacts WHERE jid = ?", lidJID)
 		if err != nil {
 			return err
 		}
 	}
-	
+
 	return tx.Commit()
 }
 
 func (a *AppDB) UpdateContactTimestamp(jid string, timestamp time.Time) error {
-	// Update by JID or LID
 	query := `UPDATE contacts SET last_message_at = ? 
 	          WHERE (jid = ? OR lid = ?) 
 	          AND (last_message_at IS NULL OR ? > last_message_at)`
@@ -139,16 +144,12 @@ func (a *AppDB) UpdateContactTimestamp(jid string, timestamp time.Time) error {
 }
 
 func (a *AppDB) GetContact(jid string) (*Contact, error) {
-	// Prioritize rows that have a name
 	query := `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
 	          FROM contacts 
 	          WHERE jid = ? OR lid = ? 
 	          ORDER BY (saved_name IS NOT NULL AND saved_name != '') DESC, (push_name IS NOT NULL AND push_name != '') DESC 
 	          LIMIT 1`
-	row := a.db.QueryRow(query, jid, jid)
-	
-	var c Contact
-	err := row.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt, &c.UnreadCount, &c.IsPinned, &c.IsArchived)
+	c, err := scanContact(a.db.QueryRow(query, jid, jid))
 	if err != nil {
 		return nil, err
 	}
@@ -186,8 +187,7 @@ func (a *AppDB) GetAllContacts(profileID int64, limit int) ([]Contact, error) {
 
 	var contacts []Contact
 	for rows.Next() {
-		var c Contact
-		err := rows.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt, &c.UnreadCount, &c.IsPinned, &c.IsArchived)
+		c, err := scanContact(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -255,8 +255,7 @@ func (a *AppDB) SearchContacts(profileID int64, term string, limit int) ([]Conta
 
 	var contacts []Contact
 	for rows.Next() {
-		var c Contact
-		err := rows.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt, &c.UnreadCount, &c.IsPinned, &c.IsArchived)
+		c, err := scanContact(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -279,8 +278,7 @@ func (a *AppDB) GetUnresolvedPNs(limit int) ([]Contact, error) {
 
 	var contacts []Contact
 	for rows.Next() {
-		var c Contact
-		err := rows.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt, &c.UnreadCount, &c.IsPinned, &c.IsArchived)
+		c, err := scanContact(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -294,10 +292,7 @@ func (a *AppDB) GetContactByLID(lid string) (*Contact, error) {
 	          FROM contacts 
 	          WHERE lid = ? 
 	          LIMIT 1`
-	row := a.db.QueryRow(query, lid)
-	
-	var c Contact
-	err := row.Scan(&c.JID, &c.LID, &c.SavedName, &c.PushName, &c.AvatarPath, &c.IsGroup, &c.LastMessageAt, &c.UnreadCount, &c.IsPinned, &c.IsArchived)
+	c, err := scanContact(a.db.QueryRow(query, lid))
 	if err != nil {
 		return nil, err
 	}
