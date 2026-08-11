@@ -50,6 +50,18 @@ func (b *EventBus) Subscribe(eventType EventType) <-chan Event {
 	return ch
 }
 
+// SubscribeTyped registers a type-safe handler for events of a specific payload type T.
+func SubscribeTyped[T any](b *EventBus, eventType EventType, handler func(payload T)) {
+	ch := b.Subscribe(eventType)
+	go func() {
+		for ev := range ch {
+			if payload, ok := ev.Data.(T); ok {
+				handler(payload)
+			}
+		}
+	}()
+}
+
 // Publish sends an event to all subscribers of its type.
 // It is non-blocking; if a subscriber's channel is full, the event is dropped.
 func (b *EventBus) Publish(event Event) {

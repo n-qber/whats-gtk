@@ -72,16 +72,11 @@ func NewChatController(b *backend.Backend, app *ui.App, db *database.AppDB, msgs
 }
 
 func (cc *ChatController) setupSubscriptions() {
-	ch := cc.EventBus.Subscribe(events.EventMessageReceived)
-	go func() {
-		for ev := range ch {
-			if payload, ok := ev.Data.(events.LiveMessagePayload); ok {
-				if msg, ok := payload.Msg.(*meowEvents.Message); ok {
-					cc.HandleLiveMessage(msg, payload.IsSyncing)
-				}
-			}
+	events.SubscribeTyped(cc.EventBus, events.EventMessageReceived, func(payload events.LiveMessagePayload) {
+		if msg, ok := payload.Msg.(*meowEvents.Message); ok {
+			cc.HandleLiveMessage(msg, payload.IsSyncing)
 		}
-	}()
+	})
 }
 
 func (cc *ChatController) HandleLiveMessage(msg *meowEvents.Message, isSyncing bool) {
