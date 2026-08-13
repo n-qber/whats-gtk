@@ -302,17 +302,21 @@ func (a *App) setupSubscriptions() {
 			if items, ok := ev.Data.([]events.SidebarItem); ok {
 				glib.IdleAdd(func() {
 					a.Sidebar.SetRefreshing(true)
-					if a.Sidebar.SearchEntry.Text() != "" {
-						a.Sidebar.ClearChats()
-					}
+					a.Sidebar.ClearChats()
+					foundActive := false
 					for _, item := range items {
 						a.Sidebar.AddChat(item.JID, item.Name, item.IsGroup, item.UnreadCount, item.IsPinned)
 						if item.Avatar != nil {
 							a.Sidebar.SetAvatar(item.JID, item.Avatar)
 						}
+						if item.JID == a.ActiveMainJID {
+							foundActive = true
+						}
 					}
-					if a.ActiveMainJID != "" {
+					if foundActive && a.ActiveMainJID != "" {
 						a.Sidebar.SelectChat(a.ActiveMainJID)
+					} else {
+						a.Sidebar.ClearSelection()
 					}
 					a.Sidebar.SetRefreshing(false)
 				})
