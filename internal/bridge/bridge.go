@@ -368,6 +368,7 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 		glib.IdleAdd(func() {
 			if br.App.Sidebar != nil {
 				br.App.Sidebar.SelectChat(jid)
+				br.Chat.HandleChatSelected(jid)
 			}
 		})
 	}

@@ -158,6 +158,11 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 	jid = cc.Messages.ResolveJID(jid)
 
 	if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == jid.ToNonAD().String() {
+		glib.IdleAdd(func() {
+			if cc.App.ChatView != nil {
+				cc.App.ChatView.FocusEntry()
+			}
+		})
 		return
 	}
 
@@ -199,9 +204,11 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 		cc.SyncGroupIfNeeded(jid)
 	}
 
-	if cc.App.ChatView != nil {
-		cc.App.ChatView.FocusEntry()
-	}
+	glib.IdleAdd(func() {
+		if cc.App.ChatView != nil {
+			cc.App.ChatView.FocusEntry()
+		}
+	})
 }
 
 func (cc *ChatController) HandleSendMessage(targetJID types.JID, text string, replyToID string) {
@@ -345,6 +352,7 @@ func (c *ChatController) HandleDetach() {
 			glib.IdleAdd(func() {
 				if c.App.Sidebar != nil {
 					c.App.Sidebar.SelectChat(mjid)
+					c.HandleChatSelected(mjid)
 				}
 			})
 		}
@@ -361,6 +369,9 @@ func (c *ChatController) HandleDetach() {
 
 		win.SetContent(cv.Box)
 		win.Show()
+		glib.IdleAdd(func() {
+			cv.FocusEntry()
+		})
 
 		win.Connect("close-request", func() bool {
 			delete(c.App.DetachedChats, jidStr)
