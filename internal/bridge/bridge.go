@@ -52,6 +52,7 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 
 	// Wire back-references (these can't be set in constructors due to circular init)
 	msgs.GetSelectedJID = chat.SelectedJID
+	a.ResolveJIDFunc = msgs.ResolveJIDString
 
 	br := &Bridge{
 		Backend:  b,

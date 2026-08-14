@@ -117,6 +117,10 @@ func (a *AppDB) MergeLID(pnJID, lidJID string) error {
 			return err
 		}
 
+		_, err = tx.Exec("DELETE FROM messages WHERE chat_jid = ? AND msg_id IN (SELECT msg_id FROM messages WHERE chat_jid = ?)", lidJID, pnJID)
+		if err != nil {
+			return err
+		}
 		_, err = tx.Exec("UPDATE messages SET chat_jid = ? WHERE chat_jid = ?", pnJID, lidJID)
 		if err != nil {
 			return err

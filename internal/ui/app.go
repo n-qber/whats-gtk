@@ -30,6 +30,7 @@ type App struct {
 	DetachedChats      map[string]*chat.ChatView
 	ActiveMainJID      string
 	EventBus           *events.EventBus
+	ResolveJIDFunc     func(jid string) string
 }
 
 func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
@@ -573,11 +574,39 @@ func (a *App) applyZoom() {
 	a.ZoomCSSProvider.LoadFromData(css)
 }
 
+func (a *App) isSameJID(j1, j2 string) bool {
+	if j1 == j2 {
+		return true
+	}
+	if j1 == "" || j2 == "" {
+		return false
+	}
+	if a.ResolveJIDFunc != nil {
+		r1 := a.ResolveJIDFunc(j1)
+		r2 := a.ResolveJIDFunc(j2)
+		if r1 != "" && r1 == r2 {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *App) GetChatViewForJID(jid string) *chat.ChatView {
+	if jid == "" {
+		return nil
+	}
 	if cv, ok := a.DetachedChats[jid]; ok {
 		return cv
 	}
 	if a.ActiveMainJID == jid {
+		return a.ChatView
+	}
+	for dJID, cv := range a.DetachedChats {
+		if a.isSameJID(dJID, jid) {
+			return cv
+		}
+	}
+	if a.isSameJID(a.ActiveMainJID, jid) {
 		return a.ChatView
 	}
 	return nil

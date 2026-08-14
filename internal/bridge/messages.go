@@ -41,21 +41,40 @@ func NewMessageService(db *database.AppDB, b *backend.Backend, contacts *Contact
 	}
 }
 
-// ResolveJID resolves LID JIDs to phone number JIDs via DB lookup.
+// ResolveJID resolves LID JIDs to phone number JIDs via whatsmeow store and DB lookup.
 func (ms *MessageService) ResolveJID(jid types.JID) types.JID {
 	jStr := jid.ToNonAD().String()
 	if strings.HasSuffix(jStr, "@lid") {
-		if c, err := ms.DB.GetContact(jStr); err == nil && c.LID.Valid && c.LID.String != "" {
-			// This is actually tricky because MergeLID stores PN as JID and LID as LID.
-			// Let's check if we have a contact where LID is this JID.
-			if target, err := ms.DB.GetContactByLID(jStr); err == nil {
-				if parsed, err := types.ParseJID(target.JID); err == nil {
-					return parsed.ToNonAD()
-				}
+		if ms.Backend != nil && ms.Backend.Client != nil && ms.Backend.Client.Store != nil && ms.Backend.Client.Store.LIDs != nil {
+			if pn, err := ms.Backend.Client.Store.LIDs.GetPNForLID(ms.ctx, jid.ToNonAD()); err == nil && !pn.IsEmpty() {
+				_ = ms.DB.MergeLID(pn.ToNonAD().String(), jStr)
+				return pn.ToNonAD()
+			}
+		}
+		if c, err := ms.DB.GetContact(jStr); err == nil && !strings.HasSuffix(c.JID, "@lid") {
+			if parsed, err := types.ParseJID(c.JID); err == nil {
+				return parsed.ToNonAD()
+			}
+		}
+		if target, err := ms.DB.GetContactByLID(jStr); err == nil && !strings.HasSuffix(target.JID, "@lid") {
+			if parsed, err := types.ParseJID(target.JID); err == nil {
+				return parsed.ToNonAD()
 			}
 		}
 	}
 	return jid.ToNonAD()
+}
+
+// ResolveJIDString resolves a JID string to its canonical PN representation if possible.
+func (ms *MessageService) ResolveJIDString(jStr string) string {
+	if jStr == "" {
+		return ""
+	}
+	parsed, err := types.ParseJID(jStr)
+	if err != nil {
+		return jStr
+	}
+	return ms.ResolveJID(parsed).String()
 }
 
 // UnwrapMessage removes ViewOnce wrappers and returns the underlying message and a boolean indicating if it was ViewOnce.

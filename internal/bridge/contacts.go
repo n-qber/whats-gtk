@@ -165,18 +165,20 @@ func (cs *ContactService) ResolveSenderName(j string) string {
 			return c.SavedName.String
 		}
 		if c.PushName.Valid && c.PushName.String != "" {
-			return cs.formatNonAddedName(j, c.PushName.String)
+			return cs.formatNonAddedName(c.JID, c.PushName.String)
 		}
 	}
 	jidObj, _ := types.ParseJID(j)
-	if info, err := cs.Backend.Client.Store.Contacts.GetContact(cs.ctx, jidObj); err == nil && info.Found {
-		if info.FullName != "" {
-			cs.DB.SaveContact(database.Contact{JID: j, SavedName: sql.NullString{String: info.FullName, Valid: true}})
-			return info.FullName
-		}
-		if info.PushName != "" {
-			cs.DB.SaveContact(database.Contact{JID: j, PushName: sql.NullString{String: info.PushName, Valid: true}})
-			return cs.formatNonAddedName(j, info.PushName)
+	if cs.Backend != nil && cs.Backend.Client != nil && cs.Backend.Client.Store != nil {
+		if info, err := cs.Backend.Client.Store.Contacts.GetContact(cs.ctx, jidObj); err == nil && info.Found {
+			if info.FullName != "" {
+				cs.DB.SaveContact(database.Contact{JID: j, SavedName: sql.NullString{String: info.FullName, Valid: true}})
+				return info.FullName
+			}
+			if info.PushName != "" {
+				cs.DB.SaveContact(database.Contact{JID: j, PushName: sql.NullString{String: info.PushName, Valid: true}})
+				return cs.formatNonAddedName(j, info.PushName)
+			}
 		}
 	}
 	return j
@@ -184,12 +186,17 @@ func (cs *ContactService) ResolveSenderName(j string) string {
 
 func (cs *ContactService) ResolveLIDMapping(lid string) {
 	jidObj, _ := types.ParseJID(lid)
-	info, err := cs.Backend.Client.Store.Contacts.GetContact(cs.ctx, jidObj)
-	if err == nil && info.Found && info.FullName != "" {
+	if cs.Backend != nil && cs.Backend.Client != nil && cs.Backend.Client.Store != nil && cs.Backend.Client.Store.LIDs != nil {
+		if pn, err := cs.Backend.Client.Store.LIDs.GetPNForLID(cs.ctx, jidObj.ToNonAD()); err == nil && !pn.IsEmpty() {
+			_ = cs.DB.MergeLID(pn.ToNonAD().String(), lid)
+			return
+		}
+	}
+	if info, err := cs.Backend.Client.Store.Contacts.GetContact(cs.ctx, jidObj); err == nil && info.Found && info.FullName != "" {
 		all, _ := cs.Backend.Client.Store.Contacts.GetAllContacts(cs.ctx)
 		for pnJID, pnInfo := range all {
 			if !strings.HasSuffix(pnJID.String(), "@lid") && pnInfo.FullName == info.FullName {
-				cs.DB.MergeLID(pnJID.ToNonAD().String(), lid)
+				_ = cs.DB.MergeLID(pnJID.ToNonAD().String(), lid)
 				break
 			}
 		}
