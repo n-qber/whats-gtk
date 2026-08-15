@@ -77,7 +77,7 @@ func (cc *ChatController) EnsureContactName(jidStr string, phone string) string 
 		return cc.Contacts.formatPhoneNumber(phone)
 	}
 
-	// 1. Check if contact exists in local AppDB with a valid SavedName or PushName
+	// 1. Check if contact exists in local AppDB with a valid SavedName or PushName (that isn't a phone number)
 	if c, err := cc.DB.GetContact(jidStr); err == nil {
 		if c.SavedName.Valid && c.SavedName.String != "" {
 			return c.SavedName.String
@@ -101,17 +101,15 @@ func (cc *ChatController) EnsureContactName(jidStr string, phone string) string 
 		}
 	}
 
-	formattedPhone := cc.Contacts.formatPhoneNumber(phone)
-	saveName := initialName
-	if saveName == "" {
-		saveName = formattedPhone
-	}
-
-	_ = cc.DB.SaveContact(database.Contact{
+	// Save contact without saving formatted phone number into name fields
+	cToSave := database.Contact{
 		JID:           jidStr,
-		PushName:      sql.NullString{String: saveName, Valid: true},
 		LastMessageAt: sql.NullTime{Time: time.Now(), Valid: true},
-	})
+	}
+	if initialName != "" {
+		cToSave.SavedName = sql.NullString{String: initialName, Valid: true}
+	}
+	_ = cc.DB.SaveContact(cToSave)
 
 	// 3. Fetch remote info (VerifiedName / BusinessName / PushName) from WhatsApp server asynchronously
 	go func() {
@@ -165,7 +163,7 @@ func (cc *ChatController) EnsureContactName(jidStr string, phone string) string 
 	if initialName != "" {
 		return initialName
 	}
-	return formattedPhone
+	return cc.Contacts.formatPhoneNumber(phone)
 }
 
 // HandleOpenURL processes a WhatsApp URL link, opening the chat and pre-filling input text.
