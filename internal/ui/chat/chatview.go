@@ -343,3 +343,9 @@ func (cv *ChatView) SetInputText(text string) {
 		cv.InputBar.SetText(text)
 	}
 }
+
+func (cv *ChatView) SetTopBarInfo(name string, tex *gdk.Texture) {
+	if cv.TopBar != nil {
+		cv.TopBar.SetInfo(name, tex)
+	}
+}

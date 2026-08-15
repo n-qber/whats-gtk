@@ -70,7 +70,7 @@ func ParseWhatsAppURL(rawURL string) (*WhatsAppURLInfo, bool) {
 	}, true
 }
 
-// EnsureContactName attempts to resolve the saved contact name from DB or whatsmeow store.
+// EnsureContactName attempts to resolve contact name from local DB, whatsmeow store, or WhatsApp server (VerifiedName).
 func (cc *ChatController) EnsureContactName(jidStr string, phone string) string {
 	parsedJID, err := types.ParseJID(jidStr)
 	if err != nil {
@@ -88,48 +88,83 @@ func (cc *ChatController) EnsureContactName(jidStr string, phone string) string 
 	}
 
 	// 2. Check whatsmeow device store contacts
+	initialName := ""
 	if cc.Backend != nil && cc.Backend.Client != nil && cc.Backend.Client.Store != nil {
 		if info, err := cc.Backend.Client.Store.Contacts.GetContact(cc.ctx, parsedJID); err == nil && info.Found {
-			name := info.FullName
-			if name == "" {
-				name = info.BusinessName
-			}
-			if name == "" {
-				name = info.PushName
-			}
-			if name != "" {
-				_ = cc.DB.SaveContact(database.Contact{
-					JID:           jidStr,
-					SavedName:     sql.NullString{String: name, Valid: true},
-					LastMessageAt: sql.NullTime{Time: time.Now(), Valid: true},
-				})
-				return name
+			if info.FullName != "" {
+				initialName = info.FullName
+			} else if info.BusinessName != "" {
+				initialName = info.BusinessName
+			} else if info.PushName != "" {
+				initialName = info.PushName
 			}
 		}
 	}
 
-	// 3. Fallback: Save initial contact with formatted phone number
 	formattedPhone := cc.Contacts.formatPhoneNumber(phone)
+	saveName := initialName
+	if saveName == "" {
+		saveName = formattedPhone
+	}
+
 	_ = cc.DB.SaveContact(database.Contact{
 		JID:           jidStr,
-		PushName:      sql.NullString{String: formattedPhone, Valid: true},
+		PushName:      sql.NullString{String: saveName, Valid: true},
 		LastMessageAt: sql.NullTime{Time: time.Now(), Valid: true},
 	})
 
-	// 4. Async fetch from WhatsApp server if connected
+	// 3. Fetch remote info (VerifiedName / BusinessName / PushName) from WhatsApp server asynchronously
 	go func() {
-		if cc.Backend != nil && cc.Backend.Client != nil && cc.Backend.Client.IsConnected() {
+		if cc.Backend == nil || cc.Backend.Client == nil || !cc.Backend.Client.IsConnected() {
+			return
+		}
+
+		resolvedName := ""
+
+		// Check IsOnWhatsApp for VerifiedName
+		isOn, err := cc.Backend.Client.IsOnWhatsApp(cc.ctx, []string{phone})
+		if err == nil && len(isOn) > 0 && isOn[0].IsIn {
+			if isOn[0].VerifiedName != nil && isOn[0].VerifiedName.Details != nil {
+				resolvedName = isOn[0].VerifiedName.Details.GetVerifiedName()
+			}
+		}
+
+		// Fallback: Check GetUserInfo
+		if resolvedName == "" {
 			resp, err := cc.Backend.Client.GetUserInfo(cc.ctx, []types.JID{parsedJID})
 			if err == nil {
 				if ui, ok := resp[parsedJID]; ok {
+					if ui.VerifiedName != nil && ui.VerifiedName.Details != nil {
+						resolvedName = ui.VerifiedName.Details.GetVerifiedName()
+					}
 					if !ui.LID.IsEmpty() {
 						_ = cc.DB.MergeLID(jidStr, ui.LID.ToNonAD().String())
 					}
 				}
 			}
 		}
+
+		if resolvedName != "" {
+			_ = cc.DB.SaveContact(database.Contact{
+				JID:           jidStr,
+				SavedName:     sql.NullString{String: resolvedName, Valid: true},
+				LastMessageAt: sql.NullTime{Time: time.Now(), Valid: true},
+			})
+
+			glib.IdleAdd(func() {
+				if cc.App != nil && cc.App.Sidebar != nil {
+					cc.App.Sidebar.UpdateChatRow(jidStr, resolvedName, false, 0, false)
+				}
+				if cc.App != nil && cc.App.ChatView != nil {
+					cc.App.ChatView.SetTopBarInfo(resolvedName, nil)
+				}
+			})
+		}
 	}()
 
+	if initialName != "" {
+		return initialName
+	}
 	return formattedPhone
 }
 
