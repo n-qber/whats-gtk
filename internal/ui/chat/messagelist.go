@@ -34,17 +34,27 @@ type MessageList struct {
 	IsLoadingOlder bool
 	IsSearching    bool
 
+	// Selection mode state
+	IsSelectionMode     bool
+	SelectedIDs         map[string]bool
+	SelectionBar        *gtk.Box
+	SelectionCountLabel *gtk.Label
+	SelectionCancelBtn  *gtk.Button
+	SelectionForwardBtn *gtk.Button
+
 	// Callbacks
-	OnLoadOlder          func()
-	OnLoadMessageRequest func(id string)
-	OnSearchResultClick  func(id string)
-	OnDownloadMedia      func(id string)
-	OnOpenImage          func(path string)
-	OnSendReaction       func(id, emoji string)
-	OnPinMessage         func(id string, pin bool, duration uint32)
-	OnMentionClick       func(jid string)
-	OnSendPollVote       func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
-	OnReplyRequest       func(id, sender, content string)
+	OnLoadOlder              func()
+	OnLoadMessageRequest     func(id string)
+	OnSearchResultClick      func(id string)
+	OnDownloadMedia          func(id string)
+	OnOpenImage              func(path string)
+	OnSendReaction           func(id, emoji string)
+	OnPinMessage             func(id string, pin bool, duration uint32)
+	OnMentionClick           func(jid string)
+	OnSendPollVote           func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
+	OnReplyRequest           func(id, sender, content string)
+	OnForwardMessagesRequest func(ids []string)
+	OnContextMenuClosed      func()
 }
 
 func NewMessageList() *MessageList {
@@ -53,6 +63,7 @@ func NewMessageList() *MessageList {
 		MessageRows:     make(map[string]bubbles.Bubble),
 		MessageListRows: make(map[string]*gtk.ListBoxRow),
 		BubblesByJID:    make(map[string][]bubbles.Bubble),
+		SelectedIDs:     make(map[string]bool),
 		InsertIndex:     -1,
 		AudioPlayer:     NewAudioPlayer(),
 	}
@@ -68,6 +79,45 @@ func NewMessageList() *MessageList {
 	ml.PinnedMessageBar.Append(ml.PinnedMessageLabel)
 	ml.PinnedMessageBar.Hide()
 	ml.Widget.Append(ml.PinnedMessageBar)
+
+	// Selection Bar
+	ml.SelectionBar = gtk.NewBox(gtk.OrientationHorizontal, 10)
+	ml.SelectionBar.AddCSSClass("selection-bar")
+
+	cancelBtn := gtk.NewButtonFromIconName("window-close-symbolic")
+	cancelBtn.SetTooltipText("Cancelar seleção")
+	cancelBtn.ConnectClicked(func() {
+		ml.ExitSelectionMode()
+	})
+	ml.SelectionBar.Append(cancelBtn)
+	ml.SelectionCancelBtn = cancelBtn
+
+	countLabel := gtk.NewLabel("1 mensagem selecionada")
+	countLabel.AddCSSClass("heading")
+	countLabel.SetHExpand(true)
+	countLabel.SetXAlign(0)
+	ml.SelectionBar.Append(countLabel)
+	ml.SelectionCountLabel = countLabel
+
+	forwardBtn := gtk.NewButtonWithLabel("Encaminhar")
+	forwardBtn.AddCSSClass("suggested-action")
+	forwardBtn.ConnectClicked(func() {
+		var selected []string
+		for id, sel := range ml.SelectedIDs {
+			if sel {
+				selected = append(selected, id)
+			}
+		}
+		if len(selected) > 0 && ml.OnForwardMessagesRequest != nil {
+			ml.OnForwardMessagesRequest(selected)
+		}
+		ml.ExitSelectionMode()
+	})
+	ml.SelectionBar.Append(forwardBtn)
+	ml.SelectionForwardBtn = forwardBtn
+
+	ml.SelectionBar.Hide()
+	ml.Widget.Append(ml.SelectionBar)
 
 	// Loading Spinner
 	ml.LoadingSpinner = gtk.NewSpinner()
@@ -134,6 +184,7 @@ func (ml *MessageList) SetPinnedMessage(content string) {
 }
 
 func (ml *MessageList) Clear() {
+	ml.ExitSelectionMode()
 	ml.SetLoadingOlder(false)
 	for ml.ListBox.FirstChild() != nil {
 		ml.ListBox.Remove(ml.ListBox.FirstChild())
@@ -224,10 +275,102 @@ func (ml *MessageList) AddSeparator(text string) {
 	}
 }
 
+func (ml *MessageList) EnterSelectionMode(initialMsgID string) {
+	ml.IsSelectionMode = true
+	ml.SelectedIDs = make(map[string]bool)
+	if initialMsgID != "" {
+		ml.SelectedIDs[initialMsgID] = true
+	}
+
+	for id, row := range ml.MessageListRows {
+		if ml.SelectedIDs[id] {
+			row.AddCSSClass("message-row-selected")
+		} else {
+			row.RemoveCSSClass("message-row-selected")
+		}
+	}
+
+	count := len(ml.SelectedIDs)
+	if count == 1 {
+		ml.SelectionCountLabel.SetText("1 mensagem selecionada")
+	} else {
+		ml.SelectionCountLabel.SetText(fmt.Sprintf("%d mensagens selecionadas", count))
+	}
+	ml.SelectionBar.Show()
+}
+
+func (ml *MessageList) ToggleMessageSelection(id string) {
+	if !ml.IsSelectionMode {
+		return
+	}
+	if ml.SelectedIDs[id] {
+		delete(ml.SelectedIDs, id)
+		if row, ok := ml.MessageListRows[id]; ok {
+			row.RemoveCSSClass("message-row-selected")
+		}
+	} else {
+		ml.SelectedIDs[id] = true
+		if row, ok := ml.MessageListRows[id]; ok {
+			row.AddCSSClass("message-row-selected")
+		}
+	}
+
+	count := len(ml.SelectedIDs)
+	if count == 0 {
+		ml.ExitSelectionMode()
+		return
+	}
+
+	if count == 1 {
+		ml.SelectionCountLabel.SetText("1 mensagem selecionada")
+	} else {
+		ml.SelectionCountLabel.SetText(fmt.Sprintf("%d mensagens selecionadas", count))
+	}
+}
+
+func (ml *MessageList) ExitSelectionMode() {
+	ml.IsSelectionMode = false
+	ml.SelectedIDs = make(map[string]bool)
+	if ml.SelectionBar != nil {
+		ml.SelectionBar.Hide()
+	}
+	for _, row := range ml.MessageListRows {
+		row.RemoveCSSClass("message-row-selected")
+	}
+}
+
 func (ml *MessageList) showContextMenu(id string, b bubbles.Bubble) {
 	popover := gtk.NewPopover()
+	popover.ConnectClosed(func() {
+		if ml.OnContextMenuClosed != nil {
+			ml.OnContextMenuClosed()
+		}
+		glib.IdleAdd(func() {
+			popover.Unparent()
+		})
+	})
 	box := gtk.NewBox(gtk.OrientationVertical, 0)
 	
+	fwdBtn := gtk.NewButtonWithLabel("Encaminhar")
+	fwdBtn.SetHasFrame(false)
+	fwdBtn.ConnectClicked(func() {
+		popover.Popdown()
+		if ml.OnForwardMessagesRequest != nil {
+			ml.OnForwardMessagesRequest([]string{id})
+		}
+	})
+	box.Append(fwdBtn)
+
+	selBtn := gtk.NewButtonWithLabel("Selecionar")
+	selBtn.SetHasFrame(false)
+	selBtn.ConnectClicked(func() {
+		popover.Popdown()
+		ml.EnterSelectionMode(id)
+	})
+	box.Append(selBtn)
+
+	box.Append(gtk.NewSeparator(gtk.OrientationHorizontal))
+
 	pinBtn := gtk.NewButtonWithLabel("Pin Message")
 	pinBtn.SetHasFrame(false)
 	pinBtn.ConnectClicked(func() {
@@ -334,6 +477,12 @@ func (ml *MessageList) addBubble(id string, b bubbles.Bubble, isCont bool) {
 	leftClick.SetButton(1)
 	leftClick.SetPropagationPhase(gtk.PhaseCapture)
 	leftClick.ConnectPressed(func(n int, x, y float64) {
+		if ml.IsSelectionMode {
+			if id != "" {
+				ml.ToggleMessageSelection(id)
+			}
+			return
+		}
 		if ml.IsSearching && id != "" {
 			if ml.OnSearchResultClick != nil {
 				ml.OnSearchResultClick(id)

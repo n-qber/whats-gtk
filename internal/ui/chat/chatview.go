@@ -37,6 +37,7 @@ type ChatView struct {
 	OnMentionClick        func(jid string)
 	OnSendPollVote        func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
 	OnHeaderClick         func()
+	OnForwardMessages     func(ids []string)
 
 	// Direct Field Accessors for legacy compatibility
 	IsSearching bool
@@ -138,6 +139,14 @@ func NewChatView() (*ChatView, error) {
 	}
 	cv.MessageList.OnReplyRequest = func(id, sender, content string) {
 		cv.InputBar.SetReplyTo(id, sender, content)
+	}
+	cv.MessageList.OnForwardMessagesRequest = func(ids []string) {
+		if cv.OnForwardMessages != nil {
+			cv.OnForwardMessages(ids)
+		}
+	}
+	cv.MessageList.OnContextMenuClosed = func() {
+		cv.FocusEntry()
 	}
 
 	// Wire InputBar

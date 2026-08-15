@@ -15,6 +15,7 @@ import (
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
+	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	meowEvents "go.mau.fi/whatsmeow/types/events"
 	"go.mau.fi/whatsmeow/types"
@@ -449,3 +450,113 @@ func (cc *ChatController) RefreshMessages(jid types.JID) {
 		})
 	}()
 }
+
+func (cc *ChatController) GetForwardContactItems() []chat.ForwardContactItem {
+	dbContacts, err := cc.DB.GetAllContacts(cc.activeProfileID, 500)
+	if err != nil {
+		return nil
+	}
+	var items []chat.ForwardContactItem
+	for _, c := range dbContacts {
+		if c.IsArchived {
+			continue
+		}
+		isGroup := c.IsGroup.Valid && c.IsGroup.Bool
+		parsedJID, _ := types.ParseJID(c.JID)
+		avatar := cc.Contacts.GetAvatar(parsedJID.String())
+
+		items = append(items, chat.ForwardContactItem{
+			JID:     c.JID,
+			Name:    c.DisplayName(),
+			IsGroup: isGroup,
+			Avatar:  avatar,
+		})
+	}
+	return items
+}
+
+func (cc *ChatController) HandleForwardMessages(targetJIDStrs []string, msgIDs []string) {
+	go func() {
+		for _, targetStr := range targetJIDStrs {
+			targetJID, err := types.ParseJID(targetStr)
+			if err != nil {
+				continue
+			}
+			targetJID = cc.Messages.ResolveJID(targetJID)
+			chatJID := targetJID.ToNonAD().String()
+
+			for _, msgID := range msgIDs {
+				dbMsg, err := cc.DB.GetMessage(msgID)
+				if err != nil {
+					continue
+				}
+
+				resp, err := cc.Backend.ForwardMessage(cc.ctx, targetJID, *dbMsg)
+				if err != nil {
+					fmt.Printf("Bridge: Failed to forward message %s to %s: %v\n", msgID, targetStr, err)
+					continue
+				}
+
+				newMsg := database.Message{
+					ID:              resp.ID,
+					ChatJID:         chatJID,
+					SenderJID:       cc.Backend.Device.ID.ToNonAD().String(),
+					Content:         dbMsg.Content,
+					Caption:         dbMsg.Caption,
+					Type:            dbMsg.Type,
+					Timestamp:       resp.Timestamp,
+					Status:          "sent",
+					IsFromMe:        true,
+					Thumbnail:       dbMsg.Thumbnail,
+					MediaURL:        dbMsg.MediaURL,
+					MediaDirectPath: dbMsg.MediaDirectPath,
+					MediaKey:        dbMsg.MediaKey,
+					MediaMimetype:   dbMsg.MediaMimetype,
+					MediaEncSHA256:  dbMsg.MediaEncSHA256,
+					MediaSHA256:     dbMsg.MediaSHA256,
+					MediaLength:     dbMsg.MediaLength,
+					MediaWidth:      dbMsg.MediaWidth,
+					MediaHeight:     dbMsg.MediaHeight,
+					IsForwarded:     true,
+				}
+
+				cc.DB.SaveMessage(newMsg)
+				cc.DB.UpdateContactTimestamp(chatJID, resp.Timestamp)
+
+				if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == chatJID {
+					tStr := resp.Timestamp.Format("15:04")
+					isCont := cc.lastSender == cc.Backend.Device.ID.ToNonAD().String()
+					uiMsg := cc.Mapper.MapMessage(newMsg, "", tStr, nil, isCont)
+					cc.lastSender = cc.Backend.Device.ID.ToNonAD().String()
+
+					glib.IdleAdd(func() {
+						if cv := cc.App.GetChatViewForJID(chatJID); cv != nil {
+							if uiMsg.Type == "text" {
+								cv.AddMessage(uiMsg.ID, uiMsg.JID, uiMsg.SenderName, uiMsg.Content, uiMsg.IsFromMe, uiMsg.IsContinuation, uiMsg.Status, uiMsg.TimeString, uiMsg.Avatar, "", "", "")
+							} else if uiMsg.Type == "image" {
+								var texImg, texThumb *gdk.Texture
+								texThumb = bytesToTexture(uiMsg.Thumbnail)
+								if uiMsg.DocumentPath != "" {
+									if pixbuf, _ := gdkpixbuf.NewPixbufFromFile(uiMsg.DocumentPath); pixbuf != nil {
+										texImg = gdk.NewTextureForPixbuf(pixbuf)
+									}
+								}
+								cv.AddImage(uiMsg.ID, uiMsg.JID, uiMsg.SenderName, uiMsg.Content, texImg, texThumb, uiMsg.DocumentPath, uiMsg.IsFromMe, uiMsg.IsContinuation, uiMsg.Status, uiMsg.TimeString, uiMsg.Avatar, "", "", "", uiMsg.MediaWidth, uiMsg.MediaHeight)
+							} else {
+								cv.AddMessage(uiMsg.ID, uiMsg.JID, uiMsg.SenderName, uiMsg.Content, uiMsg.IsFromMe, uiMsg.IsContinuation, uiMsg.Status, uiMsg.TimeString, uiMsg.Avatar, "", "", "")
+							}
+							cv.UpdateMessageForwarded(uiMsg.ID, true)
+							cv.ScrollToBottom()
+						}
+					})
+				}
+
+				cc.EventBus.Publish(events.Event{
+					Type: events.EventChatUpdated,
+					Data: chatJID,
+				})
+			}
+		}
+	}()
+}
+

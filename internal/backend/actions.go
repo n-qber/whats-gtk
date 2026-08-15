@@ -2,7 +2,12 @@ package backend
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
+
+	"whats-gtk/internal/database"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
@@ -203,4 +208,223 @@ func (b *Backend) SendPollVote(ctx context.Context, chat types.JID, msgID string
 	
 	_, err = b.Client.SendMessage(ctx, chat, voteMsg)
 	return err
+}
+
+func (b *Backend) ForwardMessage(ctx context.Context, to types.JID, msg database.Message) (whatsmeow.SendResponse, error) {
+	contextInfo := &waProto.ContextInfo{
+		IsForwarded: proto.Bool(true),
+	}
+
+	var waMsg *waProto.Message
+
+	switch msg.Type {
+	case "text":
+		waMsg = &waProto.Message{
+			ExtendedTextMessage: &waProto.ExtendedTextMessage{
+				Text:        proto.String(msg.Content),
+				ContextInfo: contextInfo,
+			},
+		}
+
+	case "image":
+		caption := ""
+		if msg.Caption.Valid && msg.Caption.String != "" {
+			caption = msg.Caption.String
+		}
+		if len(msg.MediaKey) > 0 && msg.MediaDirectPath.Valid {
+			waMsg = &waProto.Message{
+				ImageMessage: &waProto.ImageMessage{
+					URL:           proto.String(msg.MediaURL.String),
+					DirectPath:    proto.String(msg.MediaDirectPath.String),
+					MediaKey:      msg.MediaKey,
+					Mimetype:      proto.String(msg.MediaMimetype.String),
+					FileEncSHA256: msg.MediaEncSHA256,
+					FileSHA256:    msg.MediaSHA256,
+					FileLength:    proto.Uint64(uint64(msg.MediaLength.Int64)),
+					Caption:       proto.String(caption),
+					ContextInfo:   contextInfo,
+				},
+			}
+		} else if msg.Content != "" {
+			data, err := os.ReadFile(msg.Content)
+			if err == nil {
+				mtype := msg.MediaMimetype.String
+				if mtype == "" {
+					mtype = "image/jpeg"
+				}
+				resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaImage)
+				if err == nil {
+					waMsg = &waProto.Message{
+						ImageMessage: &waProto.ImageMessage{
+							URL:           proto.String(resp.URL),
+							DirectPath:    proto.String(resp.DirectPath),
+							MediaKey:      resp.MediaKey,
+							Mimetype:      proto.String(mtype),
+							FileEncSHA256: resp.FileEncSHA256,
+							FileSHA256:    resp.FileSHA256,
+							FileLength:    proto.Uint64(uint64(len(data))),
+							Caption:       proto.String(caption),
+							ContextInfo:   contextInfo,
+						},
+					}
+				}
+			}
+		}
+
+	case "video":
+		caption := ""
+		if msg.Caption.Valid && msg.Caption.String != "" {
+			caption = msg.Caption.String
+		}
+		if len(msg.MediaKey) > 0 && msg.MediaDirectPath.Valid {
+			waMsg = &waProto.Message{
+				VideoMessage: &waProto.VideoMessage{
+					URL:           proto.String(msg.MediaURL.String),
+					DirectPath:    proto.String(msg.MediaDirectPath.String),
+					MediaKey:      msg.MediaKey,
+					Mimetype:      proto.String(msg.MediaMimetype.String),
+					FileEncSHA256: msg.MediaEncSHA256,
+					FileSHA256:    msg.MediaSHA256,
+					FileLength:    proto.Uint64(uint64(msg.MediaLength.Int64)),
+					Caption:       proto.String(caption),
+					ContextInfo:   contextInfo,
+				},
+			}
+		} else if msg.Content != "" {
+			data, err := os.ReadFile(msg.Content)
+			if err == nil {
+				mtype := msg.MediaMimetype.String
+				if mtype == "" {
+					mtype = "video/mp4"
+				}
+				resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaVideo)
+				if err == nil {
+					waMsg = &waProto.Message{
+						VideoMessage: &waProto.VideoMessage{
+							URL:           proto.String(resp.URL),
+							DirectPath:    proto.String(resp.DirectPath),
+							MediaKey:      resp.MediaKey,
+							Mimetype:      proto.String(mtype),
+							FileEncSHA256: resp.FileEncSHA256,
+							FileSHA256:    resp.FileSHA256,
+							FileLength:    proto.Uint64(uint64(len(data))),
+							Caption:       proto.String(caption),
+							ContextInfo:   contextInfo,
+						},
+					}
+				}
+			}
+		}
+
+	case "audio":
+		if len(msg.MediaKey) > 0 && msg.MediaDirectPath.Valid {
+			waMsg = &waProto.Message{
+				AudioMessage: &waProto.AudioMessage{
+					URL:           proto.String(msg.MediaURL.String),
+					DirectPath:    proto.String(msg.MediaDirectPath.String),
+					MediaKey:      msg.MediaKey,
+					Mimetype:      proto.String(msg.MediaMimetype.String),
+					FileEncSHA256: msg.MediaEncSHA256,
+					FileSHA256:    msg.MediaSHA256,
+					FileLength:    proto.Uint64(uint64(msg.MediaLength.Int64)),
+					ContextInfo:   contextInfo,
+				},
+			}
+		} else if msg.Content != "" {
+			data, err := os.ReadFile(msg.Content)
+			if err == nil {
+				mtype := msg.MediaMimetype.String
+				if mtype == "" {
+					mtype = "audio/ogg; codecs=opus"
+				}
+				resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaAudio)
+				if err == nil {
+					waMsg = &waProto.Message{
+						AudioMessage: &waProto.AudioMessage{
+							URL:           proto.String(resp.URL),
+							DirectPath:    proto.String(resp.DirectPath),
+							MediaKey:      resp.MediaKey,
+							Mimetype:      proto.String(mtype),
+							FileEncSHA256: resp.FileEncSHA256,
+							FileSHA256:    resp.FileSHA256,
+							FileLength:    proto.Uint64(uint64(len(data))),
+							ContextInfo:   contextInfo,
+						},
+					}
+				}
+			}
+		}
+
+	case "document":
+		filename := filepath.Base(msg.Content)
+		if strings.HasPrefix(msg.Content, "[Document: ") {
+			filename = strings.TrimSuffix(strings.TrimPrefix(msg.Content, "[Document: "), "]")
+		}
+		if len(msg.MediaKey) > 0 && msg.MediaDirectPath.Valid {
+			waMsg = &waProto.Message{
+				DocumentMessage: &waProto.DocumentMessage{
+					URL:           proto.String(msg.MediaURL.String),
+					DirectPath:    proto.String(msg.MediaDirectPath.String),
+					MediaKey:      msg.MediaKey,
+					Mimetype:      proto.String(msg.MediaMimetype.String),
+					FileEncSHA256: msg.MediaEncSHA256,
+					FileSHA256:    msg.MediaSHA256,
+					FileLength:    proto.Uint64(uint64(msg.MediaLength.Int64)),
+					FileName:      proto.String(filename),
+					ContextInfo:   contextInfo,
+				},
+			}
+		} else if msg.Content != "" && !strings.HasPrefix(msg.Content, "[Document:") {
+			data, err := os.ReadFile(msg.Content)
+			if err == nil {
+				mtype := msg.MediaMimetype.String
+				if mtype == "" {
+					mtype = "application/octet-stream"
+				}
+				resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaDocument)
+				if err == nil {
+					waMsg = &waProto.Message{
+						DocumentMessage: &waProto.DocumentMessage{
+							URL:           proto.String(resp.URL),
+							DirectPath:    proto.String(resp.DirectPath),
+							MediaKey:      resp.MediaKey,
+							Mimetype:      proto.String(mtype),
+							FileEncSHA256: resp.FileEncSHA256,
+							FileSHA256:    resp.FileSHA256,
+							FileLength:    proto.Uint64(uint64(len(data))),
+							FileName:      proto.String(filename),
+							ContextInfo:   contextInfo,
+						},
+					}
+				}
+			}
+		}
+
+	case "sticker":
+		if len(msg.MediaKey) > 0 && msg.MediaDirectPath.Valid {
+			waMsg = &waProto.Message{
+				StickerMessage: &waProto.StickerMessage{
+					URL:           proto.String(msg.MediaURL.String),
+					DirectPath:    proto.String(msg.MediaDirectPath.String),
+					MediaKey:      msg.MediaKey,
+					Mimetype:      proto.String(msg.MediaMimetype.String),
+					FileEncSHA256: msg.MediaEncSHA256,
+					FileSHA256:    msg.MediaSHA256,
+					FileLength:    proto.Uint64(uint64(msg.MediaLength.Int64)),
+					ContextInfo:   contextInfo,
+				},
+			}
+		}
+	}
+
+	if waMsg == nil {
+		waMsg = &waProto.Message{
+			ExtendedTextMessage: &waProto.ExtendedTextMessage{
+				Text:        proto.String(msg.Content),
+				ContextInfo: contextInfo,
+			},
+		}
+	}
+
+	return b.Client.SendMessage(ctx, to, waMsg)
 }

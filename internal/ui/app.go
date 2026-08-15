@@ -511,6 +511,19 @@ func loadCSS() {
 			box-shadow: 0 0 0 2px #00a884, 0 2px 8px rgba(0, 168, 132, 0.4);
 			transition: background-color 0.8s ease-out, box-shadow 0.8s ease-out;
 		}
+		.selection-bar {
+			background-color: #f0f2f5;
+			border-bottom: 1px solid #d1d7db;
+			padding: 8px 16px;
+			box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+		}
+		.message-row-selected {
+			background-color: rgba(0, 168, 132, 0.22);
+			border-radius: 6px;
+		}
+		.message-row-selected .message-bubble {
+			box-shadow: 0 0 0 2px #00a884;
+		}
 	`)
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), cssProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 }

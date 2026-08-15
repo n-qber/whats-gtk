@@ -388,4 +388,13 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 	cv.OnDownloadMedia = br.Chat.HandleDownloadMedia
 	cv.OnOpenImage = br.Chat.HandleOpenImage
 	cv.OnDetach = br.Chat.HandleDetach
+
+	cv.OnForwardMessages = func(msgIDs []string) {
+		contacts := br.Chat.GetForwardContactItems()
+		glib.IdleAdd(func() {
+			chat.ShowForwardDialog(&br.App.Window.Window, contacts, func(targetJIDs []string) {
+				br.Chat.HandleForwardMessages(targetJIDs, msgIDs)
+			})
+		})
+	}
 }
