@@ -161,3 +161,13 @@ func (ib *InputBar) CancelReply() {
 func (ib *InputBar) GrabFocus() {
 	ib.TextView.GrabFocus()
 }
+
+func (ib *InputBar) SetText(text string) {
+	if ib.TextView != nil {
+		buffer := ib.TextView.Buffer()
+		if buffer != nil {
+			buffer.SetText(text)
+		}
+		ib.TextView.GrabFocus()
+	}
+}

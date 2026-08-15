@@ -23,18 +23,16 @@ var iconData []byte
 
 func main() {
 	const appID = "com.github.user.whats-gtk"
-	application := adw.NewApplication(appID, gio.ApplicationFlagsNone)
+	application := adw.NewApplication(appID, gio.ApplicationHandlesOpen)
 
 	ctx := context.Background()
 
 	var initialized bool
 	var mainApp *ui.App
+	var mainBridge *bridge.Bridge
 
-	application.Connect("activate", func() {
+	initApp := func() {
 		if initialized {
-			if mainApp != nil {
-				mainApp.Window.Present()
-			}
 			return
 		}
 		initialized = true
@@ -71,11 +69,39 @@ func main() {
 
 		// Initialize Bridge
 		br := bridge.NewBridge(b, app, appDB, ctx, bus)
+		mainBridge = br
 		br.Start(ctx)
 
 		setupTray(app, application)
 
 		app.Show()
+	}
+
+	handleArgs := func() {
+		for _, arg := range os.Args[1:] {
+			if _, ok := bridge.ParseWhatsAppURL(arg); ok {
+				if mainBridge != nil {
+					mainBridge.Chat.HandleOpenURL(arg)
+				}
+				break
+			}
+		}
+	}
+
+	application.Connect("activate", func() {
+		initApp()
+		if mainApp != nil {
+			mainApp.Window.Present()
+		}
+		handleArgs()
+	})
+
+	application.Connect("open", func() {
+		initApp()
+		if mainApp != nil {
+			mainApp.Window.Present()
+		}
+		handleArgs()
 	})
 
 	os.Exit(application.Run(os.Args))

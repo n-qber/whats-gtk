@@ -337,3 +337,9 @@ func (cv *ChatView) SetAvatar(jid string, tex *gdk.Texture) {
 		})
 	}
 }
+
+func (cv *ChatView) SetInputText(text string) {
+	if cv.InputBar != nil {
+		cv.InputBar.SetText(text)
+	}
+}
