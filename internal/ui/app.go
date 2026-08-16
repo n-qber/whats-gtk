@@ -141,36 +141,48 @@ func (a *App) setupSubscriptions() {
 			if payload, ok := ev.Data.(events.ChatMessagesPayload); ok {
 				glib.IdleAdd(func() {
 					cv := a.GetChatViewForJID(payload.JID)
-					if cv == nil { return }
-					
+					if cv == nil {
+						return
+					}
+
 					if !payload.Append {
 						cv.Clear()
+					} else {
+						if len(payload.Messages) == 0 {
+							cv.MessageList.NoMoreOlder = true
+							cv.SetLoadingOlder(false)
+							return
+						}
 					}
-					
-					// If we're appending (loading older), we might need to handle scrolling gracefully.
-					// For now, we'll just insert/append them.
-					// Since they are older messages, ChatView's Messagelist needs to insert at top or we just append.
-					// Wait, the order in payload is oldest first? Or oldest last?
-					// In chat.go we preserve the order from database (newest to oldest or oldest to newest).
-					// Assuming oldest to newest is what we send.
+
+					var oldUpper float64
+					var lastPrependedDate string
+					if payload.Append {
+						oldUpper = cv.MessageList.ScrolledWindow.VAdjustment().Upper()
+						cv.MessageList.InsertIndex = 0
+					}
+
 					for _, m := range payload.Messages {
 						if m.DateSeparator != "" {
 							cv.AddSeparator(m.DateSeparator)
+							if payload.Append {
+								lastPrependedDate = m.DateSeparator
+							}
 						}
-						
+
 						if m.Type == "text" {
 							cv.AddMessage(m.ID, m.JID, m.SenderName, m.Content, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText)
 						} else if m.Type == "image" || m.Type == "video" || m.Type == "sticker" {
 							var texImg, texThumb *gdk.Texture
 							texThumb = bytesToTexture(m.Thumbnail)
-							
+
 							if m.DocumentPath != "" && m.Type != "sticker" {
 								pixbuf, _ := gdkpixbuf.NewPixbufFromFile(m.DocumentPath)
 								if pixbuf != nil {
 									texImg = gdk.NewTextureForPixbuf(pixbuf)
 								}
 							}
-							
+
 							if m.Type == "image" {
 								cv.AddImage(m.ID, m.JID, m.SenderName, m.Content, texImg, texThumb, m.DocumentPath, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
 							} else if m.Type == "sticker" {
@@ -192,7 +204,7 @@ func (a *App) setupSubscriptions() {
 						} else if m.Type == "poll" {
 							cv.AddPoll(m.ID, m.JID, m.SenderName, m.Content, m.PollOptions, m.PollVotes, m.MyJID, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText)
 						}
-						
+
 						if len(m.Reactions) > 0 {
 							cv.UpdateMessageReactions(m.ID, m.Reactions)
 						}
@@ -208,8 +220,45 @@ func (a *App) setupSubscriptions() {
 							cv.UpdateMessageForwarded(m.ID, true)
 						}
 					}
-					
-					if !payload.Append {
+
+					if payload.Append {
+						if lastPrependedDate != "" {
+							if oldRow := cv.MessageList.ListBox.RowAtIndex(cv.MessageList.InsertIndex); oldRow != nil {
+								if child := oldRow.Child(); child != nil {
+									if label, ok := child.(*gtk.Label); ok {
+										if label.HasCSSClass("date-separator") && label.Text() == lastPrependedDate {
+											cv.MessageList.ListBox.Remove(oldRow)
+										}
+									}
+								}
+							}
+						}
+
+						cv.MessageList.InsertIndex = -1
+						if len(payload.Messages) < 50 {
+							cv.MessageList.NoMoreOlder = true
+						}
+
+						attempts := 0
+						var tryAdjust func() bool
+						tryAdjust = func() bool {
+							attempts++
+							adj := cv.MessageList.ScrolledWindow.VAdjustment()
+							newUpper := adj.Upper()
+							diff := newUpper - oldUpper
+							if diff > 0 {
+								adj.SetValue(adj.Value() + diff)
+								cv.SetLoadingOlder(false)
+								return false
+							}
+							if attempts >= 20 {
+								cv.SetLoadingOlder(false)
+								return false
+							}
+							return true
+						}
+						glib.TimeoutAdd(30, tryAdjust)
+					} else {
 						cv.ScrollToBottom()
 					}
 				})

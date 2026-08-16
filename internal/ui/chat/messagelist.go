@@ -32,6 +32,7 @@ type MessageList struct {
 
 	// State
 	IsLoadingOlder bool
+	NoMoreOlder    bool
 	IsSearching    bool
 
 	// Selection mode state
@@ -154,7 +155,7 @@ func NewMessageList() *MessageList {
 
 	ml.ScrolledWindow.VAdjustment().ConnectValueChanged(func() {
 		adj := ml.ScrolledWindow.VAdjustment()
-		if len(ml.MessageRows) > 0 && adj.Value() <= 50.0 && !ml.IsLoadingOlder && ml.OnLoadOlder != nil {
+		if len(ml.MessageRows) > 0 && adj.Value() <= 50.0 && !ml.IsLoadingOlder && !ml.NoMoreOlder && ml.OnLoadOlder != nil {
 			ml.SetLoadingOlder(true)
 			ml.OnLoadOlder()
 		}
@@ -186,6 +187,7 @@ func (ml *MessageList) SetPinnedMessage(content string) {
 func (ml *MessageList) Clear() {
 	ml.ExitSelectionMode()
 	ml.SetLoadingOlder(false)
+	ml.NoMoreOlder = false
 	for ml.ListBox.FirstChild() != nil {
 		ml.ListBox.Remove(ml.ListBox.FirstChild())
 	}

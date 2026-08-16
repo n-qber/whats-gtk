@@ -188,8 +188,20 @@ func (cc *ChatController) RenderMessageSearch(jidStr string, query string) {
 
 func (cc *ChatController) LoadOlderMessages(jidStr string, targetID string) {
 	go func() {
+		publishEmpty := func() {
+			cc.EventBus.Publish(events.Event{
+				Type: events.EventChatMessagesLoaded,
+				Data: events.ChatMessagesPayload{
+					JID:      jidStr,
+					Messages: nil,
+					Append:   true,
+				},
+			})
+		}
+
 		before, ok := cc.OldestMessageTimes[jidStr]
 		if !ok {
+			publishEmpty()
 			return
 		}
 
@@ -207,12 +219,14 @@ func (cc *ChatController) LoadOlderMessages(jidStr string, targetID string) {
 		} else {
 			targetMsg, e := cc.DB.GetMessage(targetID)
 			if e != nil || !targetMsg.Timestamp.Before(before) {
+				publishEmpty()
 				return
 			}
 			msgs, err = cc.DB.GetMessagesBetween(jids, targetMsg.Timestamp, before, 300)
 		}
 
 		if err != nil || len(msgs) == 0 {
+			publishEmpty()
 			return
 		}
 
