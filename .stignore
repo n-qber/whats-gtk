@@ -1,0 +1,12 @@
+// Syncthing Ignore Patterns for whats-gtk
+
+// Ignore SQLite temporary WAL and SHM files to prevent live-sync locking conflicts
+*.db-wal
+*.db-shm
+*.db-journal
+
+// Ignore compiled binary executables
+whats-gtk
+
+// Ignore git index lock files
+.git/index.lock

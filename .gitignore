@@ -27,3 +27,4 @@ vendor/
 *.exe
 *.test
 *.out
+test_*.go

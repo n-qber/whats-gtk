@@ -40,6 +40,15 @@ func main() {
 		// Hold application count so GTK main loop stays alive when window is hidden
 		application.Hold()
 
+		// Resolve any pending Syncthing conflicts dynamically before opening databases
+		if err := database.ResolveSyncthingConflicts("app.db"); err != nil {
+			log.Printf("Warning: error resolving app.db conflicts: %v", err)
+		}
+		if err := database.ResolveSyncthingConflicts("store.db"); err != nil {
+			log.Printf("Warning: error resolving store.db conflicts: %v", err)
+		}
+		database.CleanStaleConflictFiles(".")
+
 		// Initialize AppDB
 		appDB, err := database.InitDB("app.db")
 		if err != nil {
