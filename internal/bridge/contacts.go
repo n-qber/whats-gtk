@@ -7,12 +7,12 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/database"
+	"whats-gtk/internal/paths"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
@@ -82,7 +82,7 @@ func (cs *ContactService) avatarWorker() {
 			if err == nil {
 				defer resp.Body.Close()
 				data, _ := io.ReadAll(resp.Body)
-				path := filepath.Join("media", "avatar_"+jid.ToNonAD().String()+".jpg")
+				path := paths.MediaPath("avatar_" + jid.ToNonAD().String() + ".jpg")
 				os.WriteFile(path, data, 0644)
 				cs.DB.SaveContact(database.Contact{JID: jid.ToNonAD().String(), AvatarPath: sql.NullString{String: path, Valid: true}})
 				glib.IdleAdd(func() {

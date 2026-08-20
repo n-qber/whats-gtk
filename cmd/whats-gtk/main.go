@@ -10,6 +10,7 @@ import (
 	"whats-gtk/internal/bridge"
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/events"
+	"whats-gtk/internal/paths"
 	"whats-gtk/internal/ui"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
@@ -40,23 +41,26 @@ func main() {
 		// Hold application count so GTK main loop stays alive when window is hidden
 		application.Hold()
 
+		appDBPath := paths.AppDBPath()
+		storeDBPath := paths.StoreDBPath()
+
 		// Resolve any pending Syncthing conflicts dynamically before opening databases
-		if err := database.ResolveSyncthingConflicts("app.db"); err != nil {
+		if err := database.ResolveSyncthingConflicts(appDBPath); err != nil {
 			log.Printf("Warning: error resolving app.db conflicts: %v", err)
 		}
-		if err := database.ResolveSyncthingConflicts("store.db"); err != nil {
+		if err := database.ResolveSyncthingConflicts(storeDBPath); err != nil {
 			log.Printf("Warning: error resolving store.db conflicts: %v", err)
 		}
-		database.CleanStaleConflictFiles(".")
+		database.CleanStaleConflictFiles(paths.DataDir())
 
 		// Initialize AppDB
-		appDB, err := database.InitDB("app.db")
+		appDB, err := database.InitDB(appDBPath)
 		if err != nil {
 			log.Fatal("Failed to init app db:", err)
 		}
 
 		// Initialize Backend
-		container, err := backend.InitStore(ctx, "store.db")
+		container, err := backend.InitStore(ctx, storeDBPath)
 		if err != nil {
 			log.Fatal("Failed to init store:", err)
 		}

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"mime"
 	"os"
-	"path/filepath"
 	"strings"
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/database"
+	"whats-gtk/internal/paths"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"go.mau.fi/whatsmeow"
@@ -107,7 +107,7 @@ func (ms *MediaService) mediaWorker() {
 			}
 		}
 
-		path := filepath.Join("media", filename)
+		path := paths.MediaPath(filename)
 		
 		if _, err := os.Stat(path); err == nil {
 			ms.persistMediaMessage(task, path)

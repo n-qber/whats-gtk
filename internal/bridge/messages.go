@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/database"
+	"whats-gtk/internal/paths"
 	"whats-gtk/internal/ui"
 
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -266,7 +266,7 @@ func (ms *MessageService) PersistMessage(msg *events.Message) {
 		case "audio": ext = ".ogg"
 		case "document": ext = ".bin"
 		}
-		path := filepath.Join("media", msg.Info.ID+ext)
+		path := paths.MediaPath(msg.Info.ID + ext)
 		if _, err := os.Stat(path); err == nil {
 			content = path
 		}

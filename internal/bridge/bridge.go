@@ -8,6 +8,7 @@ import (
 	"whats-gtk/internal/core"
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/events"
+	"whats-gtk/internal/paths"
 	"whats-gtk/internal/ui"
 	"whats-gtk/internal/ui/chat"
 
@@ -79,7 +80,7 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 // Start is the application entry point: creates the media directory,
 // sets the event handler, connects the backend, and loads the initial sidebar.
 func (br *Bridge) Start(ctx context.Context) {
-	os.MkdirAll("media", 0755)
+	_ = os.MkdirAll(paths.MediaDir(), 0755)
 	br.Backend.SetEventHandler(br.Events.HandleEvent)
 	br.Backend.Connect()
 	go func() {

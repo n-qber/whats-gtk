@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"whats-gtk/internal/database"
+	"whats-gtk/internal/paths"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
@@ -60,7 +61,7 @@ func (cc *ChatController) HandlePasteImage(targetJID types.JID, tex *gdk.Texture
 
 		cc.promoteTempMessage(targetJID, tempID, resp.ID)
 
-		path := filepath.Join("media", resp.ID+".jpg")
+		path := paths.MediaPath(resp.ID + ".jpg")
 		os.WriteFile(path, data, 0644)
 		cc.DB.SaveMessage(database.Message{
 			ID: resp.ID, ChatJID: targetJID.ToNonAD().String(), SenderJID: cc.Backend.Device.ID.ToNonAD().String(),
@@ -155,7 +156,7 @@ func (cc *ChatController) HandleSendFile(targetJID types.JID, path string) {
 			}
 		}
 
-		dbPath := filepath.Join("media", resp.ID+ext)
+		dbPath := paths.MediaPath(resp.ID + ext)
 		os.WriteFile(dbPath, data, 0644)
 
 		cc.DB.SaveMessage(database.Message{
