@@ -107,27 +107,66 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 		eh.App.Sidebar.SetSyncProgress(fraction)
 	})
 	go func() {
+		tx, err := eh.DB.Begin()
+		if err != nil {
+			fmt.Printf("Bridge: Failed to begin transaction for history sync: %v\n", err)
+		}
+		commitCount := 0
+
+		commitTx := func() {
+			if tx != nil {
+				_ = tx.Commit()
+				tx, _ = eh.DB.Begin()
+				commitCount = 0
+			}
+		}
+
+		defer func() {
+			if tx != nil {
+				_ = tx.Commit()
+			}
+		}()
+
 		for _, conv := range v.Data.Data.GetConversations() {
 			chatJID, _ := types.ParseJID(conv.GetID()); chatJID = chatJID.ToNonAD()
-			eh.DB.SaveContact(database.Contact{JID: chatJID.String(), IsGroup: sql.NullBool{Bool: chatJID.Server == types.GroupServer, Valid: true}})
+			contact := database.Contact{JID: chatJID.String(), IsGroup: sql.NullBool{Bool: chatJID.Server == types.GroupServer, Valid: true}}
+			if tx != nil {
+				_ = eh.DB.SaveContactTx(tx, contact)
+			} else {
+				_ = eh.DB.SaveContact(contact)
+			}
 			
 			// Save sync metadata
 			unreadCount := int(conv.GetUnreadCount())
 			isPinned := conv.GetPinned() > 0
 			isArchived := conv.GetArchived()
 			timestamp := conv.GetConversationTimestamp()
-			eh.DB.SaveSyncData(chatJID.String(), unreadCount, isPinned, isArchived, conv.GetName(), "", timestamp)
+			if tx != nil {
+				_ = eh.DB.SaveSyncDataTx(tx, chatJID.String(), unreadCount, isPinned, isArchived, conv.GetName(), "", timestamp)
+			} else {
+				_ = eh.DB.SaveSyncData(chatJID.String(), unreadCount, isPinned, isArchived, conv.GetName(), "", timestamp)
+			}
 			
 			for _, hMsg := range conv.GetMessages() {
 				pMsg, err := eh.Backend.Client.ParseWebMessage(chatJID, hMsg.GetMessage())
 				if err == nil {
-					eh.Messages.PersistMessage(pMsg)
+					eh.Messages.PersistMessageTx(tx, pMsg)
 					if pMsg.Message.GetReactionMessage() != nil {
 						eh.Messages.HandleReaction(pMsg.Info.Chat, pMsg.Info.Sender, pMsg.Message.GetReactionMessage().GetText(), pMsg.Message.GetReactionMessage().GetKey().GetID(), pMsg.Info.Timestamp)
+					}
+					commitCount++
+					if commitCount >= 250 {
+						commitTx()
 					}
 				}
 			}
 		}
+
+		if tx != nil {
+			_ = tx.Commit()
+			tx = nil
+		}
+
 		eh.syncMutex.Lock()
 		eh.isSyncing = false
 		eh.syncMutex.Unlock()

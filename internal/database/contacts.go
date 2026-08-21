@@ -30,6 +30,14 @@ func scanContact(s RowScanner) (Contact, error) {
 }
 
 func (a *AppDB) SaveSyncData(jid string, unreadCount int, isPinned bool, isArchived bool, name string, pushName string, timestamp uint64) error {
+	return a.saveSyncData(a.db, jid, unreadCount, isPinned, isArchived, name, pushName, timestamp)
+}
+
+func (a *AppDB) SaveSyncDataTx(tx *sql.Tx, jid string, unreadCount int, isPinned bool, isArchived bool, name string, pushName string, timestamp uint64) error {
+	return a.saveSyncData(tx, jid, unreadCount, isPinned, isArchived, name, pushName, timestamp)
+}
+
+func (a *AppDB) saveSyncData(exec DBExecutor, jid string, unreadCount int, isPinned bool, isArchived bool, name string, pushName string, timestamp uint64) error {
 	var ts interface{}
 	if timestamp > 0 {
 		ts = time.Unix(int64(timestamp), 0)
@@ -48,14 +56,22 @@ func (a *AppDB) SaveSyncData(jid string, unreadCount int, isPinned bool, isArchi
 	              THEN excluded.last_message_at 
 	              ELSE contacts.last_message_at 
 	          END`
-	_, err := a.db.Exec(query, jid, unreadCount, isPinned, isArchived, name, pushName, ts)
+	_, err := exec.Exec(query, jid, unreadCount, isPinned, isArchived, name, pushName, ts)
 	return err
 }
 
 func (a *AppDB) SaveContact(c Contact) error {
+	return a.saveContact(a.db, c)
+}
+
+func (a *AppDB) SaveContactTx(tx *sql.Tx, c Contact) error {
+	return a.saveContact(tx, c)
+}
+
+func (a *AppDB) saveContact(exec DBExecutor, c Contact) error {
 	if strings.HasSuffix(c.JID, "@lid") {
 		var pn string
-		err := a.db.QueryRow("SELECT jid FROM contacts WHERE lid = ?", c.JID).Scan(&pn)
+		err := exec.QueryRow("SELECT jid FROM contacts WHERE lid = ?", c.JID).Scan(&pn)
 		if err == nil && pn != "" {
 			c.LID = sql.NullString{String: c.JID, Valid: true}
 			c.JID = pn
@@ -75,7 +91,7 @@ func (a *AppDB) SaveContact(c Contact) error {
 	              THEN excluded.last_message_at 
 	              ELSE contacts.last_message_at 
 	          END`
-	_, err := a.db.Exec(query, c.JID, c.LID, c.SavedName, c.PushName, c.AvatarPath, c.IsGroup, c.LastMessageAt)
+	_, err := exec.Exec(query, c.JID, c.LID, c.SavedName, c.PushName, c.AvatarPath, c.IsGroup, c.LastMessageAt)
 	return err
 }
 
@@ -140,10 +156,18 @@ func (a *AppDB) MergeLID(pnJID, lidJID string) error {
 }
 
 func (a *AppDB) UpdateContactTimestamp(jid string, timestamp time.Time) error {
+	return a.updateContactTimestamp(a.db, jid, timestamp)
+}
+
+func (a *AppDB) UpdateContactTimestampTx(tx *sql.Tx, jid string, timestamp time.Time) error {
+	return a.updateContactTimestamp(tx, jid, timestamp)
+}
+
+func (a *AppDB) updateContactTimestamp(exec DBExecutor, jid string, timestamp time.Time) error {
 	query := `UPDATE contacts SET last_message_at = ? 
 	          WHERE (jid = ? OR lid = ?) 
 	          AND (last_message_at IS NULL OR ? > last_message_at)`
-	_, err := a.db.Exec(query, timestamp, jid, jid, timestamp)
+	_, err := exec.Exec(query, timestamp, jid, jid, timestamp)
 	return err
 }
 

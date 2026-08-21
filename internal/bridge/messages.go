@@ -187,6 +187,12 @@ func (ms *MessageService) ExtractContextInfo(msg *events.Message) *waProto.Conte
 // PersistMessage extracts message type, content, and media metadata from protobuf
 // and saves it to the database.
 func (ms *MessageService) PersistMessage(msg *events.Message) {
+	ms.PersistMessageTx(nil, msg)
+}
+
+// PersistMessageTx extracts message type, content, and media metadata from protobuf
+// and saves it to the database, optionally within an active SQL transaction.
+func (ms *MessageService) PersistMessageTx(tx *sql.Tx, msg *events.Message) {
 	if msg.Message.GetReactionMessage() != nil || 
 	   msg.Message.GetProtocolMessage() != nil ||
 	   msg.Message.GetSenderKeyDistributionMessage() != nil {
@@ -325,17 +331,30 @@ func (ms *MessageService) PersistMessage(msg *events.Message) {
 			metadata.QuotedMsgContent = sql.NullString{String: quotedContent, Valid: quotedContent != ""}
 		}
 	}
-	err := ms.DB.SaveMessage(metadata)
+	var err error
+	if tx != nil {
+		err = ms.DB.SaveMessageTx(tx, metadata)
+		_ = ms.DB.UpdateContactTimestampTx(tx, chatJID, msg.Info.Timestamp)
+	} else {
+		err = ms.DB.SaveMessage(metadata)
+		_ = ms.DB.UpdateContactTimestamp(chatJID, msg.Info.Timestamp)
+	}
 	if err != nil {
 		fmt.Printf("Bridge: Error saving message %s: %v\n", metadata.ID, err)
 	}
-	ms.DB.UpdateContactTimestamp(chatJID, msg.Info.Timestamp)
 	
 	if !msg.Info.IsFromMe {
 		pushName := msg.Info.PushName; fullName := ""
 		contactInfo, err := ms.Backend.Client.Store.Contacts.GetContact(ms.ctx, msg.Info.Sender)
 		if err == nil && contactInfo.Found { if pushName == "" { pushName = contactInfo.PushName }; fullName = contactInfo.FullName }
-		if pushName != "" || fullName != "" { ms.DB.SaveContact(database.Contact{JID: senderJID, SavedName: sql.NullString{String: fullName, Valid: fullName != ""}, PushName: sql.NullString{String: pushName, Valid: pushName != ""}}) }
+		if pushName != "" || fullName != "" {
+			c := database.Contact{JID: senderJID, SavedName: sql.NullString{String: fullName, Valid: fullName != ""}, PushName: sql.NullString{String: pushName, Valid: pushName != ""}}
+			if tx != nil {
+				_ = ms.DB.SaveContactTx(tx, c)
+			} else {
+				_ = ms.DB.SaveContact(c)
+			}
+		}
 	}
 }
 

@@ -51,6 +51,14 @@ func scanMessage(s RowScanner) (Message, error) {
 }
 
 func (a *AppDB) SaveMessage(m Message) error {
+	return a.saveMessage(a.db, m)
+}
+
+func (a *AppDB) SaveMessageTx(tx *sql.Tx, m Message) error {
+	return a.saveMessage(tx, m)
+}
+
+func (a *AppDB) saveMessage(exec DBExecutor, m Message) error {
 	query := `INSERT INTO messages (
 		msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
 		media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
@@ -74,7 +82,7 @@ func (a *AppDB) SaveMessage(m Message) error {
 		is_pinned = excluded.is_pinned,
 		is_edited = excluded.is_edited`
 
-	_, err := a.db.Exec(query,
+	_, err := exec.Exec(query,
 		m.ID, m.ChatJID, m.SenderJID, m.Content, m.Caption, m.Type, m.Timestamp, m.Status, m.IsFromMe, m.Thumbnail,
 		m.MediaURL, m.MediaDirectPath, m.MediaKey, m.MediaMimetype, m.MediaEncSHA256, m.MediaSHA256, m.MediaLength,
 		m.MediaWidth, m.MediaHeight,

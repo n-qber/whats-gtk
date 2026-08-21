@@ -7,6 +7,12 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+type DBExecutor interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
 type AppDB struct {
 	db *sql.DB
 }
@@ -149,6 +155,11 @@ func (a *AppDB) ensureColumn(table, column, colType string) {
 			fmt.Printf("Database: Failed to add column %s: %v\n", column, err)
 		}
 	}
+}
+
+// Begin starts a new database transaction.
+func (a *AppDB) Begin() (*sql.Tx, error) {
+	return a.db.Begin()
 }
 
 func (a *AppDB) Close() error {
