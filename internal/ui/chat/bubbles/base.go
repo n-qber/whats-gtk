@@ -471,6 +471,7 @@ func (b *baseBubble) SetStatus(status string) {
 		b.StatusLabel.RemoveCSSClass("receipt-delivered")
 		b.StatusLabel.RemoveCSSClass("receipt-read")
 		b.StatusLabel.RemoveCSSClass("receipt-pending")
+		b.StatusLabel.RemoveCSSClass("receipt-failed")
 		applyStatusClass(b.StatusLabel, status)
 	}
 
@@ -503,6 +504,7 @@ func getStatusIcon(status string) string {
 	case "delivered": return "✓✓"
 	case "sent": return "✓"
 	case "pending": return "🕒"
+	case "failed": return "⚠️"
 	default: return ""
 	}
 }
@@ -513,5 +515,6 @@ func applyStatusClass(l *gtk.Label, status string) {
 	case "delivered": l.AddCSSClass("receipt-delivered")
 	case "sent": l.AddCSSClass("receipt-sent")
 	case "pending": l.AddCSSClass("receipt-pending")
+	case "failed": l.AddCSSClass("receipt-failed")
 	}
 }

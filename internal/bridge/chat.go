@@ -17,6 +17,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
+	"go.mau.fi/whatsmeow"
 	meowEvents "go.mau.fi/whatsmeow/types/events"
 	"go.mau.fi/whatsmeow/types"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -214,6 +215,7 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 
 func (cc *ChatController) HandleSendMessage(targetJID types.JID, text string, replyToID string) {
 	now := time.Now().Format("15:04")
+	msgID := cc.Backend.GenerateMessageID()
 
 	var qID, qSender, qContent string
 	if replyToID != "" {
@@ -227,14 +229,21 @@ func (cc *ChatController) HandleSendMessage(targetJID types.JID, text string, re
 		}
 	}
 
-	tempID := "temp"
 	glib.IdleAdd(func() {
 		if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
 			isCont := cc.lastSender == cc.Backend.Device.ID.ToNonAD().String()
-			cv.AddMessage(tempID, "", "", text, true, isCont, "pending", now, nil, qID, qSender, qContent)
+			cv.AddMessage(msgID, "", "", text, true, isCont, "pending", now, nil, qID, qSender, qContent)
 			cc.lastSender = cc.Backend.Device.ID.ToNonAD().String()
 			cv.ScrollToBottom()
 		}
+	})
+
+	cc.DB.SaveMessage(database.Message{
+		ID: msgID, ChatJID: targetJID.ToNonAD().String(), SenderJID: cc.Backend.Device.ID.ToNonAD().String(),
+		Content: text, Type: "text", Timestamp: time.Now(), Status: "pending", IsFromMe: true,
+		QuotedMsgID:      sql.NullString{String: qID, Valid: qID != ""},
+		QuotedMsgSender:  sql.NullString{String: qSender, Valid: qSender != ""},
+		QuotedMsgContent: sql.NullString{String: qContent, Valid: qContent != ""},
 	})
 
 	go func() {
@@ -251,19 +260,25 @@ func (cc *ChatController) HandleSendMessage(targetJID types.JID, text string, re
 			}
 		}
 
-		resp, err := cc.Backend.SendText(cc.ctx, targetJID, text, contextInfo)
+		resp, err := cc.Backend.SendText(cc.ctx, targetJID, text, contextInfo, whatsmeow.SendRequestExtra{ID: types.MessageID(msgID)})
 		if err != nil {
+			fmt.Printf("Bridge: SendText failed for %s: %v\n", msgID, err)
+			cc.DB.UpdateMessageStatus(msgID, targetJID.ToNonAD().String(), "failed")
+			glib.IdleAdd(func() {
+				if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
+					cv.UpdateMessageStatus(msgID, "failed")
+				}
+			})
 			return
 		}
-		cc.promoteTempMessage(targetJID, tempID, resp.ID)
-		cc.DB.SaveMessage(database.Message{
-			ID: resp.ID, ChatJID: targetJID.ToNonAD().String(), SenderJID: cc.Backend.Device.ID.ToNonAD().String(),
-			Content: text, Type: "text", Timestamp: resp.Timestamp, Status: "sent", IsFromMe: true,
-			QuotedMsgID:      sql.NullString{String: qID, Valid: qID != ""},
-			QuotedMsgSender:  sql.NullString{String: qSender, Valid: qSender != ""},
-			QuotedMsgContent: sql.NullString{String: qContent, Valid: qContent != ""},
-		})
+
+		cc.DB.UpdateMessageStatus(msgID, targetJID.ToNonAD().String(), "sent")
 		cc.DB.UpdateContactTimestamp(targetJID.ToNonAD().String(), resp.Timestamp)
+		glib.IdleAdd(func() {
+			if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
+				cv.UpdateMessageStatus(msgID, "sent")
+			}
+		})
 	}()
 }
 

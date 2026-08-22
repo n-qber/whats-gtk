@@ -520,6 +520,10 @@ func loadCSS() {
 		.receipt-read {
 			color: #53bdeb;
 		}
+		.receipt-failed {
+			color: #e01b24;
+			font-weight: bold;
+		}
 		.date-separator {
 			background-color: #ffffff;
 			border-radius: 8px;
