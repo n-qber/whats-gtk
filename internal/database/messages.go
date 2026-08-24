@@ -338,6 +338,31 @@ func (a *AppDB) GetOlderMessages(jids []string, before time.Time, limit int) ([]
 	return msgs, nil
 }
 
+func sanitizeFTS5Query(term string) string {
+	term = strings.TrimSpace(term)
+	if term == "" {
+		return ""
+	}
+	term = strings.ReplaceAll(term, `"`, `""`)
+	words := strings.Fields(term)
+	if len(words) == 0 {
+		return ""
+	}
+	var ftsWords []string
+	for _, w := range words {
+		w = strings.Map(func(r rune) rune {
+			if strings.ContainsRune(`*^:()[]{}-+`, r) {
+				return -1
+			}
+			return r
+		}, w)
+		if w != "" {
+			ftsWords = append(ftsWords, `"`+w+`"*`)
+		}
+	}
+	return strings.Join(ftsWords, " ")
+}
+
 func (a *AppDB) SearchMessagesInChat(jids []string, queryStr string, limit int) ([]Message, error) {
 	if len(jids) == 0 {
 		return nil, nil
@@ -347,6 +372,37 @@ func (a *AppDB) SearchMessagesInChat(jids []string, queryStr string, limit int) 
 	for i, j := range jids {
 		placeholders[i] = "?"
 		args[i] = j
+	}
+
+	if a.hasFTS5 {
+		ftsQ := sanitizeFTS5Query(queryStr)
+		if ftsQ != "" {
+			ftsQuery := fmt.Sprintf(`SELECT m.msg_id, m.chat_jid, m.sender_jid, m.content, m.caption, m.type, m.timestamp, m.status, m.is_from_me, m.thumbnail,
+						m.media_url, m.media_direct_path, m.media_key, m.media_mimetype, m.media_enc_sha256, m.media_sha256, m.media_length,
+						m.media_width, m.media_height,
+						m.quoted_msg_id, m.quoted_msg_content, m.quoted_msg_sender, m.is_pinned, m.is_edited, m.is_view_once, m.is_forwarded
+					FROM messages m
+					JOIN messages_fts f ON m.msg_id = f.msg_id
+					WHERE m.chat_jid IN (%s) AND messages_fts MATCH ?
+					ORDER BY m.timestamp ASC LIMIT ?`, strings.Join(placeholders, ","))
+
+			ftsArgs := make([]interface{}, len(jids))
+			copy(ftsArgs, args)
+			ftsArgs = append(ftsArgs, ftsQ, limit)
+
+			if rows, err := a.db.Query(ftsQuery, ftsArgs...); err == nil {
+				defer rows.Close()
+				var msgs []Message
+				for rows.Next() {
+					if m, err := scanMessage(rows); err == nil {
+						msgs = append(msgs, m)
+					}
+				}
+				if len(msgs) > 0 {
+					return msgs, nil
+				}
+			}
+		}
 	}
 
 	searchQuery := "%" + queryStr + "%"
@@ -377,6 +433,52 @@ func (a *AppDB) SearchMessagesInChat(jids []string, queryStr string, limit int) 
 }
 
 func (a *AppDB) SearchMessages(profileID int64, query string, limit int) ([]Message, error) {
+	if a.hasFTS5 {
+		ftsQ := sanitizeFTS5Query(query)
+		if ftsQ != "" {
+			var ftsSql string
+			var ftsRows *sql.Rows
+			var ftsErr error
+			if profileID > 0 {
+				ftsSql = `SELECT m.msg_id, m.chat_jid, m.sender_jid, m.content, m.caption, m.type, m.timestamp, m.status, m.is_from_me, m.thumbnail,
+						m.media_url, m.media_direct_path, m.media_key, m.media_mimetype, m.media_enc_sha256, m.media_sha256, m.media_length,
+						m.media_width, m.media_height,
+						m.quoted_msg_id, m.quoted_msg_content, m.quoted_msg_sender, m.is_pinned, m.is_edited, m.is_view_once, m.is_forwarded
+					FROM messages m
+					JOIN messages_fts f ON m.msg_id = f.msg_id
+					WHERE messages_fts MATCH ?
+					  AND (
+					      m.chat_jid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?)
+					      OR m.chat_jid IN (SELECT lid FROM contacts WHERE jid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?))
+					  )
+					ORDER BY m.timestamp DESC LIMIT ?`
+				ftsRows, ftsErr = a.db.Query(ftsSql, ftsQ, profileID, profileID, limit)
+			} else {
+				ftsSql = `SELECT m.msg_id, m.chat_jid, m.sender_jid, m.content, m.caption, m.type, m.timestamp, m.status, m.is_from_me, m.thumbnail,
+						m.media_url, m.media_direct_path, m.media_key, m.media_mimetype, m.media_enc_sha256, m.media_sha256, m.media_length,
+						m.media_width, m.media_height,
+						m.quoted_msg_id, m.quoted_msg_content, m.quoted_msg_sender, m.is_pinned, m.is_edited, m.is_view_once, m.is_forwarded
+					FROM messages m
+					JOIN messages_fts f ON m.msg_id = f.msg_id
+					WHERE messages_fts MATCH ?
+					ORDER BY m.timestamp DESC LIMIT ?`
+				ftsRows, ftsErr = a.db.Query(ftsSql, ftsQ, limit)
+			}
+			if ftsErr == nil && ftsRows != nil {
+				defer ftsRows.Close()
+				var msgs []Message
+				for ftsRows.Next() {
+					if m, err := scanMessage(ftsRows); err == nil {
+						msgs = append(msgs, m)
+					}
+				}
+				if len(msgs) > 0 {
+					return msgs, nil
+				}
+			}
+		}
+	}
+
 	var q string
 	var rows *sql.Rows
 	var err error

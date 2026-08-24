@@ -14,7 +14,8 @@ type DBExecutor interface {
 }
 
 type AppDB struct {
-	db *sql.DB
+	db      *sql.DB
+	hasFTS5 bool
 }
 
 func InitDB(path string) (*AppDB, error) {
@@ -141,6 +142,44 @@ func (a *AppDB) createTables() error {
 
 	// Create unique index for lid to handle mapping and prevent duplicates
 	_, _ = a.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_lid ON contacts(lid) WHERE lid IS NOT NULL")
+
+	// Initialize FTS5 virtual table for full-text message search
+	_, err := a.db.Exec(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+			msg_id UNINDEXED,
+			chat_jid UNINDEXED,
+			content,
+			caption,
+			tokenize='unicode61'
+		);
+	`)
+	if err == nil {
+		a.hasFTS5 = true
+		triggers := []string{
+			`CREATE TRIGGER IF NOT EXISTS trg_messages_ai AFTER INSERT ON messages BEGIN
+				INSERT INTO messages_fts(msg_id, chat_jid, content, caption)
+				VALUES (new.msg_id, new.chat_jid, coalesce(new.content, ''), coalesce(new.caption, ''));
+			END;`,
+			`CREATE TRIGGER IF NOT EXISTS trg_messages_ad AFTER DELETE ON messages BEGIN
+				DELETE FROM messages_fts WHERE msg_id = old.msg_id;
+			END;`,
+			`CREATE TRIGGER IF NOT EXISTS trg_messages_au AFTER UPDATE ON messages BEGIN
+				DELETE FROM messages_fts WHERE msg_id = old.msg_id;
+				INSERT INTO messages_fts(msg_id, chat_jid, content, caption)
+				VALUES (new.msg_id, new.chat_jid, coalesce(new.content, ''), coalesce(new.caption, ''));
+			END;`,
+		}
+		for _, trg := range triggers {
+			_, _ = a.db.Exec(trg)
+		}
+		// Populate existing messages into messages_fts if missing
+		_, _ = a.db.Exec(`
+			INSERT INTO messages_fts(msg_id, chat_jid, content, caption)
+			SELECT msg_id, chat_jid, coalesce(content, ''), coalesce(caption, '')
+			FROM messages
+			WHERE msg_id NOT IN (SELECT msg_id FROM messages_fts);
+		`)
+	}
 
 	return nil
 }
