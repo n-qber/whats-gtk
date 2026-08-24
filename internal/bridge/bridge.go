@@ -318,6 +318,14 @@ func (br *Bridge) handleKeyPressed(key string, mods gdk.ModifierType) bool {
 }
 
 func (br *Bridge) WireChatView(cv *chat.ChatView) {
+	cv.OnReconnect = func() {
+		go func() {
+			glib.IdleAdd(func() {
+				cv.SetConnectionStatus("Connecting to WhatsApp...", false)
+			})
+			_ = br.Backend.Connect()
+		}()
+	}
 	cv.OnSendMessage = func(text, replyToID string) {
 		if jid := br.Chat.SelectedJID(); jid != nil {
 			br.Chat.HandleSendMessage(*jid, text, replyToID)

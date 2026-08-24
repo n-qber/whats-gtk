@@ -18,8 +18,10 @@ type ChatView struct {
 	SearchBar   *SearchBar
 	MessageList *MessageList
 	InputBar    *InputBar
+	Banner      *adw.Banner
 
 	// High-level Callbacks (consumed by bridge)
+	OnReconnect           func()
 	OnSendMessage         func(text string, replyToID string)
 	OnPasteImage          func(tex *gdk.Texture)
 	OnSendFile            func(path string)
@@ -194,12 +196,38 @@ func NewChatView() (*ChatView, error) {
 	cv.Stack.AddNamed(emptyBox, "empty")
 	cv.Stack.AddNamed(chatBox, "chat")
 
-	// Set initial state to static empty background
-	cv.Stack.SetVisibleChildName("empty")
+	// Banner for network/reconnection alerts
+	cv.Banner = adw.NewBanner("")
+	cv.Banner.SetRevealed(false)
+	cv.Banner.ConnectButtonClicked(func() {
+		if cv.OnReconnect != nil {
+			cv.OnReconnect()
+		}
+	})
 
+	box.Append(cv.Banner)
 	box.Append(cv.Stack)
 
 	return cv, nil
+}
+
+// SetConnectionStatus updates the contextual connection banner.
+// An empty status string hides the banner.
+func (cv *ChatView) SetConnectionStatus(status string, showReconnect bool) {
+	if cv.Banner == nil {
+		return
+	}
+	if status == "" {
+		cv.Banner.SetRevealed(false)
+		return
+	}
+	cv.Banner.SetTitle(status)
+	if showReconnect {
+		cv.Banner.SetButtonLabel("Reconnect")
+	} else {
+		cv.Banner.SetButtonLabel("")
+	}
+	cv.Banner.SetRevealed(true)
 }
 
 // Proxies for legacy compatibility

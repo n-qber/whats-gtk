@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/core"
 	"whats-gtk/internal/database"
@@ -74,6 +75,8 @@ func (eh *EventHandler) HandleEvent(evt backend.AppEvent) {
 		eh.handleMessage(v)
 	case *backend.ConnectedEvent:
 		eh.handleConnected()
+	case *backend.DisconnectedEvent:
+		eh.handleDisconnected()
 	case *backend.QREvent:
 		eh.handleQR(v)
 	case *backend.OfflineSyncCompletedEvent:
@@ -226,15 +229,57 @@ func (eh *EventHandler) handleMessage(v *backend.MessageEvent) {
 	eh.Pipeline.Process(msg)
 }
 
-// handleConnected hides the QR dialog, syncs contacts, and refreshes the sidebar.
+// handleConnected hides the QR dialog, syncs contacts, clears status banner, and refreshes the sidebar.
 func (eh *EventHandler) handleConnected() {
 	glib.IdleAdd(func() {
 		eh.App.HideQRCode()
+		if eh.App.ChatView != nil {
+			eh.App.ChatView.SetConnectionStatus("", false)
+		}
 	})
 	go func() {
 		eh.Contacts.Sync(eh.ctx)
 		eh.Chat.RefreshSidebarUI()
 	}()
+}
+
+// handleDisconnected displays an offline banner and launches an automatic reconnection loop.
+func (eh *EventHandler) handleDisconnected() {
+	glib.IdleAdd(func() {
+		if eh.App.ChatView != nil {
+			eh.App.ChatView.SetConnectionStatus("Waiting for network / disconnected...", true)
+		}
+	})
+	go eh.startReconnectLoop()
+}
+
+func (eh *EventHandler) startReconnectLoop() {
+	backoffs := []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second, 30 * time.Second}
+	for _, delay := range backoffs {
+		time.Sleep(delay)
+		if eh.Backend.Client.IsConnected() {
+			glib.IdleAdd(func() {
+				if eh.App.ChatView != nil {
+					eh.App.ChatView.SetConnectionStatus("", false)
+				}
+			})
+			return
+		}
+		glib.IdleAdd(func() {
+			if eh.App.ChatView != nil {
+				eh.App.ChatView.SetConnectionStatus("Connecting to WhatsApp...", false)
+			}
+		})
+		err := eh.Backend.Connect()
+		if err == nil {
+			return
+		}
+	}
+	glib.IdleAdd(func() {
+		if eh.App.ChatView != nil {
+			eh.App.ChatView.SetConnectionStatus("Offline - Could not reconnect automatically", true)
+		}
+	})
 }
 
 // handleQR generates a QR code and displays it in the UI.
