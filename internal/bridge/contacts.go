@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"container/list"
 	"context"
 	"database/sql"
 	"fmt"
@@ -21,11 +22,61 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
+type lruItem struct {
+	key   string
+	value *gdk.Texture
+}
+
+// TextureLRU is a bounded in-memory cache with LRU eviction for GDK textures.
+type TextureLRU struct {
+	capacity int
+	items    map[string]*list.Element
+	order    *list.List
+}
+
+func NewTextureLRU(capacity int) *TextureLRU {
+	return &TextureLRU{
+		capacity: capacity,
+		items:    make(map[string]*list.Element),
+		order:    list.New(),
+	}
+}
+
+func (l *TextureLRU) Get(key string) (*gdk.Texture, bool) {
+	if elem, ok := l.items[key]; ok {
+		l.order.MoveToFront(elem)
+		return elem.Value.(*lruItem).value, true
+	}
+	return nil, false
+}
+
+func (l *TextureLRU) Put(key string, value *gdk.Texture) {
+	if elem, ok := l.items[key]; ok {
+		l.order.MoveToFront(elem)
+		elem.Value.(*lruItem).value = value
+		return
+	}
+	if l.order.Len() >= l.capacity {
+		back := l.order.Back()
+		if back != nil {
+			l.order.Remove(back)
+			delete(l.items, back.Value.(*lruItem).key)
+		}
+	}
+	elem := l.order.PushFront(&lruItem{key: key, value: value})
+	l.items[key] = elem
+}
+
+func (l *TextureLRU) Has(key string) bool {
+	_, ok := l.items[key]
+	return ok
+}
+
 type ContactService struct {
 	Backend      *backend.Backend
 	DB           *database.AppDB
 	ctx          context.Context
-	avatarCache  map[string]*gdk.Texture
+	avatarCache  *TextureLRU
 	avatarQueue  chan string
 	pendingFetch map[string]bool
 	failedFetch  map[string]time.Time
@@ -38,7 +89,7 @@ func NewContactService(b *backend.Backend, db *database.AppDB, ctx context.Conte
 		Backend:      b,
 		DB:           db,
 		ctx:          ctx,
-		avatarCache:  make(map[string]*gdk.Texture),
+		avatarCache:  NewTextureLRU(150),
 		avatarQueue:  make(chan string, 500),
 		pendingFetch: make(map[string]bool),
 		failedFetch:  make(map[string]time.Time),
@@ -56,7 +107,7 @@ func (cs *ContactService) SetOnAvatarSet(f func(jid string, tex *gdk.Texture)) {
 func (cs *ContactService) avatarWorker() {
 	for jStr := range cs.avatarQueue {
 		cs.mutex.Lock()
-		if _, exists := cs.avatarCache[jStr]; exists {
+		if cs.avatarCache.Has(jStr) {
 			cs.pendingFetch[jStr] = false
 			cs.mutex.Unlock()
 			continue
@@ -90,7 +141,7 @@ func (cs *ContactService) avatarWorker() {
 					if pixbuf != nil {
 						tex := gdk.NewTextureForPixbuf(pixbuf)
 						cs.mutex.Lock()
-						cs.avatarCache[jStr] = tex
+						cs.avatarCache.Put(jStr, tex)
 						cs.mutex.Unlock()
 						if cs.onAvatarSet != nil {
 							cs.onAvatarSet(jStr, tex)
@@ -114,7 +165,7 @@ func (cs *ContactService) GetAvatarNoFetch(j string) *gdk.Texture {
 	cs.mutex.Lock()
 	defer cs.mutex.Unlock()
 
-	if tex, exists := cs.avatarCache[j]; exists {
+	if tex, exists := cs.avatarCache.Get(j); exists {
 		return tex
 	}
 
@@ -123,7 +174,7 @@ func (cs *ContactService) GetAvatarNoFetch(j string) *gdk.Texture {
 			pixbuf, _ := gdkpixbuf.NewPixbufFromFile(c.AvatarPath.String)
 			if pixbuf != nil {
 				tex := gdk.NewTextureForPixbuf(pixbuf)
-				cs.avatarCache[j] = tex
+				cs.avatarCache.Put(j, tex)
 				return tex
 			}
 		}
