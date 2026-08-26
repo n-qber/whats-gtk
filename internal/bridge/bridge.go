@@ -8,6 +8,7 @@ import (
 	"whats-gtk/internal/core"
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/events"
+	"whats-gtk/internal/notifications"
 	"whats-gtk/internal/paths"
 	"whats-gtk/internal/ui"
 	"whats-gtk/internal/ui/chat"
@@ -38,6 +39,7 @@ type Bridge struct {
 	Media    *MediaService
 	Input    *core.InputManager
 	Pipeline *core.MessagePipeline
+	Notifier *notifications.Notifier
 }
 
 // NewBridge creates all sub-services and wires them together.
@@ -50,6 +52,7 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 	mapper := NewViewMapper(contacts, db, b.Client.Store.ID.ToNonAD().String())
 	chat := NewChatController(b, a, db, msgs, contacts, media, ctx, bus, mapper)
 	evts := NewEventHandler(b, a, db, msgs, chat, contacts, media, pipeline, ctx)
+	notifier := notifications.NewNotifier()
 
 	// Wire back-references (these can't be set in constructors due to circular init)
 	msgs.GetSelectedJID = chat.SelectedJID
@@ -68,6 +71,7 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 		Media:    media,
 		Input:    input,
 		Pipeline: pipeline,
+		Notifier: notifier,
 	}
 
 	br.registerDefaultHooks()
@@ -100,8 +104,8 @@ func (br *Bridge) RefreshProfilesUI() {
 	})
 }
 
-// registerDefaultHooks registers pipeline hooks for auto-downloading stickers
-// and rendering incoming messages to the UI.
+// registerDefaultHooks registers pipeline hooks for auto-downloading stickers,
+// dispatching events, and sending desktop notifications.
 func (br *Bridge) registerDefaultHooks() {
 	// Hook to auto-download stickers
 	br.Pipeline.AddHook(func(ctx context.Context, msg *meowEvents.Message) error {
@@ -120,6 +124,55 @@ func (br *Bridge) registerDefaultHooks() {
 				IsSyncing: br.Events.IsSyncing(),
 			},
 		})
+		return nil
+	})
+
+	// Hook to send desktop notifications when app window is inactive or in background
+	br.Pipeline.AddHook(func(ctx context.Context, msg *meowEvents.Message) error {
+		if msg.Info.IsFromMe || br.Events.IsSyncing() || br.Notifier == nil {
+			return nil
+		}
+		chatJID := br.Messages.ResolveJID(msg.Info.Chat).ToNonAD().String()
+		selJID := br.Chat.SelectedJID()
+		isCurrentChat := selJID != nil && selJID.ToNonAD().String() == chatJID
+		if br.App.Window.IsActive() && isCurrentChat {
+			return nil
+		}
+
+		senderName := msg.Info.PushName
+		if senderName == "" {
+			if c, err := br.DB.GetContact(chatJID); err == nil {
+				if c.SavedName.Valid && c.SavedName.String != "" {
+					senderName = c.SavedName.String
+				} else if c.PushName.Valid && c.PushName.String != "" {
+					senderName = c.PushName.String
+				}
+			}
+		}
+		if senderName == "" {
+			senderName = chatJID
+		}
+
+		body := ""
+		if msg.Message.GetConversation() != "" {
+			body = msg.Message.GetConversation()
+		} else if ext := msg.Message.GetExtendedTextMessage(); ext != nil {
+			body = ext.GetText()
+		} else if msg.Message.GetImageMessage() != nil {
+			body = "📷 Photo"
+		} else if msg.Message.GetVideoMessage() != nil {
+			body = "🎥 Video"
+		} else if msg.Message.GetAudioMessage() != nil {
+			body = "🎵 Voice message"
+		} else if msg.Message.GetDocumentMessage() != nil {
+			body = "📄 Document"
+		} else if msg.Message.GetStickerMessage() != nil {
+			body = "🏷️ Sticker"
+		} else {
+			body = "New message"
+		}
+
+		_ = br.Notifier.Notify(senderName, body, "dialog-information")
 		return nil
 	})
 }
