@@ -440,6 +440,148 @@ func (ml *MessageList) SelectMessageDown() bool {
 	return true
 }
 
+// SelectMessageBlockUp jumps up to the previous block of messages from another person (skipping own messages and the current sender's block).
+func (ml *MessageList) SelectMessageBlockUp() bool {
+	ids := ml.GetOrderedMessageIDs()
+	if len(ids) == 0 {
+		return false
+	}
+
+	if ml.KeyboardSelectedID == "" {
+		// Find newest (bottom-most) message that is NOT from me
+		for i := len(ids) - 1; i >= 0; i-- {
+			b, ok := ml.MessageRows[ids[i]]
+			if ok && !b.IsSelf() {
+				ml.setKeyboardSelection(ids[i])
+				return true
+			}
+		}
+		return false
+	}
+
+	currIdx := -1
+	for i, id := range ids {
+		if id == ml.KeyboardSelectedID {
+			currIdx = i
+			break
+		}
+	}
+	if currIdx < 0 {
+		return false
+	}
+
+	currBubble := ml.MessageRows[ids[currIdx]]
+	if currBubble == nil {
+		return false
+	}
+
+	currSender := currBubble.Sender()
+	isCurrentOther := !currBubble.IsSelf()
+
+	i := currIdx - 1
+	if isCurrentOther {
+		// Phase 1: Skip messages in the same contiguous sender block
+		for i >= 0 {
+			b, ok := ml.MessageRows[ids[i]]
+			if !ok {
+				i--
+				continue
+			}
+			if b.IsSelf() {
+				// Hit our own message: current other block has ended
+				break
+			}
+			if b.Sender() != currSender {
+				// Hit a different other sender: new block found!
+				break
+			}
+			i--
+		}
+	}
+
+	// Phase 2: Skip our own messages (isSelf) moving upwards until we hit another person's message
+	for i >= 0 {
+		b, ok := ml.MessageRows[ids[i]]
+		if ok && !b.IsSelf() {
+			ml.setKeyboardSelection(ids[i])
+			return true
+		}
+		i--
+	}
+
+	// If at topmost other message, keep it selected
+	return true
+}
+
+// SelectMessageBlockDown jumps down to the next block of messages from another person (skipping own messages and the current sender's block).
+func (ml *MessageList) SelectMessageBlockDown() bool {
+	if ml.KeyboardSelectedID == "" {
+		return false
+	}
+
+	ids := ml.GetOrderedMessageIDs()
+	if len(ids) == 0 {
+		ml.ClearKeyboardSelection()
+		return false
+	}
+
+	currIdx := -1
+	for i, id := range ids {
+		if id == ml.KeyboardSelectedID {
+			currIdx = i
+			break
+		}
+	}
+	if currIdx < 0 {
+		ml.ClearKeyboardSelection()
+		return false
+	}
+
+	currBubble := ml.MessageRows[ids[currIdx]]
+	if currBubble == nil {
+		ml.ClearKeyboardSelection()
+		return false
+	}
+
+	currSender := currBubble.Sender()
+	isCurrentOther := !currBubble.IsSelf()
+
+	i := currIdx + 1
+	if isCurrentOther {
+		// Phase 1: Skip messages in the same contiguous sender block downwards
+		for i < len(ids) {
+			b, ok := ml.MessageRows[ids[i]]
+			if !ok {
+				i++
+				continue
+			}
+			if b.IsSelf() {
+				// Hit our own message: current other block has ended
+				break
+			}
+			if b.Sender() != currSender {
+				// Hit a different other sender: new block reached!
+				break
+			}
+			i++
+		}
+	}
+
+	// Phase 2: Skip our own messages (isSelf) moving downwards until we hit another person's message
+	for i < len(ids) {
+		b, ok := ml.MessageRows[ids[i]]
+		if ok && !b.IsSelf() {
+			ml.setKeyboardSelection(ids[i])
+			return true
+		}
+		i++
+	}
+
+	// Reached past the bottom-most other person's message: clear selection
+	ml.ClearKeyboardSelection()
+	return true
+}
+
 // ConfirmKeyboardReply initiates a reply to the currently keyboard-selected message.
 func (ml *MessageList) ConfirmKeyboardReply() bool {
 	if ml.KeyboardSelectedID == "" {

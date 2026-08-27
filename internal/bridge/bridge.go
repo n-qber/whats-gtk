@@ -325,6 +325,20 @@ func (br *Bridge) setupUIHandlers() {
 			}
 		})
 	})
+	br.Input.Register("Control+Left", func() {
+		glib.IdleAdd(func() {
+			if br.App.ChatView != nil {
+				br.App.ChatView.MessageList.SelectMessageBlockUp()
+			}
+		})
+	})
+	br.Input.Register("Control+Right", func() {
+		glib.IdleAdd(func() {
+			if br.App.ChatView != nil {
+				br.App.ChatView.MessageList.SelectMessageBlockDown()
+			}
+		})
+	})
 	br.Input.Register("Return", func() {
 		glib.IdleAdd(func() {
 			if br.App.ChatView != nil && br.App.ChatView.MessageList.HasKeyboardSelection() {

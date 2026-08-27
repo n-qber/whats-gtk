@@ -169,6 +169,8 @@ func NewChatView() (*ChatView, error) {
 	}
 	cv.InputBar.OnSelectMessageUp = cv.MessageList.SelectMessageUp
 	cv.InputBar.OnSelectMessageDown = cv.MessageList.SelectMessageDown
+	cv.InputBar.OnSelectMessageBlockUp = cv.MessageList.SelectMessageBlockUp
+	cv.InputBar.OnSelectMessageBlockDown = cv.MessageList.SelectMessageBlockDown
 	cv.InputBar.OnConfirmMessageSelection = cv.MessageList.ConfirmKeyboardReply
 	cv.InputBar.OnCancelMessageSelection = func() bool {
 		if cv.MessageList.HasKeyboardSelection() {
@@ -192,6 +194,14 @@ func NewChatView() (*ChatView, error) {
 			}
 		} else if isCtrl && (keyval == gdk.KEY_Down || keyval == gdk.KEY_KP_Down || name == "Down" || name == "KP_Down") {
 			if cv.MessageList.SelectMessageDown() {
+				return true
+			}
+		} else if isCtrl && (keyval == gdk.KEY_Left || keyval == gdk.KEY_KP_Left || name == "Left" || name == "KP_Left") {
+			if cv.MessageList.SelectMessageBlockUp() {
+				return true
+			}
+		} else if isCtrl && (keyval == gdk.KEY_Right || keyval == gdk.KEY_KP_Right || name == "Right" || name == "KP_Right") {
+			if cv.MessageList.SelectMessageBlockDown() {
 				return true
 			}
 		}

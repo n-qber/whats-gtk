@@ -26,6 +26,8 @@ type InputBar struct {
 	OnPasteImage              func(tex *gdk.Texture)
 	OnSelectMessageUp         func() bool
 	OnSelectMessageDown       func() bool
+	OnSelectMessageBlockUp    func() bool
+	OnSelectMessageBlockDown  func() bool
 	OnConfirmMessageSelection func() bool
 	OnCancelMessageSelection  func() bool
 
@@ -111,6 +113,16 @@ func NewInputBar(ctx context.Context) *InputBar {
 		}
 		if isCtrl && (keyval == gdk.KEY_Down || keyval == gdk.KEY_KP_Down || name == "Down" || name == "KP_Down") {
 			if ib.OnSelectMessageDown != nil && ib.OnSelectMessageDown() {
+				return true
+			}
+		}
+		if isCtrl && (keyval == gdk.KEY_Left || keyval == gdk.KEY_KP_Left || name == "Left" || name == "KP_Left") {
+			if ib.OnSelectMessageBlockUp != nil && ib.OnSelectMessageBlockUp() {
+				return true
+			}
+		}
+		if isCtrl && (keyval == gdk.KEY_Right || keyval == gdk.KEY_KP_Right || name == "Right" || name == "KP_Right") {
+			if ib.OnSelectMessageBlockDown != nil && ib.OnSelectMessageBlockDown() {
 				return true
 			}
 		}
