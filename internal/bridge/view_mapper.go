@@ -11,6 +11,7 @@ import (
 
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/events"
+	"whats-gtk/internal/paths"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
@@ -108,31 +109,37 @@ func (vm *ViewMapper) MapMessage(m database.Message, sName, tStr string, av *gdk
 	}
 
 	if m.Type == "image" || m.Type == "sticker" || m.Type == "video" {
-		if _, err := os.Stat(m.Content); err == nil {
+		filePath := m.Content
+		if filePath == "" {
+			ext := ".jpg"
 			if m.Type == "sticker" {
-				anim, _ := gdkpixbuf.NewPixbufAnimationFromFile(m.Content)
-				if anim != nil && anim.IsStaticImage() {
-					// We can't map this to Texture without GTK context here, but we will keep the path
-					uiMsg.Content = m.Content
-				} else {
-					uiMsg.StickerAnim = anim
-					uiMsg.Content = m.Content
-				}
-			} else {
-				uiMsg.Content = m.Content // It's a valid path
+				ext = ".webp"
+			} else if m.Type == "video" {
+				ext = ".mp4"
 			}
-		}
-		
-		uiMsg.Content = vm.formatMentions(m.Caption.String) // For caption
-		if m.Type == "sticker" {
-			uiMsg.Content = m.Content // Keep path for sticker
+			conv := paths.MediaPath(m.ID + ext)
+			if _, err := os.Stat(conv); err == nil {
+				filePath = conv
+			}
 		}
 
-		if m.Type == "video" || m.Type == "image" {
-			uiMsg.DocumentPath = ""
-			if _, err := os.Stat(m.Content); err == nil {
-				uiMsg.DocumentPath = m.Content // Let's use DocumentPath for the media file path
+		if filePath != "" {
+			if _, err := os.Stat(filePath); err == nil {
+				uiMsg.DocumentPath = filePath
+				if m.Type == "sticker" {
+					anim, _ := gdkpixbuf.NewPixbufAnimationFromFile(filePath)
+					if anim != nil && !anim.IsStaticImage() {
+						uiMsg.StickerAnim = anim
+					}
+					uiMsg.Content = filePath
+				} else {
+					uiMsg.Content = filePath
+				}
 			}
+		}
+
+		if m.Type != "sticker" {
+			uiMsg.Content = vm.formatMentions(m.Caption.String) // For caption
 		}
 
 	} else if m.Type == "audio" {

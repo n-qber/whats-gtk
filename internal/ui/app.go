@@ -2,7 +2,9 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"whats-gtk/internal/events"
+	"whats-gtk/internal/paths"
 	"whats-gtk/internal/ui/chat"
 	"whats-gtk/internal/ui/info"
 	"whats-gtk/internal/ui/sidebar"
@@ -186,7 +188,8 @@ func (a *App) setupSubscriptions() {
 							if m.Type == "image" {
 								cv.AddImage(m.ID, m.JID, m.SenderName, m.Content, texImg, texThumb, m.DocumentPath, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
 							} else if m.Type == "sticker" {
-								cv.AddSticker(m.ID, m.JID, m.SenderName, m.StickerAnim, texImg, texThumb, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
+								stkrAnim, stkrTex := loadSticker(m)
+								cv.AddSticker(m.ID, m.JID, m.SenderName, stkrAnim, stkrTex, texThumb, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
 							} else if m.Type == "video" {
 								cv.AddVideo(m.ID, m.JID, m.SenderName, m.Content, texThumb, m.DocumentPath, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
 							}
@@ -286,7 +289,7 @@ func (a *App) setupSubscriptions() {
 						texThumb = bytesToTexture(m.Thumbnail)
 						
 						if m.Content != "" && m.Type != "sticker" {
-							pixbuf, _ := gdkpixbuf.NewPixbufFromFile(m.Content)
+							pixbuf, _ := gdkpixbuf.NewPixbufFromFileAtSize(m.Content, 400, 400)
 							if pixbuf != nil {
 								texImg = gdk.NewTextureForPixbuf(pixbuf)
 							}
@@ -295,7 +298,8 @@ func (a *App) setupSubscriptions() {
 						if m.Type == "image" {
 							cv.AddImage(m.ID, m.JID, m.SenderName, m.Content, texImg, texThumb, m.DocumentPath, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
 						} else if m.Type == "sticker" {
-							cv.AddSticker(m.ID, m.JID, m.SenderName, m.StickerAnim, texImg, texThumb, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
+							stkrAnim, stkrTex := loadSticker(m)
+							cv.AddSticker(m.ID, m.JID, m.SenderName, stkrAnim, stkrTex, texThumb, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
 						} else if m.Type == "video" {
 							cv.AddVideo(m.ID, m.JID, m.SenderName, m.Content, texThumb, m.DocumentPath, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
 						}
@@ -684,4 +688,38 @@ func (a *App) GetChatViewForJID(jid string) *chat.ChatView {
 		return a.ChatView
 	}
 	return nil
+}
+
+func loadSticker(m events.UIMessage) (*gdkpixbuf.PixbufAnimation, *gdk.Texture) {
+	stkrPath := m.DocumentPath
+	if stkrPath == "" && m.Content != "" {
+		if _, err := os.Stat(m.Content); err == nil {
+			stkrPath = m.Content
+		}
+	}
+	if stkrPath == "" {
+		conv := paths.MediaPath(m.ID + ".webp")
+		if _, err := os.Stat(conv); err == nil {
+			stkrPath = conv
+		}
+	}
+
+	if stkrPath == "" {
+		return nil, nil
+	}
+
+	if m.StickerAnim != nil && !m.StickerAnim.IsStaticImage() {
+		return m.StickerAnim, nil
+	}
+
+	anim, _ := gdkpixbuf.NewPixbufAnimationFromFile(stkrPath)
+	if anim != nil && !anim.IsStaticImage() {
+		return anim, nil
+	}
+
+	pixbuf, _ := gdkpixbuf.NewPixbufFromFileAtSize(stkrPath, 160, 160)
+	if pixbuf != nil {
+		return nil, gdk.NewTextureForPixbuf(pixbuf)
+	}
+	return nil, nil
 }
