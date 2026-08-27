@@ -1,6 +1,9 @@
 package events
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // EventType represents the type of an event that can be published or subscribed to.
 type EventType string
@@ -50,16 +53,62 @@ func (b *EventBus) Subscribe(eventType EventType) <-chan Event {
 	return ch
 }
 
-// SubscribeTyped registers a type-safe handler for events of a specific payload type T.
-func SubscribeTyped[T any](b *EventBus, eventType EventType, handler func(payload T)) {
+// Unsubscribe removes a subscription channel and closes it.
+func (b *EventBus) Unsubscribe(eventType EventType, ch <-chan Event) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	subs, found := b.subscribers[eventType]
+	if !found {
+		return
+	}
+
+	for i, sub := range subs {
+		if sub == ch {
+			b.subscribers[eventType] = append(subs[:i], subs[i+1:]...)
+			close(sub)
+			break
+		}
+	}
+}
+
+// Close closes all subscriber channels and clears all subscriptions.
+func (b *EventBus) Close() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for eventType, chans := range b.subscribers {
+		for _, ch := range chans {
+			close(ch)
+		}
+		delete(b.subscribers, eventType)
+	}
+}
+
+// SubscribeTypedCtx registers a type-safe handler that automatically terminates and unsubscribes when ctx is cancelled.
+func SubscribeTypedCtx[T any](ctx context.Context, b *EventBus, eventType EventType, handler func(payload T)) {
 	ch := b.Subscribe(eventType)
 	go func() {
-		for ev := range ch {
-			if payload, ok := ev.Data.(T); ok {
-				handler(payload)
+		defer b.Unsubscribe(eventType, ch)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-ch:
+				if !ok {
+					return
+				}
+				if payload, ok := ev.Data.(T); ok {
+					handler(payload)
+				}
 			}
 		}
 	}()
+}
+
+// SubscribeTyped registers a type-safe handler for events of a specific payload type T.
+func SubscribeTyped[T any](b *EventBus, eventType EventType, handler func(payload T)) {
+	SubscribeTypedCtx(context.Background(), b, eventType, handler)
 }
 
 // Publish sends an event to all subscribers of its type.

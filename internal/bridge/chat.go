@@ -74,7 +74,7 @@ func NewChatController(b *backend.Backend, app *ui.App, db *database.AppDB, msgs
 }
 
 func (cc *ChatController) setupSubscriptions() {
-	events.SubscribeTyped(cc.EventBus, events.EventMessageReceived, func(payload events.LiveMessagePayload) {
+	events.SubscribeTypedCtx(cc.ctx, cc.EventBus, events.EventMessageReceived, func(payload events.LiveMessagePayload) {
 		if msg, ok := payload.Msg.(*meowEvents.Message); ok {
 			cc.HandleLiveMessage(msg, payload.IsSyncing)
 		}
