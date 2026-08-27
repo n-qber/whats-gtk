@@ -101,7 +101,7 @@ func (cc *ChatController) updateGroupInfoUI(grpInfo *types.GroupInfo) {
 			Name:    name,
 			JID:     p.JID.String(),
 			IsAdmin: p.IsAdmin || p.IsSuperAdmin,
-			Avatar:  cc.Contacts.GetAvatar(p.JID.String()),
+			Avatar:  cc.Contacts.GetAvatarNoFetch(p.JID.String()),
 		})
 	}
 

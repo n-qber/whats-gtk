@@ -89,7 +89,7 @@ func NewContactService(b *backend.Backend, db *database.AppDB, ctx context.Conte
 		Backend:      b,
 		DB:           db,
 		ctx:          ctx,
-		avatarCache:  NewTextureLRU(150),
+		avatarCache:  NewTextureLRU(1000),
 		avatarQueue:  make(chan string, 500),
 		pendingFetch: make(map[string]bool),
 		failedFetch:  make(map[string]time.Time),
@@ -162,19 +162,50 @@ func (cs *ContactService) avatarWorker() {
 }
 
 func (cs *ContactService) GetAvatarNoFetch(j string) *gdk.Texture {
+	cleanJ := j
+	if parsed, err := types.ParseJID(j); err == nil {
+		cleanJ = parsed.ToNonAD().String()
+	}
+
 	cs.mutex.Lock()
 	defer cs.mutex.Unlock()
 
-	if tex, exists := cs.avatarCache.Get(j); exists {
+	if tex, exists := cs.avatarCache.Get(cleanJ); exists {
 		return tex
 	}
+	if cleanJ != j {
+		if tex, exists := cs.avatarCache.Get(j); exists {
+			return tex
+		}
+	}
 
-	if c, err := cs.DB.GetContact(j); err == nil && c.AvatarPath.Valid && c.AvatarPath.String != "" {
-		if _, err := os.Stat(c.AvatarPath.String); err == nil {
-			pixbuf, _ := gdkpixbuf.NewPixbufFromFile(c.AvatarPath.String)
+	// 1. Try loading from database contact avatar path
+	var avatarPath string
+	if c, err := cs.DB.GetContact(cleanJ); err == nil && c.AvatarPath.Valid && c.AvatarPath.String != "" {
+		avatarPath = c.AvatarPath.String
+	} else if cleanJ != j {
+		if c, err := cs.DB.GetContact(j); err == nil && c.AvatarPath.Valid && c.AvatarPath.String != "" {
+			avatarPath = c.AvatarPath.String
+		}
+	}
+
+	// 2. If not found in DB or empty, check conventional disk path
+	if avatarPath == "" {
+		conventional := paths.MediaPath("avatar_" + cleanJ + ".jpg")
+		if _, err := os.Stat(conventional); err == nil {
+			avatarPath = conventional
+		}
+	}
+
+	if avatarPath != "" {
+		if _, err := os.Stat(avatarPath); err == nil {
+			pixbuf, _ := gdkpixbuf.NewPixbufFromFile(avatarPath)
 			if pixbuf != nil {
 				tex := gdk.NewTextureForPixbuf(pixbuf)
-				cs.avatarCache.Put(j, tex)
+				cs.avatarCache.Put(cleanJ, tex)
+				if cleanJ != j {
+					cs.avatarCache.Put(j, tex)
+				}
 				return tex
 			}
 		}
@@ -183,23 +214,28 @@ func (cs *ContactService) GetAvatarNoFetch(j string) *gdk.Texture {
 }
 
 func (cs *ContactService) GetAvatar(j string) *gdk.Texture {
-	if tex := cs.GetAvatarNoFetch(j); tex != nil {
+	cleanJ := j
+	if parsed, err := types.ParseJID(j); err == nil {
+		cleanJ = parsed.ToNonAD().String()
+	}
+
+	if tex := cs.GetAvatarNoFetch(cleanJ); tex != nil {
 		return tex
 	}
 
 	cs.mutex.Lock()
-	if !cs.pendingFetch[j] {
+	if !cs.pendingFetch[cleanJ] {
 		// Do not retry fetch for 24 hours if it failed or didn't exist
-		if failTime, ok := cs.failedFetch[j]; ok && time.Since(failTime) < 24*time.Hour {
+		if failTime, ok := cs.failedFetch[cleanJ]; ok && time.Since(failTime) < 24*time.Hour {
 			cs.mutex.Unlock()
 			return nil
 		}
-		
-		cs.pendingFetch[j] = true
+
+		cs.pendingFetch[cleanJ] = true
 		select {
-		case cs.avatarQueue <- j:
+		case cs.avatarQueue <- cleanJ:
 		default:
-			cs.pendingFetch[j] = false
+			cs.pendingFetch[cleanJ] = false
 		}
 	}
 	cs.mutex.Unlock()

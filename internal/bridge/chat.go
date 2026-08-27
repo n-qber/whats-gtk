@@ -433,7 +433,7 @@ func (cc *ChatController) RefreshMessages(jid types.JID) {
 			if jid.Server == types.GroupServer && !m.IsFromMe {
 				if !isCont {
 					sName = cc.Contacts.ResolveSenderName(m.SenderJID)
-					av = cc.Contacts.GetAvatar(m.SenderJID)
+					av = cc.Contacts.GetAvatarNoFetch(m.SenderJID)
 				}
 			}
 			lastSender = m.SenderJID

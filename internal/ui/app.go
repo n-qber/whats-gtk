@@ -177,7 +177,7 @@ func (a *App) setupSubscriptions() {
 							texThumb = bytesToTexture(m.Thumbnail)
 
 							if m.DocumentPath != "" && m.Type != "sticker" {
-								pixbuf, _ := gdkpixbuf.NewPixbufFromFile(m.DocumentPath)
+								pixbuf, _ := gdkpixbuf.NewPixbufFromFileAtSize(m.DocumentPath, 400, 400)
 								if pixbuf != nil {
 									texImg = gdk.NewTextureForPixbuf(pixbuf)
 								}
