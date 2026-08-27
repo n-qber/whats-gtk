@@ -167,6 +167,47 @@ func NewChatView() (*ChatView, error) {
 			cv.OnPasteImage(tex)
 		}
 	}
+	cv.InputBar.OnSelectMessageUp = cv.MessageList.SelectMessageUp
+	cv.InputBar.OnSelectMessageDown = cv.MessageList.SelectMessageDown
+	cv.InputBar.OnConfirmMessageSelection = cv.MessageList.ConfirmKeyboardReply
+	cv.InputBar.OnCancelMessageSelection = func() bool {
+		if cv.MessageList.HasKeyboardSelection() {
+			cv.MessageList.ClearKeyboardSelection()
+			return true
+		}
+		return false
+	}
+
+	// ChatView key controller for message navigation when outside entry
+	chatKeyCtrl := gtk.NewEventControllerKey()
+	chatKeyCtrl.ConnectKeyPressed(func(keyval uint, keycode uint, state gdk.ModifierType) bool {
+		if state&gdk.ControlMask != 0 {
+			if keyval == gdk.KEY_Up {
+				if cv.MessageList.SelectMessageUp() {
+					return true
+				}
+			} else if keyval == gdk.KEY_Down {
+				if cv.MessageList.SelectMessageDown() {
+					return true
+				}
+			}
+		}
+		if keyval == gdk.KEY_Return && (state&gdk.ShiftMask == 0) {
+			if cv.MessageList.ConfirmKeyboardReply() {
+				cv.FocusEntry()
+				return true
+			}
+		}
+		if keyval == gdk.KEY_Escape {
+			if cv.MessageList.HasKeyboardSelection() {
+				cv.MessageList.ClearKeyboardSelection()
+				cv.FocusEntry()
+				return true
+			}
+		}
+		return false
+	})
+	box.AddController(chatKeyCtrl)
 
 	// Build layout using a Stack for Empty State vs Active Chat View
 	cv.Stack = gtk.NewStack()

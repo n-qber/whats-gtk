@@ -577,6 +577,14 @@ func loadCSS() {
 		.message-row-selected .message-bubble {
 			box-shadow: 0 0 0 2px #00a884;
 		}
+		.message-row-reply-target {
+			background-color: rgba(53, 132, 228, 0.20);
+			border-radius: 8px;
+			transition: background-color 150ms ease;
+		}
+		.message-row-reply-target .message-bubble {
+			box-shadow: 0 0 0 2px #3584e4;
+		}
 	`)
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), cssProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 }

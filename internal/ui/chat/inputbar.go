@@ -21,9 +21,13 @@ type InputBar struct {
 	ReplyToSender  string
 	ReplyToContent string
 
-	OnSendMessage func(text string, replyToID string)
-	OnSendFile    func(path string)
-	OnPasteImage  func(tex *gdk.Texture)
+	OnSendMessage             func(text string, replyToID string)
+	OnSendFile                func(path string)
+	OnPasteImage              func(tex *gdk.Texture)
+	OnSelectMessageUp         func() bool
+	OnSelectMessageDown       func() bool
+	OnConfirmMessageSelection func() bool
+	OnCancelMessageSelection  func() bool
 
 	ctx context.Context
 }
@@ -95,9 +99,28 @@ func NewInputBar(ctx context.Context) *InputBar {
 
 	keyCtrl := gtk.NewEventControllerKey()
 	keyCtrl.ConnectKeyPressed(func(keyval uint, keycode uint, state gdk.ModifierType) bool {
+		if state&gdk.ControlMask != 0 {
+			if keyval == gdk.KEY_Up {
+				if ib.OnSelectMessageUp != nil && ib.OnSelectMessageUp() {
+					return true
+				}
+			} else if keyval == gdk.KEY_Down {
+				if ib.OnSelectMessageDown != nil && ib.OnSelectMessageDown() {
+					return true
+				}
+			}
+		}
 		if keyval == gdk.KEY_Return && (state&gdk.ShiftMask == 0) {
+			if ib.OnConfirmMessageSelection != nil && ib.OnConfirmMessageSelection() {
+				return true
+			}
 			sendMsg()
 			return true
+		}
+		if keyval == gdk.KEY_Escape {
+			if ib.OnCancelMessageSelection != nil && ib.OnCancelMessageSelection() {
+				return true
+			}
 		}
 		if keyval == gdk.KEY_v && (state&gdk.ControlMask != 0) {
 			clipboard := gdk.DisplayGetDefault().Clipboard()

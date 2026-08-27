@@ -309,6 +309,38 @@ func (br *Bridge) setupUIHandlers() {
 			br.App.Sidebar.SelectOffset(-1)
 		})
 	})
+
+	// Ctrl+Up and Ctrl+Down for keyboard message selection and reply
+	br.Input.Register("Control+Up", func() {
+		glib.IdleAdd(func() {
+			if br.App.ChatView != nil {
+				br.App.ChatView.MessageList.SelectMessageUp()
+			}
+		})
+	})
+	br.Input.Register("Control+Down", func() {
+		glib.IdleAdd(func() {
+			if br.App.ChatView != nil {
+				br.App.ChatView.MessageList.SelectMessageDown()
+			}
+		})
+	})
+	br.Input.Register("Return", func() {
+		glib.IdleAdd(func() {
+			if br.App.ChatView != nil && br.App.ChatView.MessageList.HasKeyboardSelection() {
+				br.App.ChatView.MessageList.ConfirmKeyboardReply()
+				br.App.ChatView.FocusEntry()
+			}
+		})
+	})
+	br.Input.Register("Escape", func() {
+		glib.IdleAdd(func() {
+			if br.App.ChatView != nil && br.App.ChatView.MessageList.HasKeyboardSelection() {
+				br.App.ChatView.MessageList.ClearKeyboardSelection()
+				br.App.ChatView.FocusEntry()
+			}
+		})
+	})
 }
 
 // setupServiceHandlers wires ContactService and MediaService callbacks to the UI.

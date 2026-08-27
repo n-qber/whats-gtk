@@ -25,15 +25,17 @@ type MessageList struct {
 
 	MessageRows     map[string]bubbles.Bubble
 	MessageListRows map[string]*gtk.ListBoxRow
+	RowToMessageID  map[*gtk.ListBoxRow]string
 	BubblesByJID    map[string][]bubbles.Bubble
 	InsertIndex     int
 
 	AudioPlayer *AudioPlayer
 
 	// State
-	IsLoadingOlder bool
-	NoMoreOlder    bool
-	IsSearching    bool
+	IsLoadingOlder     bool
+	NoMoreOlder        bool
+	IsSearching        bool
+	KeyboardSelectedID string
 
 	// Selection mode state
 	IsSelectionMode     bool
@@ -63,6 +65,7 @@ func NewMessageList() *MessageList {
 		Widget:          gtk.NewBox(gtk.OrientationVertical, 0),
 		MessageRows:     make(map[string]bubbles.Bubble),
 		MessageListRows: make(map[string]*gtk.ListBoxRow),
+		RowToMessageID:  make(map[*gtk.ListBoxRow]string),
 		BubblesByJID:    make(map[string][]bubbles.Bubble),
 		SelectedIDs:     make(map[string]bool),
 		InsertIndex:     -1,
@@ -185,6 +188,7 @@ func (ml *MessageList) SetPinnedMessage(content string) {
 }
 
 func (ml *MessageList) Clear() {
+	ml.ClearKeyboardSelection()
 	ml.ExitSelectionMode()
 	ml.SetLoadingOlder(false)
 	ml.NoMoreOlder = false
@@ -193,6 +197,7 @@ func (ml *MessageList) Clear() {
 	}
 	ml.MessageRows = make(map[string]bubbles.Bubble)
 	ml.MessageListRows = make(map[string]*gtk.ListBoxRow)
+	ml.RowToMessageID = make(map[*gtk.ListBoxRow]string)
 	ml.BubblesByJID = make(map[string][]bubbles.Bubble)
 	ml.InsertIndex = -1
 }
@@ -339,6 +344,169 @@ func (ml *MessageList) ExitSelectionMode() {
 	for _, row := range ml.MessageListRows {
 		row.RemoveCSSClass("message-row-selected")
 	}
+}
+
+// GetOrderedMessageIDs returns the message IDs in visual order (top to bottom).
+func (ml *MessageList) GetOrderedMessageIDs() []string {
+	var ids []string
+	for i := 0; ; i++ {
+		row := ml.ListBox.RowAtIndex(i)
+		if row == nil {
+			break
+		}
+		if id, ok := ml.RowToMessageID[row]; ok && id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// HasKeyboardSelection reports whether a message is currently selected via keyboard.
+func (ml *MessageList) HasKeyboardSelection() bool {
+	return ml.KeyboardSelectedID != ""
+}
+
+// SelectMessageUp moves the keyboard selection up (older message) or selects the bottom-most message.
+func (ml *MessageList) SelectMessageUp() bool {
+	ids := ml.GetOrderedMessageIDs()
+	if len(ids) == 0 {
+		return false
+	}
+
+	if ml.KeyboardSelectedID == "" {
+		ml.setKeyboardSelection(ids[len(ids)-1])
+		return true
+	}
+
+	currIdx := -1
+	for i, id := range ids {
+		if id == ml.KeyboardSelectedID {
+			currIdx = i
+			break
+		}
+	}
+
+	if currIdx > 0 {
+		ml.setKeyboardSelection(ids[currIdx-1])
+		return true
+	} else if currIdx == 0 {
+		// Keep top message selected
+		return true
+	}
+
+	ml.setKeyboardSelection(ids[len(ids)-1])
+	return true
+}
+
+// SelectMessageDown moves the keyboard selection down (newer message). If moving past the bottom, deselects.
+func (ml *MessageList) SelectMessageDown() bool {
+	if ml.KeyboardSelectedID == "" {
+		return false
+	}
+
+	ids := ml.GetOrderedMessageIDs()
+	if len(ids) == 0 {
+		ml.ClearKeyboardSelection()
+		return false
+	}
+
+	currIdx := -1
+	for i, id := range ids {
+		if id == ml.KeyboardSelectedID {
+			currIdx = i
+			break
+		}
+	}
+
+	if currIdx >= 0 && currIdx < len(ids)-1 {
+		ml.setKeyboardSelection(ids[currIdx+1])
+		return true
+	}
+
+	// Reached after the newest message: clear selection
+	ml.ClearKeyboardSelection()
+	return true
+}
+
+// ConfirmKeyboardReply initiates a reply to the currently keyboard-selected message.
+func (ml *MessageList) ConfirmKeyboardReply() bool {
+	if ml.KeyboardSelectedID == "" {
+		return false
+	}
+
+	id := ml.KeyboardSelectedID
+	bubble, ok := ml.MessageRows[id]
+	if !ok {
+		ml.ClearKeyboardSelection()
+		return false
+	}
+
+	sender := bubble.Sender()
+	if sender == "" {
+		sender = "Unknown"
+	}
+	content := bubble.Content()
+
+	ml.ClearKeyboardSelection()
+	if ml.OnReplyRequest != nil {
+		ml.OnReplyRequest(id, sender, content)
+		return true
+	}
+	return false
+}
+
+// ClearKeyboardSelection clears any active keyboard selection highlight.
+func (ml *MessageList) ClearKeyboardSelection() {
+	if ml.KeyboardSelectedID != "" {
+		if row, ok := ml.MessageListRows[ml.KeyboardSelectedID]; ok {
+			row.RemoveCSSClass("message-row-reply-target")
+		}
+		ml.KeyboardSelectedID = ""
+	}
+}
+
+func (ml *MessageList) setKeyboardSelection(id string) {
+	if ml.KeyboardSelectedID != "" && ml.KeyboardSelectedID != id {
+		if prevRow, ok := ml.MessageListRows[ml.KeyboardSelectedID]; ok {
+			prevRow.RemoveCSSClass("message-row-reply-target")
+		}
+	}
+
+	ml.KeyboardSelectedID = id
+	if row, ok := ml.MessageListRows[id]; ok {
+		row.AddCSSClass("message-row-reply-target")
+		ml.scrollToKeyboardSelected(row)
+	}
+}
+
+func (ml *MessageList) scrollToKeyboardSelected(row *gtk.ListBoxRow) {
+	attempts := 0
+	var tryScroll func() bool
+	tryScroll = func() bool {
+		attempts++
+		_, destY, success := row.TranslateCoordinates(ml.ListBox, 0, 0)
+		if success && destY >= 0 {
+			adj := ml.ScrolledWindow.VAdjustment()
+			val := adj.Value()
+			pageSize := adj.PageSize()
+			h := float64(row.Height())
+			if h <= 0 {
+				h = 40
+			}
+
+			if destY < val {
+				adj.SetValue(destY - 20)
+			} else if destY+h > val+pageSize {
+				adj.SetValue(destY + h - pageSize + 20)
+			}
+			return false
+		}
+		if attempts >= 5 {
+			return false
+		}
+		return true
+	}
+	glib.TimeoutAdd(20, tryScroll)
 }
 
 func (ml *MessageList) showContextMenu(id string, b bubbles.Bubble) {
@@ -495,6 +663,7 @@ func (ml *MessageList) addBubble(id string, b bubbles.Bubble, isCont bool) {
 
 	if id != "" {
 		ml.MessageListRows[id] = row
+		ml.RowToMessageID[row] = id
 	}
 
 	if ml.InsertIndex >= 0 {
