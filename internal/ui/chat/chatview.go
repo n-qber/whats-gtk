@@ -180,25 +180,28 @@ func NewChatView() (*ChatView, error) {
 
 	// ChatView key controller for message navigation when outside entry
 	chatKeyCtrl := gtk.NewEventControllerKey()
+	chatKeyCtrl.SetPropagationPhase(gtk.PhaseCapture)
 	chatKeyCtrl.ConnectKeyPressed(func(keyval uint, keycode uint, state gdk.ModifierType) bool {
-		if state&gdk.ControlMask != 0 {
-			if keyval == gdk.KEY_Up {
-				if cv.MessageList.SelectMessageUp() {
-					return true
-				}
-			} else if keyval == gdk.KEY_Down {
-				if cv.MessageList.SelectMessageDown() {
-					return true
-				}
+		name := gdk.KeyvalName(keyval)
+		isCtrl := state&gdk.ControlMask != 0
+		isShift := state&gdk.ShiftMask != 0
+
+		if isCtrl && (keyval == gdk.KEY_Up || keyval == gdk.KEY_KP_Up || name == "Up" || name == "KP_Up") {
+			if cv.MessageList.SelectMessageUp() {
+				return true
+			}
+		} else if isCtrl && (keyval == gdk.KEY_Down || keyval == gdk.KEY_KP_Down || name == "Down" || name == "KP_Down") {
+			if cv.MessageList.SelectMessageDown() {
+				return true
 			}
 		}
-		if keyval == gdk.KEY_Return && (state&gdk.ShiftMask == 0) {
+		if !isShift && (keyval == gdk.KEY_Return || keyval == gdk.KEY_KP_Enter || keyval == gdk.KEY_ISO_Enter || name == "Return" || name == "KP_Enter") {
 			if cv.MessageList.ConfirmKeyboardReply() {
 				cv.FocusEntry()
 				return true
 			}
 		}
-		if keyval == gdk.KEY_Escape {
+		if keyval == gdk.KEY_Escape || name == "Escape" {
 			if cv.MessageList.HasKeyboardSelection() {
 				cv.MessageList.ClearKeyboardSelection()
 				cv.FocusEntry()

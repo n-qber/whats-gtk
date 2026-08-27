@@ -98,26 +98,30 @@ func NewInputBar(ctx context.Context) *InputBar {
 	}
 
 	keyCtrl := gtk.NewEventControllerKey()
+	keyCtrl.SetPropagationPhase(gtk.PhaseCapture)
 	keyCtrl.ConnectKeyPressed(func(keyval uint, keycode uint, state gdk.ModifierType) bool {
-		if state&gdk.ControlMask != 0 {
-			if keyval == gdk.KEY_Up {
-				if ib.OnSelectMessageUp != nil && ib.OnSelectMessageUp() {
-					return true
-				}
-			} else if keyval == gdk.KEY_Down {
-				if ib.OnSelectMessageDown != nil && ib.OnSelectMessageDown() {
-					return true
-				}
+		name := gdk.KeyvalName(keyval)
+		isCtrl := state&gdk.ControlMask != 0
+		isShift := state&gdk.ShiftMask != 0
+
+		if isCtrl && (keyval == gdk.KEY_Up || keyval == gdk.KEY_KP_Up || name == "Up" || name == "KP_Up") {
+			if ib.OnSelectMessageUp != nil && ib.OnSelectMessageUp() {
+				return true
 			}
 		}
-		if keyval == gdk.KEY_Return && (state&gdk.ShiftMask == 0) {
+		if isCtrl && (keyval == gdk.KEY_Down || keyval == gdk.KEY_KP_Down || name == "Down" || name == "KP_Down") {
+			if ib.OnSelectMessageDown != nil && ib.OnSelectMessageDown() {
+				return true
+			}
+		}
+		if !isShift && (keyval == gdk.KEY_Return || keyval == gdk.KEY_KP_Enter || keyval == gdk.KEY_ISO_Enter || name == "Return" || name == "KP_Enter") {
 			if ib.OnConfirmMessageSelection != nil && ib.OnConfirmMessageSelection() {
 				return true
 			}
 			sendMsg()
 			return true
 		}
-		if keyval == gdk.KEY_Escape {
+		if keyval == gdk.KEY_Escape || name == "Escape" {
 			if ib.OnCancelMessageSelection != nil && ib.OnCancelMessageSelection() {
 				return true
 			}

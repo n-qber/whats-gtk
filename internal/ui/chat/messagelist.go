@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"whats-gtk/internal/ui/chat/bubbles"
@@ -348,15 +349,26 @@ func (ml *MessageList) ExitSelectionMode() {
 
 // GetOrderedMessageIDs returns the message IDs in visual order (top to bottom).
 func (ml *MessageList) GetOrderedMessageIDs() []string {
-	var ids []string
-	for i := 0; ; i++ {
-		row := ml.ListBox.RowAtIndex(i)
+	type idIdx struct {
+		id    string
+		index int
+	}
+	var list []idIdx
+	for id, row := range ml.MessageListRows {
 		if row == nil {
-			break
+			continue
 		}
-		if id, ok := ml.RowToMessageID[row]; ok && id != "" {
-			ids = append(ids, id)
+		idx := row.Index()
+		if idx >= 0 {
+			list = append(list, idIdx{id: id, index: idx})
 		}
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].index < list[j].index
+	})
+	ids := make([]string, len(list))
+	for i, item := range list {
+		ids[i] = item.id
 	}
 	return ids
 }
