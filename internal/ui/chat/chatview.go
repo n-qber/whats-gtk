@@ -212,6 +212,11 @@ func NewChatView() (*ChatView, error) {
 			}
 		}
 		if keyval == gdk.KEY_Escape || name == "Escape" {
+			if cv.InputBar.ReplyToID != "" {
+				cv.InputBar.CancelReply()
+				cv.FocusEntry()
+				return true
+			}
 			if cv.MessageList.HasKeyboardSelection() {
 				cv.MessageList.ClearKeyboardSelection()
 				cv.FocusEntry()

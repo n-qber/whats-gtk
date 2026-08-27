@@ -245,14 +245,6 @@ func (br *Bridge) setupUIHandlers() {
 		})
 	}
 
-	// Register some default shortcuts
-	br.Input.Register("Escape", func() {
-		glib.IdleAdd(func() {
-			br.App.Sidebar.SearchEntry.SetText("")
-			br.App.ChatView.FocusEntry()
-		})
-	})
-
 	// Ctrl+1 to Ctrl+9 to open chats by index
 	for i := 1; i <= 9; i++ {
 		idx := i - 1
@@ -349,8 +341,22 @@ func (br *Bridge) setupUIHandlers() {
 	})
 	br.Input.Register("Escape", func() {
 		glib.IdleAdd(func() {
-			if br.App.ChatView != nil && br.App.ChatView.MessageList.HasKeyboardSelection() {
-				br.App.ChatView.MessageList.ClearKeyboardSelection()
+			if br.App.ChatView != nil {
+				if br.App.ChatView.InputBar.ReplyToID != "" {
+					br.App.ChatView.InputBar.CancelReply()
+					br.App.ChatView.FocusEntry()
+					return
+				}
+				if br.App.ChatView.MessageList.HasKeyboardSelection() {
+					br.App.ChatView.MessageList.ClearKeyboardSelection()
+					br.App.ChatView.FocusEntry()
+					return
+				}
+			}
+			if br.App.Sidebar != nil {
+				br.App.Sidebar.SearchEntry.SetText("")
+			}
+			if br.App.ChatView != nil {
 				br.App.ChatView.FocusEntry()
 			}
 		})

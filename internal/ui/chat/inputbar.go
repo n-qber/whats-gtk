@@ -134,6 +134,10 @@ func NewInputBar(ctx context.Context) *InputBar {
 			return true
 		}
 		if keyval == gdk.KEY_Escape || name == "Escape" {
+			if ib.ReplyToID != "" {
+				ib.CancelReply()
+				return true
+			}
 			if ib.OnCancelMessageSelection != nil && ib.OnCancelMessageSelection() {
 				return true
 			}
