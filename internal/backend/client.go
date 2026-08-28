@@ -28,6 +28,7 @@ func NewBackend(ctx context.Context, container *sqlstore.Container) (*Backend, e
 
 	clientLog := waLog.Stdout("Client", "DEBUG", true)
 	client := whatsmeow.NewClient(device, clientLog)
+	client.EmitAppStateEventsOnFullSync = true
 
 	// Enable all other loggers to stdout
 	client.Log = clientLog

@@ -2,6 +2,8 @@ package backend
 
 import (
 	"context"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,8 +12,10 @@ import (
 	"whats-gtk/internal/database"
 
 	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/appstate"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
+	"go.mau.fi/whatsmeow/proto/waSyncAction"
+	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -189,6 +193,63 @@ func (b *Backend) SendDocument(ctx context.Context, to types.JID, data []byte, m
 			FileName:      proto.String(filename),
 		},
 	})
+}
+
+func (b *Backend) SendSticker(ctx context.Context, to types.JID, data []byte, isAnimated bool) (whatsmeow.SendResponse, error) {
+	resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaImage)
+	if err != nil {
+		return whatsmeow.SendResponse{}, err
+	}
+
+	return b.Client.SendMessage(ctx, to, &waProto.Message{
+		StickerMessage: &waProto.StickerMessage{
+			URL:           proto.String(resp.URL),
+			DirectPath:    proto.String(resp.DirectPath),
+			MediaKey:      resp.MediaKey,
+			Mimetype:      proto.String("image/webp"),
+			FileEncSHA256: resp.FileEncSHA256,
+			FileSHA256:    resp.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))),
+			IsAnimated:    proto.Bool(isAnimated),
+		},
+	})
+}
+
+func (b *Backend) FetchFavoriteStickers(ctx context.Context) error {
+	if b.Client == nil {
+		return fmt.Errorf("client not connected")
+	}
+	return b.Client.FetchAppState(ctx, appstate.WAPatchRegularLow, true, false)
+}
+
+func (b *Backend) SetFavoriteStickerAppState(ctx context.Context, item database.StickerItem, isFavorite bool) error {
+	if b.Client == nil {
+		return fmt.Errorf("client not connected")
+	}
+	syncKey := item.ID
+	if len(item.MediaSHA256) > 0 {
+		syncKey = hex.EncodeToString(item.MediaSHA256)
+	}
+	patch := appstate.PatchInfo{
+		Type: appstate.WAPatchRegularLow,
+		Mutations: []appstate.MutationInfo{
+			{
+				Index:   []string{appstate.IndexFavoriteSticker, syncKey},
+				Version: 1,
+				Value: &waSyncAction.SyncActionValue{
+					StickerAction: &waSyncAction.StickerAction{
+						URL:           proto.String(item.MediaURL),
+						DirectPath:    proto.String(item.MediaDirectPath),
+						MediaKey:      item.MediaKey,
+						FileEncSHA256: item.MediaEncSHA256,
+						Mimetype:      proto.String("image/webp"),
+						IsFavorite:    proto.Bool(isFavorite),
+					},
+				},
+			},
+		},
+	}
+	return b.Client.SendAppState(ctx, patch)
 }
 
 func (b *Backend) SendPollVote(ctx context.Context, chat types.JID, msgID string, sender types.JID, isFromMe bool, optionNames []string) error {
