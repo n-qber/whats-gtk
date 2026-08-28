@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"whats-gtk/internal/database"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -21,25 +22,33 @@ type ChatView struct {
 	Banner      *adw.Banner
 
 	// High-level Callbacks (consumed by bridge)
-	OnReconnect           func()
-	OnSendMessage         func(text string, replyToID string)
-	OnPasteImage          func(tex *gdk.Texture)
-	OnSendFile            func(path string)
-	OnDownloadMedia       func(id string)
-	OnOpenImage           func(path string)
-	OnSendReaction        func(id, emoji string)
-	OnPinMessage          func(id string, pin bool, duration uint32)
-	OnDetach              func()
-	OnLoadOlder           func()
-	OnLoadMessageRequest  func(id string)
-	OnSearchMessages      func(query string)
-	OnCancelSearch        func()
-	OnCancelSearchAndJump func(id string)
-	OnSearchResultClick   func(id string)
-	OnMentionClick        func(jid string)
-	OnSendPollVote        func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
-	OnHeaderClick         func()
-	OnForwardMessages     func(ids []string)
+	OnReconnect             func()
+	OnSendMessage           func(text string, replyToID string)
+	OnPasteImage            func(tex *gdk.Texture)
+	OnSendFile              func(path string)
+	OnSendSticker           func(item database.StickerItem)
+	OnSendStickerFile       func(path string)
+	OnToggleFavoriteSticker func(item database.StickerItem, isFav bool)
+	OnDeleteStickerHistory  func(id string)
+	OnSyncFavorites         func()
+	IsStickerFavorite       func(id, filePath string) bool
+	LoadFavorites           func() []database.StickerItem
+	LoadHistory             func() []database.StickerItem
+	OnDownloadMedia         func(id string)
+	OnOpenImage             func(path string)
+	OnSendReaction          func(id, emoji string)
+	OnPinMessage            func(id string, pin bool, duration uint32)
+	OnDetach                func()
+	OnLoadOlder             func()
+	OnLoadMessageRequest    func(id string)
+	OnSearchMessages        func(query string)
+	OnCancelSearch          func()
+	OnCancelSearchAndJump   func(id string)
+	OnSearchResultClick     func(id string)
+	OnMentionClick          func(jid string)
+	OnSendPollVote          func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
+	OnHeaderClick           func()
+	OnForwardMessages       func(ids []string)
 
 	// Direct Field Accessors for legacy compatibility
 	IsSearching bool
@@ -150,6 +159,22 @@ func NewChatView() (*ChatView, error) {
 	cv.MessageList.OnContextMenuClosed = func() {
 		cv.FocusEntry()
 	}
+	cv.MessageList.OnToggleFavoriteSticker = func(msgID, path string, isFav bool) {
+		if cv.OnToggleFavoriteSticker != nil {
+			cv.OnToggleFavoriteSticker(database.StickerItem{ID: msgID, FilePath: path}, isFav)
+		}
+	}
+	cv.MessageList.IsStickerFavorite = func(id, path string) bool {
+		if cv.IsStickerFavorite != nil {
+			return cv.IsStickerFavorite(id, path)
+		}
+		return false
+	}
+	cv.MessageList.OnSendStickerFile = func(path string) {
+		if cv.OnSendStickerFile != nil {
+			cv.OnSendStickerFile(path)
+		}
+	}
 
 	// Wire InputBar
 	cv.InputBar.OnSendMessage = func(text, replyToID string) {
@@ -166,6 +191,49 @@ func NewChatView() (*ChatView, error) {
 		if cv.OnPasteImage != nil {
 			cv.OnPasteImage(tex)
 		}
+	}
+	cv.InputBar.OnSendSticker = func(item database.StickerItem) {
+		if cv.OnSendSticker != nil {
+			cv.OnSendSticker(item)
+		}
+	}
+	cv.InputBar.OnSendStickerFile = func(path string) {
+		if cv.OnSendStickerFile != nil {
+			cv.OnSendStickerFile(path)
+		}
+	}
+	cv.InputBar.OnToggleFavoriteSticker = func(item database.StickerItem, isFav bool) {
+		if cv.OnToggleFavoriteSticker != nil {
+			cv.OnToggleFavoriteSticker(item, isFav)
+		}
+	}
+	cv.InputBar.OnDeleteStickerHistory = func(id string) {
+		if cv.OnDeleteStickerHistory != nil {
+			cv.OnDeleteStickerHistory(id)
+		}
+	}
+	cv.InputBar.OnSyncFavorites = func() {
+		if cv.OnSyncFavorites != nil {
+			cv.OnSyncFavorites()
+		}
+	}
+	cv.InputBar.IsStickerFavorite = func(id, path string) bool {
+		if cv.IsStickerFavorite != nil {
+			return cv.IsStickerFavorite(id, path)
+		}
+		return false
+	}
+	cv.InputBar.LoadFavorites = func() []database.StickerItem {
+		if cv.LoadFavorites != nil {
+			return cv.LoadFavorites()
+		}
+		return nil
+	}
+	cv.InputBar.LoadHistory = func() []database.StickerItem {
+		if cv.LoadHistory != nil {
+			return cv.LoadHistory()
+		}
+		return nil
 	}
 	cv.InputBar.OnSelectMessageUp = cv.MessageList.SelectMessageUp
 	cv.InputBar.OnSelectMessageDown = cv.MessageList.SelectMessageDown

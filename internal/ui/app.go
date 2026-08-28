@@ -449,6 +449,21 @@ func loadCSS() {
 			background-color: rgba(0, 0, 0, 0.75);
 		}
 		.message-sticker { margin: 4px; }
+		.sticker-picker-popover {
+			padding: 4px;
+		}
+		.sticker-picker-tile {
+			padding: 4px;
+			margin: 2px;
+			border-radius: 8px;
+			transition: all 150ms ease;
+		}
+		.sticker-picker-tile:hover {
+			background-color: rgba(0, 0, 0, 0.08);
+		}
+		.sticker-grid {
+			padding: 4px;
+		}
 		.reactions-container {
 			margin-top: 2px;
 			margin-bottom: 2px;

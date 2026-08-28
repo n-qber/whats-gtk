@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"strings"
+	"whats-gtk/internal/database"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
@@ -16,6 +17,8 @@ type InputBar struct {
 	TextView          *gtk.TextView
 	ReplyPreviewBox   *gtk.Box
 	ReplyPreviewLabel *gtk.Label
+	StickerButton     *gtk.Button
+	StickerPicker     *StickerPicker
 
 	ReplyToID      string
 	ReplyToSender  string
@@ -23,6 +26,14 @@ type InputBar struct {
 
 	OnSendMessage             func(text string, replyToID string)
 	OnSendFile                func(path string)
+	OnSendSticker             func(item database.StickerItem)
+	OnSendStickerFile         func(filePath string)
+	OnToggleFavoriteSticker   func(item database.StickerItem, isFav bool)
+	OnDeleteStickerHistory    func(id string)
+	OnSyncFavorites           func()
+	IsStickerFavorite         func(id, filePath string) bool
+	LoadFavorites             func() []database.StickerItem
+	LoadHistory               func() []database.StickerItem
 	OnPasteImage              func(tex *gdk.Texture)
 	OnSelectMessageUp         func() bool
 	OnSelectMessageDown       func() bool
@@ -73,12 +84,67 @@ func NewInputBar(ctx context.Context) *InputBar {
 	ib.TextView.AddCSSClass("message-input-view")
 	inputScrolled.SetChild(ib.TextView)
 
+	stickerButton := gtk.NewButtonFromIconName("face-smile-symbolic")
+	stickerButton.SetVAlign(gtk.AlignEnd)
+	stickerButton.SetTooltipText("Stickers")
+	ib.StickerButton = stickerButton
+
+	ib.StickerPicker = NewStickerPicker(stickerButton, ctx)
+	ib.StickerPicker.OnSelectSticker = func(item database.StickerItem) {
+		if ib.OnSendSticker != nil {
+			ib.OnSendSticker(item)
+		}
+	}
+	ib.StickerPicker.OnSendStickerFile = func(path string) {
+		if ib.OnSendStickerFile != nil {
+			ib.OnSendStickerFile(path)
+		}
+	}
+	ib.StickerPicker.OnToggleFavorite = func(item database.StickerItem, isFav bool) {
+		if ib.OnToggleFavoriteSticker != nil {
+			ib.OnToggleFavoriteSticker(item, isFav)
+		}
+	}
+	ib.StickerPicker.OnDeleteHistory = func(id string) {
+		if ib.OnDeleteStickerHistory != nil {
+			ib.OnDeleteStickerHistory(id)
+		}
+	}
+	ib.StickerPicker.OnSyncFavorites = func() {
+		if ib.OnSyncFavorites != nil {
+			ib.OnSyncFavorites()
+		}
+	}
+	ib.StickerPicker.IsFavorite = func(id, path string) bool {
+		if ib.IsStickerFavorite != nil {
+			return ib.IsStickerFavorite(id, path)
+		}
+		return false
+	}
+	ib.StickerPicker.LoadFavorites = func() []database.StickerItem {
+		if ib.LoadFavorites != nil {
+			return ib.LoadFavorites()
+		}
+		return nil
+	}
+	ib.StickerPicker.LoadHistory = func() []database.StickerItem {
+		if ib.LoadHistory != nil {
+			return ib.LoadHistory()
+		}
+		return nil
+	}
+
+	stickerButton.ConnectClicked(func() {
+		ib.StickerPicker.Popup()
+	})
+
 	fileButton := gtk.NewButtonFromIconName("mail-attachment-symbolic")
 	fileButton.SetVAlign(gtk.AlignEnd)
 
 	sendButton := gtk.NewButtonWithLabel("Send")
 	sendButton.SetVAlign(gtk.AlignEnd)
 
+	inputBox.Append(stickerButton)
 	inputBox.Append(fileButton)
 	inputBox.Append(inputScrolled)
 	inputBox.Append(sendButton)

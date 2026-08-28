@@ -58,6 +58,9 @@ type MessageList struct {
 	OnSendPollVote           func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
 	OnReplyRequest           func(id, sender, content string)
 	OnForwardMessagesRequest func(ids []string)
+	OnToggleFavoriteSticker  func(msgID, path string, isFav bool)
+	IsStickerFavorite        func(id, path string) bool
+	OnSendStickerFile        func(path string)
 	OnContextMenuClosed      func()
 }
 
@@ -773,6 +776,38 @@ func (ml *MessageList) showContextMenu(id string, b bubbles.Bubble) {
 			popover.Popdown()
 		})
 		box.Append(copyPathBtn)
+	}
+
+	if _, isSticker := b.(*bubbles.StickerBubble); isSticker {
+		box.Append(gtk.NewSeparator(gtk.OrientationHorizontal))
+
+		isFav := false
+		if ml.IsStickerFavorite != nil {
+			isFav = ml.IsStickerFavorite(id, b.MediaPath())
+		}
+		favLabel := "⭐ Add to Favorites"
+		if isFav {
+			favLabel = "Remove from Favorites"
+		}
+		favBtn := gtk.NewButtonWithLabel(favLabel)
+		favBtn.SetHasFrame(false)
+		favBtn.ConnectClicked(func() {
+			popover.Popdown()
+			if ml.OnToggleFavoriteSticker != nil {
+				ml.OnToggleFavoriteSticker(id, b.MediaPath(), !isFav)
+			}
+		})
+		box.Append(favBtn)
+
+		sendAgainBtn := gtk.NewButtonWithLabel("Send Sticker")
+		sendAgainBtn.SetHasFrame(false)
+		sendAgainBtn.ConnectClicked(func() {
+			popover.Popdown()
+			if ml.OnSendStickerFile != nil && b.MediaPath() != "" {
+				ml.OnSendStickerFile(b.MediaPath())
+			}
+		})
+		box.Append(sendAgainBtn)
 	}
 
 	popover.SetChild(box)
