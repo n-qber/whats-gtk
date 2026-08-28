@@ -29,6 +29,9 @@ func (a *AppDB) GetPollOptions(msgID string) (map[string]string, error) {
 			opts[h] = n
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return opts, nil
 }
 
@@ -52,8 +55,8 @@ func (a *AppDB) UpdatePollVote(msgID, senderJID string, selectedHashes []string)
 	}
 	defer stmt.Close()
 
-	for _, hash := range selectedHashes {
-		if _, err := stmt.Exec(msgID, hash, senderJID); err != nil {
+	for _, h := range selectedHashes {
+		if _, err := stmt.Exec(msgID, h, senderJID); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -76,6 +79,9 @@ func (a *AppDB) GetPollVotes(msgID string) (map[string][]string, error) {
 		if err := rows.Scan(&h, &s); err == nil {
 			votes[h] = append(votes[h], s)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return votes, nil
 }

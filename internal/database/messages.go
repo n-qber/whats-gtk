@@ -196,6 +196,9 @@ func (a *AppDB) GetMessages(jids []string, limit int) ([]Message, error) {
 		}
 		msgs = append(msgs, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return msgs, nil
 }
 
@@ -231,6 +234,9 @@ func (a *AppDB) GetMessagesBetween(jids []string, start, end time.Time, limit in
 			return nil, err
 		}
 		msgs = append(msgs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return msgs, nil
 }
@@ -335,6 +341,9 @@ func (a *AppDB) GetOlderMessages(jids []string, before time.Time, limit int) ([]
 		}
 		msgs = append(msgs, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return msgs, nil
 }
 
@@ -398,7 +407,7 @@ func (a *AppDB) SearchMessagesInChat(jids []string, queryStr string, limit int) 
 						msgs = append(msgs, m)
 					}
 				}
-				if len(msgs) > 0 {
+				if err := rows.Err(); err == nil && len(msgs) > 0 {
 					return msgs, nil
 				}
 			}
@@ -428,6 +437,9 @@ func (a *AppDB) SearchMessagesInChat(jids []string, queryStr string, limit int) 
 			return nil, err
 		}
 		msgs = append(msgs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return msgs, nil
 }
@@ -472,7 +484,7 @@ func (a *AppDB) SearchMessages(profileID int64, query string, limit int) ([]Mess
 						msgs = append(msgs, m)
 					}
 				}
-				if len(msgs) > 0 {
+				if err := ftsRows.Err(); err == nil && len(msgs) > 0 {
 					return msgs, nil
 				}
 			}
@@ -516,9 +528,14 @@ func (a *AppDB) SearchMessages(profileID int64, query string, limit int) ([]Mess
 
 	var msgs []Message
 	for rows.Next() {
-		if m, err := scanMessage(rows); err == nil {
-			msgs = append(msgs, m)
+		m, err := scanMessage(rows)
+		if err != nil {
+			return nil, err
 		}
+		msgs = append(msgs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return msgs, nil
 }

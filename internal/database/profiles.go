@@ -55,6 +55,9 @@ func (a *AppDB) GetProfiles() ([]Profile, error) {
 		}
 		profiles = append(profiles, p)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed during profiles iteration: %w", err)
+	}
 	return profiles, nil
 }
 
@@ -138,6 +141,9 @@ func (a *AppDB) GetProfileJIDs(profileID int64) ([]string, error) {
 		if err := rows.Scan(&jid); err == nil {
 			jids = append(jids, jid)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return jids, nil
 }

@@ -221,6 +221,9 @@ func (a *AppDB) GetAllContacts(profileID int64, limit int) ([]Contact, error) {
 		}
 		contacts = append(contacts, c)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return contacts, nil
 }
 
@@ -289,6 +292,9 @@ func (a *AppDB) SearchContacts(profileID int64, term string, limit int) ([]Conta
 		}
 		contacts = append(contacts, c)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return contacts, nil
 }
 
@@ -311,6 +317,9 @@ func (a *AppDB) GetUnresolvedPNs(limit int) ([]Contact, error) {
 			return nil, err
 		}
 		contacts = append(contacts, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return contacts, nil
 }

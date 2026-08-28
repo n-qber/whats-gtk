@@ -41,5 +41,8 @@ func (a *AppDB) GetReactions(msgID string) ([]Reaction, error) {
 		}
 		reactions = append(reactions, r)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return reactions, nil
 }

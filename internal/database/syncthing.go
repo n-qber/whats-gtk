@@ -27,7 +27,7 @@ func ResolveSyncthingConflicts(dbPath string) error {
 
 	log.Printf("[Syncthing Resolver] Found %d conflict file(s) for %s", len(conflictFiles), dbPath)
 
-	mainDB, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=off&_journal_mode=WAL", dbPath))
+	mainDB, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=off&_journal_mode=DELETE&_busy_timeout=5000", dbPath))
 	if err != nil {
 		return fmt.Errorf("failed to open main db for sync conflict resolution: %w", err)
 	}
@@ -162,6 +162,10 @@ func ResolveSyncthingConflicts(dbPath string) error {
 func CleanStaleConflictFiles(dir string) {
 	patterns := []string{
 		filepath.Join(dir, "whats-gtk.sync-conflict-*"),
+		filepath.Join(dir, "*.sync-conflict-*.db-wal"),
+		filepath.Join(dir, "*.sync-conflict-*.db-shm"),
+		filepath.Join(dir, "*.db-wal"),
+		filepath.Join(dir, "*.db-shm"),
 		filepath.Join(dir, ".git", "*.sync-conflict-*"),
 		filepath.Join(dir, ".git", "logs", "refs", "remotes", "origin", "*.sync-conflict-*"),
 	}
