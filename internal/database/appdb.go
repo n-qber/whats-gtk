@@ -19,17 +19,29 @@ type AppDB struct {
 }
 
 func InitDB(path string) (*AppDB, error) {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on&_journal_mode=WAL&_sync=NORMAL&_parse_time=true", path))
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on&_journal_mode=DELETE&_sync=NORMAL&_busy_timeout=5000&_parse_time=true", path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open app db: %w", err)
 	}
 
 	if err := db.Ping(); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("failed to ping app db: %w", err)
+	}
+
+	var quickCheck string
+	if err := db.QueryRow("PRAGMA quick_check(1);").Scan(&quickCheck); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to run quick_check on app db: %w", err)
+	}
+	if quickCheck != "ok" {
+		_ = db.Close()
+		return nil, fmt.Errorf("app db integrity check failed: %s", quickCheck)
 	}
 
 	appDB := &AppDB{db: db}
 	if err := appDB.createTables(); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 
@@ -105,6 +117,37 @@ func (a *AppDB) createTables() error {
 			key TEXT PRIMARY KEY,
 			value TEXT
 		)`,
+		`CREATE TABLE IF NOT EXISTS favorite_stickers (
+			id TEXT PRIMARY KEY,
+			file_path TEXT NOT NULL,
+			media_url TEXT,
+			media_direct_path TEXT,
+			media_key BLOB,
+			media_sha256 BLOB,
+			media_enc_sha256 BLOB,
+			media_mimetype TEXT,
+			width INTEGER,
+			height INTEGER,
+			is_animated BOOLEAN DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_favorite_stickers_created ON favorite_stickers(created_at)`,
+		`CREATE TABLE IF NOT EXISTS sticker_history (
+			id TEXT PRIMARY KEY,
+			file_path TEXT NOT NULL,
+			media_url TEXT,
+			media_direct_path TEXT,
+			media_key BLOB,
+			media_sha256 BLOB,
+			media_enc_sha256 BLOB,
+			media_mimetype TEXT,
+			width INTEGER,
+			height INTEGER,
+			is_animated BOOLEAN DEFAULT 0,
+			last_used_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			use_count INTEGER DEFAULT 1
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_sticker_history_used ON sticker_history(last_used_at)`,
 	}
 
 	for _, q := range queries {
