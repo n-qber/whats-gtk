@@ -220,3 +220,144 @@ func (cc *ChatController) promoteTempMessage(targetJID types.JID, tempID, realID
 		}
 	})
 }
+
+// HandleSendSticker sends a sticker item with optimistic UI.
+func (cc *ChatController) HandleSendSticker(targetJID types.JID, item database.StickerItem) {
+	now := time.Now().Format("15:04")
+	tempID := fmt.Sprintf("temp_stkr_%d", time.Now().UnixNano())
+	jidStr := targetJID.ToNonAD().String()
+
+	data, err := os.ReadFile(item.FilePath)
+	if err != nil {
+		fmt.Printf("Bridge: Failed to read sticker file %s: %v\n", item.FilePath, err)
+		return
+	}
+
+	anim, _ := gdkpixbuf.NewPixbufAnimationFromFile(item.FilePath)
+	isAnimated := item.IsAnimated || (anim != nil && !anim.IsStaticImage())
+
+	var tex *gdk.Texture
+	pb, _ := gdkpixbuf.NewPixbufFromFileAtSize(item.FilePath, 160, 160)
+	if pb != nil {
+		tex = gdk.NewTextureForPixbuf(pb)
+	}
+
+	w, h := item.Width, item.Height
+	if w <= 0 && pb != nil {
+		w, h = pb.Width(), pb.Height()
+	}
+
+	glib.IdleAdd(func() {
+		if cv := cc.App.GetChatViewForJID(jidStr); cv != nil {
+			cv.AddSticker(tempID, jidStr, "", anim, tex, nil, true, false, "pending", now, nil, "", "", "", w, h)
+			cv.ScrollToBottom()
+		}
+	})
+
+	go func() {
+		resp, err := cc.Backend.SendSticker(cc.ctx, targetJID, data, isAnimated)
+		if err != nil {
+			fmt.Printf("Bridge: SendSticker failed: %v\n", err)
+			glib.IdleAdd(func() {
+				if cv := cc.App.GetChatViewForJID(jidStr); cv != nil {
+					cv.UpdateMessageStatus(tempID, "failed")
+				}
+			})
+			return
+		}
+
+		cc.promoteTempMessage(targetJID, tempID, resp.ID)
+
+		dbPath := paths.MediaPath(resp.ID + ".webp")
+		if item.FilePath != dbPath {
+			_ = os.WriteFile(dbPath, data, 0644)
+		}
+
+		cc.DB.SaveMessage(database.Message{
+			ID: resp.ID, ChatJID: jidStr, SenderJID: cc.Backend.Device.ID.ToNonAD().String(),
+			Content: dbPath, Type: "sticker", Timestamp: resp.Timestamp, Status: "sent", IsFromMe: true,
+			MediaMimetype: sql.NullString{String: "image/webp", Valid: true},
+			MediaWidth:    sql.NullInt64{Int64: int64(w), Valid: w > 0},
+			MediaHeight:   sql.NullInt64{Int64: int64(h), Valid: h > 0},
+		})
+		cc.DB.UpdateContactTimestamp(jidStr, resp.Timestamp)
+
+		item.ID = resp.ID
+		item.FilePath = dbPath
+		item.LastUsedAt = resp.Timestamp
+		item.IsAnimated = isAnimated
+		_ = cc.DB.RecordStickerHistory(item)
+	}()
+}
+
+// HandleSendStickerFile converts (if needed) and sends a local image or webp file as a sticker.
+func (cc *ChatController) HandleSendStickerFile(targetJID types.JID, filePath string) {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	if ext == ".webp" {
+		item := database.StickerItem{
+			ID:       fmt.Sprintf("file_%d", time.Now().UnixNano()),
+			FilePath: filePath,
+			Mimetype: "image/webp",
+		}
+		cc.HandleSendSticker(targetJID, item)
+		return
+	}
+
+	// If not WebP, load and convert to a 512x512 max WebP sticker
+	pb, err := gdkpixbuf.NewPixbufFromFile(filePath)
+	if err != nil {
+		fmt.Printf("Bridge: Failed to load image for sticker: %v\n", err)
+		return
+	}
+
+	origW, origH := float64(pb.Width()), float64(pb.Height())
+	maxDim := 512.0
+	targetW, targetH := origW, origH
+	if origW > maxDim || origH > maxDim {
+		scale := maxDim / origW
+		if origH > origW {
+			scale = maxDim / origH
+		}
+		targetW = origW * scale
+		targetH = origH * scale
+	}
+
+	scaled := pb.ScaleSimple(int(targetW), int(targetH), gdkpixbuf.InterpBilinear)
+	if scaled == nil {
+		scaled = pb
+	}
+
+	tmpPath := filepath.Join(os.TempDir(), fmt.Sprintf("stkr_conv_%d.webp", time.Now().UnixNano()))
+	err = scaled.Savev(tmpPath, "webp", nil, nil)
+	if err != nil {
+		fmt.Printf("Bridge: Failed to convert image to webp sticker: %v\n", err)
+		return
+	}
+
+	item := database.StickerItem{
+		ID:       fmt.Sprintf("conv_%d", time.Now().UnixNano()),
+		FilePath: tmpPath,
+		Mimetype: "image/webp",
+		Width:    int(targetW),
+		Height:   int(targetH),
+	}
+	cc.HandleSendSticker(targetJID, item)
+}
+
+// HandleToggleFavoriteSticker toggles favorite status for a sticker in database and WhatsApp appstate.
+func (cc *ChatController) HandleToggleFavoriteSticker(item database.StickerItem, isFav bool) {
+	if isFav {
+		_ = cc.DB.SaveFavoriteSticker(item)
+	} else {
+		_ = cc.DB.DeleteFavoriteSticker(item.ID)
+		if item.FilePath != "" {
+			_ = cc.DB.DeleteFavoriteSticker(item.FilePath)
+		}
+	}
+
+	go func() {
+		if cc.Backend != nil {
+			_ = cc.Backend.SetFavoriteStickerAppState(cc.ctx, item, isFav)
+		}
+	}()
+}

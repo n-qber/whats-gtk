@@ -346,6 +346,32 @@ func (c *ChatController) HandleDetach() {
 		cv.OnSendMessage = func(text, replyToID string) { c.HandleSendMessage(targetJID, text, replyToID) }
 		cv.OnPasteImage = func(tex *gdk.Texture) { c.HandlePasteImage(targetJID, tex) }
 		cv.OnSendFile = func(path string) { c.HandleSendFile(targetJID, path) }
+		cv.OnSendSticker = func(item database.StickerItem) { c.HandleSendSticker(targetJID, item) }
+		cv.OnSendStickerFile = func(path string) { c.HandleSendStickerFile(targetJID, path) }
+		cv.OnToggleFavoriteSticker = func(item database.StickerItem, isFav bool) { c.HandleToggleFavoriteSticker(item, isFav) }
+		cv.OnDeleteStickerHistory = func(id string) { _ = c.DB.DeleteStickerHistory(id) }
+		cv.OnSyncFavorites = func() {
+			if c.Backend != nil {
+				go func() {
+					_ = c.Backend.FetchFavoriteStickers(c.ctx)
+				}()
+			}
+		}
+		cv.IsStickerFavorite = func(id, path string) bool {
+			fav, _ := c.DB.IsStickerFavorite(id)
+			if !fav && path != "" {
+				fav, _ = c.DB.IsStickerFavorite(path)
+			}
+			return fav
+		}
+		cv.LoadFavorites = func() []database.StickerItem {
+			items, _ := c.DB.GetFavoriteStickers(100)
+			return items
+		}
+		cv.LoadHistory = func() []database.StickerItem {
+			items, _ := c.DB.GetStickerHistory(60)
+			return items
+		}
 		cv.OnSendReaction = func(id, emoji string) { c.HandleSendReaction(targetJID, id, emoji) }
 		cv.OnLoadOlder = func() {
 			if !cv.IsSearching {

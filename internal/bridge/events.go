@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/core"
 	"whats-gtk/internal/database"
+	"whats-gtk/internal/paths"
 	"whats-gtk/internal/ui"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -18,9 +20,9 @@ import (
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow"
+	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
-	waProto "go.mau.fi/whatsmeow/binary/proto"
 )
 
 // EventHandler handles the dispatch and processing of all WhatsApp events
@@ -93,6 +95,8 @@ func (eh *EventHandler) HandleEvent(evt backend.AppEvent) {
 		eh.handleMediaRetry(v)
 	case *backend.UndecryptableEvent:
 		eh.handleUndecryptable(v)
+	case *backend.AppStateEvent:
+		eh.handleAppState(v)
 	}
 }
 
@@ -240,6 +244,9 @@ func (eh *EventHandler) handleConnected() {
 	go func() {
 		eh.Contacts.Sync(eh.ctx)
 		eh.Chat.RefreshSidebarUI()
+		if eh.Backend != nil {
+			_ = eh.Backend.FetchFavoriteStickers(eh.ctx)
+		}
 	}()
 }
 
@@ -496,5 +503,104 @@ func (eh *EventHandler) handleUndecryptable(v *backend.UndecryptableEvent) {
 			},
 		}
 		eh.handleMessage(&backend.MessageEvent{Info: fakeMsg})
+	}
+}
+
+func (eh *EventHandler) handleAppState(v *backend.AppStateEvent) {
+	if v.Info == nil {
+		return
+	}
+	isFavStkr := len(v.Info.Index) > 0 && v.Info.Index[0] == "favoriteSticker"
+	act := v.Info.GetStickerAction()
+	if !isFavStkr && act == nil {
+		return
+	}
+
+	if act == nil && isFavStkr && len(v.Info.Index) > 1 {
+		_ = eh.DB.DeleteFavoriteSticker(v.Info.Index[1])
+		glib.IdleAdd(func() {
+			if eh.App.ChatView != nil && eh.App.ChatView.InputBar != nil && eh.App.ChatView.InputBar.StickerPicker != nil {
+				eh.App.ChatView.InputBar.StickerPicker.Reload()
+			}
+		})
+		return
+	}
+
+	if act != nil {
+		id := ""
+		if len(v.Info.Index) > 1 {
+			id = v.Info.Index[1]
+		}
+		if len(act.GetFileEncSHA256()) > 0 {
+			id = hex.EncodeToString(act.GetFileEncSHA256())
+		}
+		if id == "" {
+			return
+		}
+		id = strings.Map(func(r rune) rune {
+			if strings.ContainsRune("\\/:*?\"<>| ", r) {
+				return '_'
+			}
+			return r
+		}, id)
+
+		isFav := true
+		if act.IsFavorite != nil {
+			isFav = act.GetIsFavorite()
+		} else if !isFavStkr {
+			isFav = false
+		}
+
+		if isFav {
+			filePath := paths.MediaPath(id + ".webp")
+
+			// Check if we already have this sticker downloaded in messages
+			if _, err := os.Stat(filePath); err != nil && len(act.GetFileEncSHA256()) > 0 {
+				if msgContent, err := eh.DB.FindExistingStickerPath(act.GetFileEncSHA256()); err == nil && msgContent != "" {
+					if _, err := os.Stat(msgContent); err == nil {
+						filePath = msgContent
+					}
+				}
+			}
+
+			item := database.StickerItem{
+				ID:              id,
+				FilePath:        filePath,
+				MediaURL:        act.GetURL(),
+				MediaDirectPath: act.GetDirectPath(),
+				MediaKey:        act.GetMediaKey(),
+				MediaEncSHA256:  act.GetFileEncSHA256(),
+				Mimetype:        "image/webp",
+				Width:           int(act.GetWidth()),
+				Height:          int(act.GetHeight()),
+				IsAnimated:      act.GetIsLottie(),
+				CreatedAt:       time.Now(),
+			}
+			_ = eh.DB.SaveFavoriteSticker(item)
+
+			if _, err := os.Stat(filePath); err != nil && len(act.GetMediaKey()) > 0 {
+				eh.Media.Download(DownloadTask{
+					ID:      id,
+					MsgType: "sticker",
+					Metadata: &MediaMetadata{
+						URL:           act.GetURL(),
+						DirectPath:    act.GetDirectPath(),
+						MediaKey:      act.GetMediaKey(),
+						Mimetype:      "image/webp",
+						FileEncSHA256: act.GetFileEncSHA256(),
+						FileLength:    act.GetFileLength(),
+					},
+				})
+			}
+		} else {
+			_ = eh.DB.DeleteFavoriteSticker(id)
+			_ = eh.DB.DeleteFavoriteSticker(paths.MediaPath(id + ".webp"))
+		}
+
+		glib.IdleAdd(func() {
+			if eh.App.ChatView != nil && eh.App.ChatView.InputBar != nil && eh.App.ChatView.InputBar.StickerPicker != nil {
+				eh.App.ChatView.InputBar.StickerPicker.Reload()
+			}
+		})
 	}
 }

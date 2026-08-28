@@ -446,6 +446,44 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 			br.Chat.HandleSendFile(*jid, path)
 		}
 	}
+	cv.OnSendSticker = func(item database.StickerItem) {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Chat.HandleSendSticker(*jid, item)
+		}
+	}
+	cv.OnSendStickerFile = func(path string) {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Chat.HandleSendStickerFile(*jid, path)
+		}
+	}
+	cv.OnToggleFavoriteSticker = func(item database.StickerItem, isFav bool) {
+		br.Chat.HandleToggleFavoriteSticker(item, isFav)
+	}
+	cv.OnDeleteStickerHistory = func(id string) {
+		_ = br.DB.DeleteStickerHistory(id)
+	}
+	cv.OnSyncFavorites = func() {
+		if br.Backend != nil {
+			go func() {
+				_ = br.Backend.FetchFavoriteStickers(br.ctx)
+			}()
+		}
+	}
+	cv.IsStickerFavorite = func(id, path string) bool {
+		fav, _ := br.DB.IsStickerFavorite(id)
+		if !fav && path != "" {
+			fav, _ = br.DB.IsStickerFavorite(path)
+		}
+		return fav
+	}
+	cv.LoadFavorites = func() []database.StickerItem {
+		items, _ := br.DB.GetFavoriteStickers(100)
+		return items
+	}
+	cv.LoadHistory = func() []database.StickerItem {
+		items, _ := br.DB.GetStickerHistory(60)
+		return items
+	}
 	cv.OnSendReaction = func(id, emoji string) {
 		if jid := br.Chat.SelectedJID(); jid != nil {
 			br.Chat.HandleSendReaction(*jid, id, emoji)

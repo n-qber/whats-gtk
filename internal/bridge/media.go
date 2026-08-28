@@ -177,6 +177,9 @@ func (ms *MediaService) mediaWorker() {
 		if err == nil {
 			os.WriteFile(path, data, 0644)
 			ms.persistMediaMessage(task, path)
+			if task.MsgType == "sticker" {
+				_ = ms.DB.UpdateFavoriteStickerFilePath(task.ID, path)
+			}
 			
 			if ms.onMediaDown != nil {
 				ms.onMediaDown(task, data, path)
