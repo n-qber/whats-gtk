@@ -445,20 +445,12 @@ func (ml *MessageList) SelectMessageDown() bool {
 
 // SelectMessageBlockUp jumps up to the previous block of messages from another person (skipping own messages and the current sender's block).
 func (ml *MessageList) SelectMessageBlockUp() bool {
-	ids := ml.GetOrderedMessageIDs()
-	if len(ids) == 0 {
+	if ml.KeyboardSelectedID == "" {
 		return false
 	}
 
-	if ml.KeyboardSelectedID == "" {
-		// Find newest (bottom-most) message that is NOT from me
-		for i := len(ids) - 1; i >= 0; i-- {
-			b, ok := ml.MessageRows[ids[i]]
-			if ok && !b.IsSelf() {
-				ml.setKeyboardSelection(ids[i])
-				return true
-			}
-		}
+	ids := ml.GetOrderedMessageIDs()
+	if len(ids) == 0 {
 		return false
 	}
 

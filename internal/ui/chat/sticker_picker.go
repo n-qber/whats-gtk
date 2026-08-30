@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"time"
 	"whats-gtk/internal/database"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -31,7 +32,8 @@ type StickerPicker struct {
 	LoadFavorites      func() []database.StickerItem
 	LoadHistory        func() []database.StickerItem
 
-	ctx context.Context
+	ctx          context.Context
+	lastSyncTime time.Time
 }
 
 // NewStickerPicker creates a new sticker picker popover attached to the given parent widget.
@@ -73,6 +75,7 @@ func NewStickerPicker(parent gtk.Widgetter, ctx context.Context) *StickerPicker 
 	syncBtn.SetTooltipText("Sync favorites from WhatsApp")
 	syncBtn.AddCSSClass("flat")
 	syncBtn.ConnectClicked(func() {
+		sp.lastSyncTime = time.Now()
 		if sp.OnSyncFavorites != nil {
 			sp.OnSyncFavorites()
 		}
@@ -326,7 +329,10 @@ func (sp *StickerPicker) createTile(item database.StickerItem, fromFavoritesTab 
 func (sp *StickerPicker) Popup() {
 	sp.Reload()
 	if sp.OnSyncFavorites != nil && sp.FavFlowBox != nil && sp.FavFlowBox.FirstChild() == nil {
-		sp.OnSyncFavorites()
+		if time.Since(sp.lastSyncTime) > 5*time.Minute {
+			sp.lastSyncTime = time.Now()
+			sp.OnSyncFavorites()
+		}
 	}
 	sp.Popover.Popup()
 }

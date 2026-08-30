@@ -296,29 +296,20 @@ func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSel
 	plusBtn.SetHasFrame(false)
 	plusBtn.ConnectClicked(func() {
 		popover.Popdown()
-		fullPopover := gtk.NewPopover()
-		fullPopover.SetParent(reactionsBtn)
-		flowBox := gtk.NewFlowBox()
-		flowBox.SetMaxChildrenPerLine(8)
-		allEmojis := []string{
-			"👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "✨", 
-			"👏", "🎉", "✅", "❌", "💯", "🚀", "💡", "👀",
-			"🤣", "😍", "😭", "😊", "🥳", "🤔", "🙄", "😱",
-		}
-		for _, e := range allEmojis {
-			btn := gtk.NewButtonWithLabel(e)
-			btn.SetHasFrame(false)
-			btn.ConnectClicked(func() {
-				if bb != nil && bb.onReactionRequest != nil { bb.onReactionRequest(e) }
-				fullPopover.Popdown()
+		emojiChooser := gtk.NewEmojiChooser()
+		emojiChooser.SetParent(reactionsBtn)
+		emojiChooser.ConnectEmojiPicked(func(e string) {
+			if bb != nil && bb.onReactionRequest != nil {
+				bb.onReactionRequest(e)
+			}
+			emojiChooser.Popdown()
+		})
+		emojiChooser.ConnectClosed(func() {
+			glib.IdleAdd(func() {
+				emojiChooser.Unparent()
 			})
-			flowBox.Append(btn)
-		}
-		scrolled := gtk.NewScrolledWindow()
-		scrolled.SetSizeRequest(240, 200)
-		scrolled.SetChild(flowBox)
-		fullPopover.SetChild(scrolled)
-		fullPopover.Popup()
+		})
+		emojiChooser.Popup()
 	})
 	hbox.Append(plusBtn)
 	popover.SetChild(hbox)
