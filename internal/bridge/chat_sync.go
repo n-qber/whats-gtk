@@ -24,16 +24,7 @@ func (cc *ChatController) GetGroupParticipantCount(jid types.JID) int {
 		return len(info.Participants)
 	}
 
-	if cc.Backend != nil && cc.Backend.Client != nil {
-		fetched, err := cc.Backend.GetGroupInfo(cc.ctx, jid)
-		if err == nil && fetched != nil {
-			cc.groupMutex.Lock()
-			cc.lastGroupSync[cleanJID] = time.Now()
-			cc.cachedGroupInfo[cleanJID] = fetched
-			cc.groupMutex.Unlock()
-			return len(fetched.Participants)
-		}
-	}
+	cc.SyncGroupIfNeeded(jid)
 	return 0
 }
 

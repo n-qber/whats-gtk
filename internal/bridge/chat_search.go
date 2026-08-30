@@ -43,7 +43,7 @@ func (cc *ChatController) RefreshMessagesAround(jid types.JID, targetID string) 
 			if jid.Server == types.GroupServer && !m.IsFromMe {
 				if !isCont {
 					sName = cc.Contacts.ResolveSenderName(m.SenderJID)
-					av = cc.Contacts.GetAvatar(m.SenderJID)
+					av = cc.Contacts.GetAvatarNoFetch(m.SenderJID)
 				}
 			}
 			lastSender = m.SenderJID
@@ -157,7 +157,7 @@ func (cc *ChatController) RenderMessageSearch(jidStr string, query string) {
 			if targetJID.Server == types.GroupServer && !m.IsFromMe {
 				if !isCont {
 					sName = cc.Contacts.ResolveSenderName(m.SenderJID)
-					av = cc.Contacts.GetAvatar(m.SenderJID)
+					av = cc.Contacts.GetAvatarNoFetch(m.SenderJID)
 				}
 			}
 			lastSender = m.SenderJID
@@ -242,7 +242,7 @@ func (cc *ChatController) LoadOlderMessages(jidStr string, targetID string) {
 			targetJID, _ := types.ParseJID(jidStr)
 			if targetJID.Server == types.GroupServer && !m.IsFromMe {
 				sName = cc.Contacts.ResolveSenderName(m.SenderJID)
-				av = cc.Contacts.GetAvatar(m.SenderJID)
+				av = cc.Contacts.GetAvatarNoFetch(m.SenderJID)
 			}
 
 			dateStr := cc.Mapper.FormatMessageDate(m.Timestamp)

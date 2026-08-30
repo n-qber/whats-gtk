@@ -47,7 +47,6 @@ func (ms *MessageService) ResolveJID(jid types.JID) types.JID {
 	if strings.HasSuffix(jStr, "@lid") {
 		if ms.Backend != nil && ms.Backend.Client != nil && ms.Backend.Client.Store != nil && ms.Backend.Client.Store.LIDs != nil {
 			if pn, err := ms.Backend.Client.Store.LIDs.GetPNForLID(ms.ctx, jid.ToNonAD()); err == nil && !pn.IsEmpty() {
-				_ = ms.DB.MergeLID(pn.ToNonAD().String(), jStr)
 				return pn.ToNonAD()
 			}
 		}
@@ -290,7 +289,9 @@ func (ms *MessageService) PersistMessageTx(tx *sql.Tx, msg *events.Message) {
 	chatJID := ms.ResolveJID(msg.Info.Chat).String()
 	senderJID := ms.ResolveJID(msg.Info.Sender).String()
 	
-	if strings.HasSuffix(msg.Info.Sender.String(), "@lid") { ms.Contacts.ResolveLIDMapping(msg.Info.Sender.String()) }
+	if tx == nil && strings.HasSuffix(msg.Info.Sender.String(), "@lid") {
+		go ms.Contacts.ResolveLIDMapping(msg.Info.Sender.String())
+	}
 	
 	metadata.ID = msg.Info.ID; metadata.ChatJID = chatJID; metadata.SenderJID = senderJID
 	metadata.Content = content; metadata.Type = msgType; metadata.Timestamp = msg.Info.Timestamp
@@ -389,13 +390,21 @@ func (ms *MessageService) PersistMediaMessage(msg *events.Message, msgType strin
 
 // HandleReaction saves a reaction to the database and updates the UI if the chat is selected.
 func (ms *MessageService) HandleReaction(chat, sender types.JID, text, targetID string, timestamp time.Time) {
+	ms.HandleReactionTx(nil, chat, sender, text, targetID, timestamp)
+}
+
+func (ms *MessageService) HandleReactionTx(tx *sql.Tx, chat, sender types.JID, text, targetID string, timestamp time.Time) {
 	react := database.Reaction{
 		MessageID: targetID,
 		SenderJID: sender.ToNonAD().String(),
 		Reaction:  text,
 		Timestamp: timestamp,
 	}
-	ms.DB.SaveReaction(react)
+	if tx != nil {
+		_ = ms.DB.SaveReactionTx(tx, react)
+	} else {
+		_ = ms.DB.SaveReaction(react)
+	}
 	
 	selectedJID := ms.GetSelectedJID()
 	if selectedJID != nil && chat.ToNonAD().String() == selectedJID.ToNonAD().String() {

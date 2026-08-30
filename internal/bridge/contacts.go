@@ -82,6 +82,9 @@ type ContactService struct {
 	failedFetch  map[string]time.Time
 	onAvatarSet  func(jid string, tex *gdk.Texture)
 	mutex        sync.Mutex
+
+	nameCache map[string]string
+	nameMutex sync.RWMutex
 }
 
 func NewContactService(b *backend.Backend, db *database.AppDB, ctx context.Context) *ContactService {
@@ -93,6 +96,7 @@ func NewContactService(b *backend.Backend, db *database.AppDB, ctx context.Conte
 		avatarQueue:  make(chan string, 500),
 		pendingFetch: make(map[string]bool),
 		failedFetch:  make(map[string]time.Time),
+		nameCache:    make(map[string]string),
 	}
 	for i := 0; i < 3; i++ {
 		go cs.avatarWorker()
@@ -115,7 +119,7 @@ func (cs *ContactService) avatarWorker() {
 		cs.mutex.Unlock()
 		
 		jid, _ := types.ParseJID(jStr)
-		time.Sleep(250 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		
 		info, err := cs.Backend.Client.GetProfilePictureInfo(cs.ctx, jid, &whatsmeow.GetProfilePictureParams{Preview: true})
 		
@@ -243,32 +247,51 @@ func (cs *ContactService) GetAvatar(j string) *gdk.Texture {
 }
 
 func (cs *ContactService) ResolveSenderName(j string) string {
-	if strings.HasSuffix(j, "@lid") {
-		cs.ResolveLIDMapping(j)
+	if j == "" {
+		return ""
 	}
+
+	cs.nameMutex.RLock()
+	if name, ok := cs.nameCache[j]; ok && name != "" {
+		cs.nameMutex.RUnlock()
+		return name
+	}
+	cs.nameMutex.RUnlock()
+
+	var resolvedName string
 	c, err := cs.DB.GetContact(j)
 	if err == nil {
 		if c.SavedName.Valid && c.SavedName.String != "" {
-			return c.SavedName.String
-		}
-		if c.PushName.Valid && c.PushName.String != "" {
-			return cs.formatNonAddedName(c.JID, c.PushName.String)
-		}
-	}
-	jidObj, _ := types.ParseJID(j)
-	if cs.Backend != nil && cs.Backend.Client != nil && cs.Backend.Client.Store != nil {
-		if info, err := cs.Backend.Client.Store.Contacts.GetContact(cs.ctx, jidObj); err == nil && info.Found {
-			if info.FullName != "" {
-				cs.DB.SaveContact(database.Contact{JID: j, SavedName: sql.NullString{String: info.FullName, Valid: true}})
-				return info.FullName
-			}
-			if info.PushName != "" {
-				cs.DB.SaveContact(database.Contact{JID: j, PushName: sql.NullString{String: info.PushName, Valid: true}})
-				return cs.formatNonAddedName(j, info.PushName)
-			}
+			resolvedName = c.SavedName.String
+		} else if c.PushName.Valid && c.PushName.String != "" {
+			resolvedName = cs.formatNonAddedName(c.JID, c.PushName.String)
 		}
 	}
-	return j
+
+	if resolvedName == "" {
+		jidObj, _ := types.ParseJID(j)
+		if cs.Backend != nil && cs.Backend.Client != nil && cs.Backend.Client.Store != nil {
+			if info, err := cs.Backend.Client.Store.Contacts.GetContact(cs.ctx, jidObj); err == nil && info.Found {
+				if info.FullName != "" {
+					resolvedName = info.FullName
+					go cs.DB.SaveContact(database.Contact{JID: j, SavedName: sql.NullString{String: info.FullName, Valid: true}})
+				} else if info.PushName != "" {
+					resolvedName = cs.formatNonAddedName(j, info.PushName)
+					go cs.DB.SaveContact(database.Contact{JID: j, PushName: sql.NullString{String: info.PushName, Valid: true}})
+				}
+			}
+		}
+	}
+
+	if resolvedName == "" {
+		resolvedName = j
+	}
+
+	cs.nameMutex.Lock()
+	cs.nameCache[j] = resolvedName
+	cs.nameMutex.Unlock()
+
+	return resolvedName
 }
 
 func (cs *ContactService) ResolveLIDMapping(lid string) {
@@ -310,17 +333,32 @@ func (cs *ContactService) formatPhoneNumber(n string) string {
 }
 
 func (cs *ContactService) Sync(ctx context.Context) {
+	var contactsToSave []database.Contact
+
 	groups, err := cs.Backend.GetJoinedGroups(ctx)
 	if err == nil {
 		for _, g := range groups {
-			cs.DB.SaveContact(database.Contact{JID: g.JID.ToNonAD().String(), SavedName: sql.NullString{String: g.Name, Valid: g.Name != ""}, IsGroup: sql.NullBool{Bool: true, Valid: true}})
+			contactsToSave = append(contactsToSave, database.Contact{
+				JID:       g.JID.ToNonAD().String(),
+				SavedName: sql.NullString{String: g.Name, Valid: g.Name != ""},
+				IsGroup:   sql.NullBool{Bool: true, Valid: true},
+			})
 		}
 	}
 	contacts, err := cs.Backend.GetAllContacts(ctx)
 	if err == nil {
 		for j, i := range contacts {
-			cs.DB.SaveContact(database.Contact{JID: j.ToNonAD().String(), SavedName: sql.NullString{String: i.FullName, Valid: i.FullName != ""}, PushName: sql.NullString{String: i.PushName, Valid: i.PushName != ""}, IsGroup: sql.NullBool{Bool: j.Server == types.GroupServer, Valid: true}})
+			contactsToSave = append(contactsToSave, database.Contact{
+				JID:       j.ToNonAD().String(),
+				SavedName: sql.NullString{String: i.FullName, Valid: i.FullName != ""},
+				PushName:  sql.NullString{String: i.PushName, Valid: i.PushName != ""},
+				IsGroup:   sql.NullBool{Bool: j.Server == types.GroupServer, Valid: true},
+			})
 		}
+	}
+
+	if len(contactsToSave) > 0 {
+		_ = cs.DB.SaveContactsBatch(contactsToSave)
 	}
 }
 
