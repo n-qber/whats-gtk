@@ -38,26 +38,58 @@ type EventHandler struct {
 	Pipeline *core.MessagePipeline
 	ctx      context.Context
 
+	eventChan           chan backend.AppEvent
 	syncMutex           sync.RWMutex
 	isSyncing           bool
 	isOfflineSyncing    bool
 	offlineSyncTotal    int
 	offlineSyncReceived int
+
+	stickerReloadTimer glib.SourceHandle
+	stickerReloadMutex sync.Mutex
 }
 
 // NewEventHandler creates a new EventHandler.
 func NewEventHandler(b *backend.Backend, app *ui.App, db *database.AppDB, msgs *MessageService, chat *ChatController, contacts *ContactService, media *MediaService, pipeline *core.MessagePipeline, ctx context.Context) *EventHandler {
-	return &EventHandler{
-		Backend:  b,
-		App:      app,
-		DB:       db,
-		Messages: msgs,
-		Chat:     chat,
-		Contacts: contacts,
-		Media:    media,
-		Pipeline: pipeline,
-		ctx:      ctx,
+	eh := &EventHandler{
+		Backend:   b,
+		App:       app,
+		DB:        db,
+		Messages:  msgs,
+		Chat:      chat,
+		Contacts:  contacts,
+		Media:     media,
+		Pipeline:  pipeline,
+		ctx:       ctx,
+		eventChan: make(chan backend.AppEvent, 2000),
 	}
+	go eh.eventLoop()
+	return eh
+}
+
+func (eh *EventHandler) eventLoop() {
+	for evt := range eh.eventChan {
+		eh.processEvent(evt)
+	}
+}
+
+func (eh *EventHandler) triggerStickerReload() {
+	eh.stickerReloadMutex.Lock()
+	defer eh.stickerReloadMutex.Unlock()
+
+	if eh.stickerReloadTimer != 0 {
+		glib.SourceRemove(eh.stickerReloadTimer)
+	}
+	eh.stickerReloadTimer = glib.TimeoutAdd(250, func() bool {
+		eh.stickerReloadMutex.Lock()
+		eh.stickerReloadTimer = 0
+		eh.stickerReloadMutex.Unlock()
+
+		if eh.App.ChatView != nil && eh.App.ChatView.InputBar != nil && eh.App.ChatView.InputBar.StickerPicker != nil {
+			eh.App.ChatView.InputBar.StickerPicker.Reload()
+		}
+		return false
+	})
 }
 
 // IsSyncing returns whether a history sync is currently in progress.
@@ -67,9 +99,16 @@ func (eh *EventHandler) IsSyncing() bool {
 	return eh.isSyncing
 }
 
-// HandleEvent is the main event dispatcher. It type-switches on AppEvent
-// and routes to the appropriate handler.
+// HandleEvent is the main event dispatcher. It enqueues events without blocking whatsmeow.
 func (eh *EventHandler) HandleEvent(evt backend.AppEvent) {
+	select {
+	case eh.eventChan <- evt:
+	default:
+		go eh.processEvent(evt)
+	}
+}
+
+func (eh *EventHandler) processEvent(evt backend.AppEvent) {
 	switch v := evt.(type) {
 	case *backend.HistorySyncEvent:
 		eh.handleHistorySync(v)
@@ -159,7 +198,7 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 				if err == nil {
 					eh.Messages.PersistMessageTx(tx, pMsg)
 					if pMsg.Message.GetReactionMessage() != nil {
-						eh.Messages.HandleReaction(pMsg.Info.Chat, pMsg.Info.Sender, pMsg.Message.GetReactionMessage().GetText(), pMsg.Message.GetReactionMessage().GetKey().GetID(), pMsg.Info.Timestamp)
+						eh.Messages.HandleReactionTx(tx, pMsg.Info.Chat, pMsg.Info.Sender, pMsg.Message.GetReactionMessage().GetText(), pMsg.Message.GetReactionMessage().GetKey().GetID(), pMsg.Info.Timestamp)
 					}
 					commitCount++
 					if commitCount >= 250 {
@@ -388,6 +427,11 @@ func (eh *EventHandler) handleReceipt(v *backend.ReceiptEvent) {
 		myJIDStr = eh.Backend.Client.Store.ID.ToNonAD().String()
 	}
 
+	var totalParticipants int
+	if isGroup {
+		totalParticipants = eh.Chat.GetGroupParticipantCount(chatJID)
+	}
+
 	for _, id := range v.Info.MessageIDs {
 		if err := eh.DB.SaveReceipt(id, chatJIDStr, senderJID, rType, v.Info.Timestamp); err != nil {
 			fmt.Printf("Bridge: Error saving receipt for %s: %v\n", id, err)
@@ -395,7 +439,6 @@ func (eh *EventHandler) handleReceipt(v *backend.ReceiptEvent) {
 
 		var newStatus string
 		if isGroup {
-			totalParticipants := eh.Chat.GetGroupParticipantCount(chatJID)
 			
 			msgSenderJID := myJIDStr
 			if msg, err := eh.DB.GetMessage(id); err == nil && msg != nil && msg.SenderJID != "" {
@@ -518,11 +561,7 @@ func (eh *EventHandler) handleAppState(v *backend.AppStateEvent) {
 
 	if act == nil && isFavStkr && len(v.Info.Index) > 1 {
 		_ = eh.DB.DeleteFavoriteSticker(v.Info.Index[1])
-		glib.IdleAdd(func() {
-			if eh.App.ChatView != nil && eh.App.ChatView.InputBar != nil && eh.App.ChatView.InputBar.StickerPicker != nil {
-				eh.App.ChatView.InputBar.StickerPicker.Reload()
-			}
-		})
+		eh.triggerStickerReload()
 		return
 	}
 
@@ -597,10 +636,6 @@ func (eh *EventHandler) handleAppState(v *backend.AppStateEvent) {
 			_ = eh.DB.DeleteFavoriteSticker(paths.MediaPath(id + ".webp"))
 		}
 
-		glib.IdleAdd(func() {
-			if eh.App.ChatView != nil && eh.App.ChatView.InputBar != nil && eh.App.ChatView.InputBar.StickerPicker != nil {
-				eh.App.ChatView.InputBar.StickerPicker.Reload()
-			}
-		})
+		eh.triggerStickerReload()
 	}
 }
