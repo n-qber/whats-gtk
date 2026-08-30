@@ -1,6 +1,7 @@
 package database
 
 import (
+	"database/sql"
 	"time"
 )
 
@@ -12,15 +13,23 @@ type Reaction struct {
 }
 
 func (a *AppDB) SaveReaction(r Reaction) error {
+	return a.saveReaction(a.db, r)
+}
+
+func (a *AppDB) SaveReactionTx(tx *sql.Tx, r Reaction) error {
+	return a.saveReaction(tx, r)
+}
+
+func (a *AppDB) saveReaction(exec DBExecutor, r Reaction) error {
 	if r.Reaction == "" {
 		// Empty reaction means remove
 		query := `DELETE FROM reactions WHERE msg_id = ? AND sender_jid = ?`
-		_, err := a.db.Exec(query, r.MessageID, r.SenderJID)
+		_, err := exec.Exec(query, r.MessageID, r.SenderJID)
 		return err
 	}
 	query := `INSERT OR REPLACE INTO reactions (msg_id, sender_jid, reaction, timestamp) 
 	          VALUES (?, ?, ?, ?)`
-	_, err := a.db.Exec(query, r.MessageID, r.SenderJID, r.Reaction, r.Timestamp)
+	_, err := exec.Exec(query, r.MessageID, r.SenderJID, r.Reaction, r.Timestamp)
 	return err
 }
 

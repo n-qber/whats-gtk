@@ -95,6 +95,64 @@ func (a *AppDB) saveContact(exec DBExecutor, c Contact) error {
 	return err
 }
 
+func (a *AppDB) SaveContactsBatch(contacts []Contact) error {
+	if len(contacts) == 0 {
+		return nil
+	}
+	tx, err := a.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err := a.SaveContactsBatchTx(tx, contacts); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (a *AppDB) SaveContactsBatchTx(tx *sql.Tx, contacts []Contact) error {
+	if len(contacts) == 0 {
+		return nil
+	}
+
+	query := `INSERT INTO contacts (jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at) 
+	          VALUES (?, ?, ?, ?, ?, ?, ?)
+	          ON CONFLICT(jid) DO UPDATE SET
+	          lid=COALESCE(excluded.lid, contacts.lid),
+	          saved_name=CASE WHEN excluded.saved_name IS NOT NULL AND excluded.saved_name != '' THEN excluded.saved_name ELSE contacts.saved_name END,
+	          push_name=CASE WHEN excluded.push_name IS NOT NULL AND excluded.push_name != '' THEN excluded.push_name ELSE contacts.push_name END,
+	          avatar_path=CASE WHEN excluded.avatar_path IS NOT NULL AND excluded.avatar_path != '' THEN excluded.avatar_path ELSE contacts.avatar_path END,
+	          is_group=COALESCE(excluded.is_group, contacts.is_group),
+	          last_message_at=CASE 
+	              WHEN contacts.last_message_at IS NULL OR excluded.last_message_at > contacts.last_message_at 
+	              THEN excluded.last_message_at 
+	              ELSE contacts.last_message_at 
+	          END`
+
+	stmt, err := tx.Prepare(query)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, c := range contacts {
+		if strings.HasSuffix(c.JID, "@lid") {
+			var pn string
+			_ = tx.QueryRow("SELECT jid FROM contacts WHERE lid = ?", c.JID).Scan(&pn)
+			if pn != "" {
+				c.LID = sql.NullString{String: c.JID, Valid: true}
+				c.JID = pn
+			}
+		}
+		_, err := stmt.Exec(c.JID, c.LID, c.SavedName, c.PushName, c.AvatarPath, c.IsGroup, c.LastMessageAt)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (a *AppDB) MergeLID(pnJID, lidJID string) error {
 	if pnJID == lidJID || pnJID == "" || lidJID == "" {
 		return nil
@@ -106,7 +164,18 @@ func (a *AppDB) MergeLID(pnJID, lidJID string) error {
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec("INSERT INTO contacts (jid, lid) VALUES (?, ?) ON CONFLICT(jid) DO UPDATE SET lid = excluded.lid", pnJID, lidJID)
+	if err := a.MergeLIDTx(tx, pnJID, lidJID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (a *AppDB) MergeLIDTx(tx *sql.Tx, pnJID, lidJID string) error {
+	if pnJID == lidJID || pnJID == "" || lidJID == "" {
+		return nil
+	}
+
+	_, err := tx.Exec("INSERT INTO contacts (jid, lid) VALUES (?, ?) ON CONFLICT(jid) DO UPDATE SET lid = excluded.lid", pnJID, lidJID)
 	if err != nil {
 		return err
 	}
@@ -152,7 +221,7 @@ func (a *AppDB) MergeLID(pnJID, lidJID string) error {
 		}
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 func (a *AppDB) UpdateContactTimestamp(jid string, timestamp time.Time) error {
