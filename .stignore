@@ -1,12 +1,14 @@
 // Syncthing Ignore Patterns for whats-gtk
-// SQLite uses DELETE journal mode (single-file app.db) so transactions commit directly to app.db.
-// Temporary rollback journals and lock files during transactions are ignored.
-*.db-journal
+
+// Ignore SQLite temporary WAL and SHM files to prevent live-sync locking conflicts
 *.db-wal
 *.db-shm
+*.db-journal
+*.db.bak
+*.sync-conflict-*
 
 // Ignore compiled binary executables
-whats-gtk
+(?d)whats-gtk
 
 // Ignore git index lock files
 .git/index.lock

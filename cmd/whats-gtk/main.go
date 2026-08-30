@@ -5,8 +5,6 @@ import (
 	"log"
 	_ "embed"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/bridge"
@@ -33,23 +31,6 @@ func main() {
 	var initialized bool
 	var mainApp *ui.App
 	var mainBridge *bridge.Bridge
-	var currentAppDB *database.AppDB
-
-	shutdown := func() {
-		if currentAppDB != nil {
-			log.Println("Closing app database cleanly...")
-			_ = currentAppDB.Close()
-			currentAppDB = nil
-		}
-	}
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		shutdown()
-		os.Exit(0)
-	}()
 
 	initApp := func() {
 		if initialized {
@@ -71,13 +52,13 @@ func main() {
 			log.Printf("Warning: error resolving store.db conflicts: %v", err)
 		}
 		database.CleanStaleConflictFiles(paths.DataDir())
+		database.CleanStaleConflictFiles(".")
 
 		// Initialize AppDB
 		appDB, err := database.InitDB(appDBPath)
 		if err != nil {
 			log.Fatal("Failed to init app db:", err)
 		}
-		currentAppDB = appDB
 
 		// Initialize Backend
 		container, err := backend.InitStore(ctx, storeDBPath)
@@ -105,7 +86,7 @@ func main() {
 		mainBridge = br
 		br.Start(ctx)
 
-		setupTray(app, application, shutdown)
+		setupTray(app, application)
 
 		app.Show()
 	}
@@ -137,12 +118,10 @@ func main() {
 		handleArgs()
 	})
 
-	code := application.Run(os.Args)
-	shutdown()
-	os.Exit(code)
+	os.Exit(application.Run(os.Args))
 }
 
-func setupTray(app *ui.App, application *adw.Application, shutdown func()) {
+func setupTray(app *ui.App, application *adw.Application) {
 	go func() {
 		systray.Run(func() {
 			systray.SetIcon(iconData)
@@ -170,7 +149,6 @@ func setupTray(app *ui.App, application *adw.Application, shutdown func()) {
 					case <-mToggle.ClickedCh:
 						toggleFunc()
 					case <-mQuit.ClickedCh:
-						shutdown()
 						glib.IdleAdd(func() {
 							application.Release()
 							application.Quit()
