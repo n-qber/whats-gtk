@@ -52,7 +52,19 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 	mapper := NewViewMapper(contacts, db, b.Client.Store.ID.ToNonAD().String())
 	chat := NewChatController(b, a, db, msgs, contacts, media, ctx, bus, mapper)
 	evts := NewEventHandler(b, a, db, msgs, chat, contacts, media, pipeline, ctx)
-	notifier := notifications.NewNotifier()
+	notifier := notifications.NewNotifier(func(chatJID string) {
+		glib.IdleAdd(func() {
+			if a != nil && a.Window != nil {
+				a.Window.Present()
+			}
+			if a != nil && a.Sidebar != nil {
+				a.Sidebar.SelectChat(chatJID)
+			}
+			if chat != nil {
+				chat.HandleChatSelected(chatJID)
+			}
+		})
+	})
 
 	// Wire back-references (these can't be set in constructors due to circular init)
 	msgs.GetSelectedJID = chat.SelectedJID
@@ -139,40 +151,75 @@ func (br *Bridge) registerDefaultHooks() {
 			return nil
 		}
 
-		senderName := msg.Info.PushName
-		if senderName == "" {
-			if c, err := br.DB.GetContact(chatJID); err == nil {
-				if c.SavedName.Valid && c.SavedName.String != "" {
-					senderName = c.SavedName.String
-				} else if c.PushName.Valid && c.PushName.String != "" {
-					senderName = c.PushName.String
+		senderJID := br.Messages.ResolveJID(msg.Info.Sender).ToNonAD().String()
+		isGroup := msg.Info.Chat.Server == types.GroupServer
+
+		title := ""
+		bodyPrefix := ""
+
+		if isGroup {
+			groupName := br.Contacts.GetCleanName(chatJID)
+			if groupName == "" || groupName == chatJID {
+				if c, err := br.DB.GetContact(chatJID); err == nil && c.DisplayName() != "" {
+					groupName = c.DisplayName()
 				}
 			}
-		}
-		if senderName == "" {
-			senderName = chatJID
-		}
-
-		body := ""
-		if msg.Message.GetConversation() != "" {
-			body = msg.Message.GetConversation()
-		} else if ext := msg.Message.GetExtendedTextMessage(); ext != nil {
-			body = ext.GetText()
-		} else if msg.Message.GetImageMessage() != nil {
-			body = "📷 Photo"
-		} else if msg.Message.GetVideoMessage() != nil {
-			body = "🎥 Video"
-		} else if msg.Message.GetAudioMessage() != nil {
-			body = "🎵 Voice message"
-		} else if msg.Message.GetDocumentMessage() != nil {
-			body = "📄 Document"
-		} else if msg.Message.GetStickerMessage() != nil {
-			body = "🏷️ Sticker"
+			if groupName == "" {
+				groupName = "Grupo"
+			}
+			senderName := br.Contacts.GetCleanName(senderJID)
+			if senderName == "" || senderName == senderJID {
+				if msg.Info.PushName != "" {
+					senderName = msg.Info.PushName
+				}
+			}
+			title = groupName
+			bodyPrefix = senderName + ": "
 		} else {
-			body = "New message"
+			contactName := br.Contacts.GetCleanName(chatJID)
+			if contactName == "" || contactName == chatJID {
+				if msg.Info.PushName != "" {
+					contactName = msg.Info.PushName
+				}
+			}
+			title = contactName
 		}
 
-		_ = br.Notifier.Notify(senderName, body, "dialog-information")
+		msgText := ""
+		if msg.Message.GetConversation() != "" {
+			msgText = msg.Message.GetConversation()
+		} else if ext := msg.Message.GetExtendedTextMessage(); ext != nil {
+			msgText = ext.GetText()
+		} else if img := msg.Message.GetImageMessage(); img != nil {
+			if img.GetCaption() != "" {
+				msgText = "📷 " + img.GetCaption()
+			} else {
+				msgText = "📷 Foto"
+			}
+		} else if vid := msg.Message.GetVideoMessage(); vid != nil {
+			if vid.GetCaption() != "" {
+				msgText = "🎥 " + vid.GetCaption()
+			} else {
+				msgText = "🎥 Vídeo"
+			}
+		} else if msg.Message.GetAudioMessage() != nil {
+			msgText = "🎵 Áudio"
+		} else if doc := msg.Message.GetDocumentMessage(); doc != nil {
+			if doc.GetFileName() != "" {
+				msgText = "📄 " + doc.GetFileName()
+			} else {
+				msgText = "📄 Documento"
+			}
+		} else if msg.Message.GetStickerMessage() != nil {
+			msgText = "🏷️ Figurinha"
+		} else if pm := br.Messages.GetPollCreationMessage(msg.Message); pm != nil {
+			msgText = "📊 Enquete: " + pm.GetName()
+		} else {
+			msgText = "Nova mensagem"
+		}
+
+		body := bodyPrefix + msgText
+		_ = br.Notifier.Notify(chatJID, title, body, "dialog-information")
 		return nil
 	})
 }

@@ -294,6 +294,61 @@ func (cs *ContactService) ResolveSenderName(j string) string {
 	return resolvedName
 }
 
+// GetCleanName resolves a contact or group's display name without HTML formatting, prioritizing SavedName over PushName.
+func (cs *ContactService) GetCleanName(j string) string {
+	if j == "" {
+		return ""
+	}
+
+	cs.nameMutex.RLock()
+	if name, ok := cs.nameCache["clean_"+j]; ok && name != "" {
+		cs.nameMutex.RUnlock()
+		return name
+	}
+	cs.nameMutex.RUnlock()
+
+	var resolvedName string
+	c, err := cs.DB.GetContact(j)
+	if err == nil {
+		if c.SavedName.Valid && c.SavedName.String != "" {
+			resolvedName = c.SavedName.String
+		} else if c.PushName.Valid && c.PushName.String != "" {
+			resolvedName = c.PushName.String
+		}
+	}
+
+	if resolvedName == "" {
+		jidObj, _ := types.ParseJID(j)
+		if cs.Backend != nil && cs.Backend.Client != nil && cs.Backend.Client.Store != nil {
+			if info, err := cs.Backend.Client.Store.Contacts.GetContact(cs.ctx, jidObj); err == nil && info.Found {
+				if info.FullName != "" {
+					resolvedName = info.FullName
+					go cs.DB.SaveContact(database.Contact{JID: j, SavedName: sql.NullString{String: info.FullName, Valid: true}})
+				} else if info.PushName != "" {
+					resolvedName = info.PushName
+					go cs.DB.SaveContact(database.Contact{JID: j, PushName: sql.NullString{String: info.PushName, Valid: true}})
+				}
+			}
+		}
+	}
+
+	if resolvedName == "" {
+		parts := strings.Split(j, "@")
+		n := parts[0]
+		if !strings.HasSuffix(j, "@lid") && !strings.HasSuffix(j, "@g.us") {
+			resolvedName = cs.formatPhoneNumber(n)
+		} else {
+			resolvedName = n
+		}
+	}
+
+	cs.nameMutex.Lock()
+	cs.nameCache["clean_"+j] = resolvedName
+	cs.nameMutex.Unlock()
+
+	return resolvedName
+}
+
 func (cs *ContactService) ResolveLIDMapping(lid string) {
 	jidObj, _ := types.ParseJID(lid)
 	if cs.Backend != nil && cs.Backend.Client != nil && cs.Backend.Client.Store != nil && cs.Backend.Client.Store.LIDs != nil {
