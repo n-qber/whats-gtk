@@ -11,12 +11,12 @@ import (
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/events"
 	"whats-gtk/internal/paths"
+	"whats-gtk/internal/tray"
 	"whats-gtk/internal/ui"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
-	"fyne.io/systray"
 )
 
 //go:embed assets/icon.png
@@ -86,7 +86,7 @@ func main() {
 		mainBridge = br
 		br.Start(ctx)
 
-		setupTray(app, application)
+		setupTray(ctx, app, application)
 
 		app.Show()
 	}
@@ -121,44 +121,25 @@ func main() {
 	os.Exit(application.Run(os.Args))
 }
 
-func setupTray(app *ui.App, application *adw.Application) {
-	go func() {
-		systray.Run(func() {
-			systray.SetIcon(iconData)
-			systray.SetTitle("WhatsApp")
-			systray.SetTooltip("WhatsApp GTK")
-
-			toggleFunc := func() {
-				glib.IdleAdd(func() {
-					if app.Window.IsVisible() {
-						app.Window.Hide()
-					} else {
-						app.Window.Present()
-					}
-				})
+func setupTray(ctx context.Context, app *ui.App, application *adw.Application) {
+	toggleFunc := func() {
+		glib.IdleAdd(func() {
+			if app.Window.IsVisible() {
+				app.Window.Hide()
+			} else {
+				app.Window.Present()
 			}
+		})
+	}
 
-			systray.SetOnTapped(toggleFunc)
+	quitFunc := func() {
+		glib.IdleAdd(func() {
+			application.Release()
+			application.Quit()
+		})
+		os.Exit(0)
+	}
 
-			mToggle := systray.AddMenuItem("Show/Hide", "Toggle WhatsApp GTK Window")
-			mQuit := systray.AddMenuItem("Quit", "Quit WhatsApp GTK")
-
-			go func() {
-				for {
-					select {
-					case <-mToggle.ClickedCh:
-						toggleFunc()
-					case <-mQuit.ClickedCh:
-						glib.IdleAdd(func() {
-							application.Release()
-							application.Quit()
-						})
-						systray.Quit()
-						os.Exit(0)
-					}
-				}
-			}()
-		}, func() {})
-	}()
+	tray.Setup(ctx, iconData, toggleFunc, quitFunc)
 }
 
