@@ -74,16 +74,6 @@ func watchStatusNotifier(ctx context.Context) {
 			}
 		}
 
-		// Initial registration retry loop (wait for systray to export objects)
-		go func(c *dbus.Conn) {
-			for i := 0; i < 5; i++ {
-				time.Sleep(time.Duration(200*(i+1)) * time.Millisecond)
-				if err := registerStatusNotifierItem(c); err == nil {
-					break
-				}
-			}
-		}(conn)
-
 		// Subscribe to signals:
 		// 1. StatusNotifierHostRegistered: emitted when a host (Waybar, KDE panel, etc.) starts/refreshes.
 		_ = conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0,
