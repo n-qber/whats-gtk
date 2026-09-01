@@ -61,6 +61,10 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 	infoFlap.SetContent(cv.Box)
 	infoFlap.SetFlap(iv.Box)
 	infoFlap.SetFlapPosition(gtk.PackEnd)
+	infoFlap.SetFoldPolicy(adw.FlapFoldPolicyAlways)
+	infoFlap.SetTransitionType(adw.FlapTransitionTypeOver)
+	infoFlap.SetSwipeToOpen(false)
+	infoFlap.SetSwipeToClose(true)
 	infoFlap.SetRevealFlap(false)
 
 	cv.OnHeaderClick = func() {
@@ -288,8 +292,8 @@ func (a *App) setupSubscriptions() {
 						var texImg, texThumb *gdk.Texture
 						texThumb = bytesToTexture(m.Thumbnail)
 						
-						if m.Content != "" && m.Type != "sticker" {
-							pixbuf, _ := gdkpixbuf.NewPixbufFromFileAtSize(m.Content, 400, 400)
+						if m.DocumentPath != "" && m.Type != "sticker" {
+							pixbuf, _ := gdkpixbuf.NewPixbufFromFileAtSize(m.DocumentPath, 400, 400)
 							if pixbuf != nil {
 								texImg = gdk.NewTextureForPixbuf(pixbuf)
 							}
@@ -667,7 +671,7 @@ func (a *App) applyZoom() {
 	a.ZoomCSSProvider.LoadFromData(css)
 }
 
-func (a *App) isSameJID(j1, j2 string) bool {
+func (a *App) IsSameJID(j1, j2 string) bool {
 	if j1 == j2 {
 		return true
 	}
@@ -695,11 +699,11 @@ func (a *App) GetChatViewForJID(jid string) *chat.ChatView {
 		return a.ChatView
 	}
 	for dJID, cv := range a.DetachedChats {
-		if a.isSameJID(dJID, jid) {
+		if a.IsSameJID(dJID, jid) {
 			return cv
 		}
 	}
-	if a.isSameJID(a.ActiveMainJID, jid) {
+	if a.IsSameJID(a.ActiveMainJID, jid) {
 		return a.ChatView
 	}
 	return nil

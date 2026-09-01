@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/core"
 	"whats-gtk/internal/database"
@@ -104,6 +105,16 @@ func (br *Bridge) Start(ctx context.Context) {
 		br.RefreshProfilesUI()
 		br.Chat.RefreshSidebarUI()
 	}()
+}
+
+// Shutdown gracefully finishes pending database sync operations and disconnects.
+func (br *Bridge) Shutdown() {
+	if br.Events != nil {
+		br.Events.WaitSync(3 * time.Second)
+	}
+	if br.Backend != nil {
+		br.Backend.Disconnect()
+	}
 }
 
 func (br *Bridge) RefreshProfilesUI() {
@@ -295,12 +306,27 @@ func (br *Bridge) setupUIHandlers() {
 	// Ctrl+1 to Ctrl+9 to open chats by index
 	for i := 1; i <= 9; i++ {
 		idx := i - 1
-		key := fmt.Sprintf("Control+%d", i)
-		br.Input.Register(key, func() {
+		action := func() {
 			glib.IdleAdd(func() {
 				br.App.Sidebar.SelectIndex(idx)
 			})
-		})
+		}
+		br.Input.Register(fmt.Sprintf("Control+%d", i), action)
+		br.Input.Register(fmt.Sprintf("Control+KP_%d", i), action)
+	}
+
+	// Alt+1 to Alt+9 to switch active profile by index
+	for i := 1; i <= 9; i++ {
+		idx := i - 1
+		action := func() {
+			glib.IdleAdd(func() {
+				if br.App.Sidebar != nil {
+					br.App.Sidebar.SelectProfileIndex(idx)
+				}
+			})
+		}
+		br.Input.Register(fmt.Sprintf("Alt+%d", i), action)
+		br.Input.Register(fmt.Sprintf("Alt+KP_%d", i), action)
 	}
 
 	closeChat := func() {

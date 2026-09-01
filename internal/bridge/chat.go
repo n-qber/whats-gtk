@@ -81,13 +81,60 @@ func (cc *ChatController) setupSubscriptions() {
 	})
 }
 
+// GetChatJIDs returns all alias JIDs for a given chat (clean JID, resolved canonical JID, contact JID, contact LID).
+func (cc *ChatController) GetChatJIDs(jidStr string) []string {
+	if jidStr == "" {
+		return nil
+	}
+	jidsMap := map[string]bool{jidStr: true}
+	if parsed, err := types.ParseJID(jidStr); err == nil {
+		clean := parsed.ToNonAD().String()
+		jidsMap[clean] = true
+		if cc.Messages != nil {
+			resolved := cc.Messages.ResolveJID(parsed).ToNonAD().String()
+			if resolved != "" {
+				jidsMap[resolved] = true
+			}
+		}
+	}
+	if contact, err := cc.DB.GetContact(jidStr); err == nil && contact != nil {
+		if contact.JID != "" {
+			jidsMap[contact.JID] = true
+		}
+		if contact.LID.Valid && contact.LID.String != "" {
+			jidsMap[contact.LID.String] = true
+		}
+	}
+	if strings.HasSuffix(jidStr, "@lid") {
+		if c, err := cc.DB.GetContactByLID(jidStr); err == nil && c != nil {
+			if c.JID != "" {
+				jidsMap[c.JID] = true
+			}
+		}
+	}
+	var res []string
+	for j := range jidsMap {
+		if j != "" {
+			res = append(res, j)
+		}
+	}
+	return res
+}
+
 func (cc *ChatController) HandleLiveMessage(msg *meowEvents.Message, isSyncing bool) {
 	resolvedChat := cc.Messages.ResolveJID(msg.Info.Chat)
 	selectedJID := cc.selectedJID
-	if !isSyncing || (selectedJID != nil && resolvedChat.ToNonAD().String() == selectedJID.ToNonAD().String()) {
-		jidStr := resolvedChat.ToNonAD().String()
+	jidStr := resolvedChat.ToNonAD().String()
+	rawChatJID := msg.Info.Chat.ToNonAD().String()
 
-		if selectedJID != nil && jidStr == selectedJID.ToNonAD().String() {
+	isCurrentChat := false
+	if selectedJID != nil {
+		selClean := selectedJID.ToNonAD().String()
+		isCurrentChat = (jidStr == selClean || rawChatJID == selClean || (cc.App != nil && (cc.App.IsSameJID(selClean, jidStr) || cc.App.IsSameJID(selClean, rawChatJID))))
+	}
+
+	if !isSyncing || isCurrentChat {
+		if isCurrentChat {
 			if cc.App.Window.IsActive() {
 				go cc.Backend.MarkRead(cc.ctx, msg.Info.Chat, []string{msg.Info.ID}, msg.Info.Sender, time.Now())
 			}
@@ -183,8 +230,6 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 		cc.App.ChatView.SetHeader(jid.String(), cc.Contacts.GetAvatar(jid.String()))
 		cc.App.InfoView.SetInfo(jid.String(), jid.String(), cc.Contacts.GetAvatar(jid.String()))
 	}
-	cc.App.InfoFlap.SetRevealFlap(false)
-
 	cc.DB.ClearUnreadCount(jid.String())
 	if contact, err := cc.DB.GetContact(jid.String()); err == nil {
 		cc.App.Sidebar.UpdateChatRow(jid.String(), contact.DisplayName(), contact.IsGroup.Valid && contact.IsGroup.Bool, 0, contact.IsPinned)
@@ -207,6 +252,9 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 	}
 
 	glib.IdleAdd(func() {
+		if cc.App.InfoFlap != nil {
+			cc.App.InfoFlap.SetRevealFlap(false)
+		}
 		if cc.App.ChatView != nil {
 			cc.App.ChatView.FocusEntry()
 		}
@@ -430,12 +478,7 @@ func (c *ChatController) HandleDetach() {
 
 func (cc *ChatController) RefreshMessages(jid types.JID) {
 	go func() {
-		jids := []string{jid.ToNonAD().String()}
-		if contact, err := cc.DB.GetContact(jid.ToNonAD().String()); err == nil {
-			if contact.LID.Valid && contact.LID.String != "" {
-				jids = append(jids, contact.LID.String)
-			}
-		}
+		jids := cc.GetChatJIDs(jid.ToNonAD().String())
 
 		msgs, err := cc.DB.GetMessages(jids, 50)
 		if err != nil {

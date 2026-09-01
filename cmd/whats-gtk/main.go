@@ -86,7 +86,7 @@ func main() {
 		mainBridge = br
 		br.Start(ctx)
 
-		setupTray(ctx, app, application)
+		setupTray(ctx, app, application, func() *bridge.Bridge { return mainBridge })
 
 		app.Show()
 	}
@@ -121,7 +121,7 @@ func main() {
 	os.Exit(application.Run(os.Args))
 }
 
-func setupTray(ctx context.Context, app *ui.App, application *adw.Application) {
+func setupTray(ctx context.Context, app *ui.App, application *adw.Application, getBridge func() *bridge.Bridge) {
 	toggleFunc := func() {
 		glib.IdleAdd(func() {
 			if app.Window.IsVisible() {
@@ -133,6 +133,9 @@ func setupTray(ctx context.Context, app *ui.App, application *adw.Application) {
 	}
 
 	quitFunc := func() {
+		if br := getBridge(); br != nil {
+			br.Shutdown()
+		}
 		glib.IdleAdd(func() {
 			application.Release()
 			application.Quit()

@@ -33,9 +33,19 @@
 
 | Shortcut | Action |
 | :--- | :--- |
+| <kbd>Alt</kbd> + <kbd>1</kbd> .. <kbd>9</kbd> | Switch **Active Profile** (1: All Chats, 2–9: Custom Profiles) |
+| <kbd>Ctrl</kbd> + <kbd>1</kbd> .. <kbd>9</kbd> | Switch **Active Chat** (1–9 in sidebar list) |
+| <kbd>Ctrl</kbd> + <kbd>0</kbd> | Close active chat / return to home screen |
+| <kbd>Ctrl</kbd> + <kbd>Tab</kbd> / <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Tab</kbd> | Next / previous chat |
+| <kbd>Ctrl</kbd> + <kbd>F</kbd> | Toggle in-chat message search |
+| <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd> | Global message search dialog |
+| <kbd>Ctrl</kbd> + <kbd>Space</kbd> | Focus **Search Entry** in sidebar |
+| <kbd>Ctrl</kbd> + <kbd>Up</kbd> / <kbd>Down</kbd> | Select message up / down (for reply) |
+| <kbd>Ctrl</kbd> + <kbd>Left</kbd> / <kbd>Right</kbd> | Jump to previous / next sender message block |
+| <kbd>Return</kbd> | Confirm reply to selected message |
+| <kbd>Esc</kbd> | Cancel reply / clear search / clear selection |
 | <kbd>Ctrl</kbd> + <kbd>+</kbd> or <kbd>=</kbd> | **Zoom In** UI |
 | <kbd>Ctrl</kbd> + <kbd>-</kbd> | **Zoom Out** UI |
-| <kbd>Ctrl</kbd> + <kbd>Space</kbd> | Focus **Search Entry** |
 | <kbd>Close (X)</kbd> | Hide window to **System Tray** |
 
 ---

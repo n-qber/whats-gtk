@@ -17,6 +17,9 @@ func (a *AppDB) SaveReaction(r Reaction) error {
 }
 
 func (a *AppDB) SaveReactionTx(tx *sql.Tx, r Reaction) error {
+	if tx == nil {
+		return a.saveReaction(a.db, r)
+	}
 	return a.saveReaction(tx, r)
 }
 

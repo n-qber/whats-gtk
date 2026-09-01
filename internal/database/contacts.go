@@ -34,6 +34,9 @@ func (a *AppDB) SaveSyncData(jid string, unreadCount int, isPinned bool, isArchi
 }
 
 func (a *AppDB) SaveSyncDataTx(tx *sql.Tx, jid string, unreadCount int, isPinned bool, isArchived bool, name string, pushName string, timestamp uint64) error {
+	if tx == nil {
+		return a.saveSyncData(a.db, jid, unreadCount, isPinned, isArchived, name, pushName, timestamp)
+	}
 	return a.saveSyncData(tx, jid, unreadCount, isPinned, isArchived, name, pushName, timestamp)
 }
 
@@ -65,6 +68,9 @@ func (a *AppDB) SaveContact(c Contact) error {
 }
 
 func (a *AppDB) SaveContactTx(tx *sql.Tx, c Contact) error {
+	if tx == nil {
+		return a.saveContact(a.db, c)
+	}
 	return a.saveContact(tx, c)
 }
 
@@ -229,6 +235,9 @@ func (a *AppDB) UpdateContactTimestamp(jid string, timestamp time.Time) error {
 }
 
 func (a *AppDB) UpdateContactTimestampTx(tx *sql.Tx, jid string, timestamp time.Time) error {
+	if tx == nil {
+		return a.updateContactTimestamp(a.db, jid, timestamp)
+	}
 	return a.updateContactTimestamp(tx, jid, timestamp)
 }
 

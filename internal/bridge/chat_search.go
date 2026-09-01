@@ -14,12 +14,7 @@ import (
 // RefreshMessagesAround loads messages centered around targetID.
 func (cc *ChatController) RefreshMessagesAround(jid types.JID, targetID string) {
 	go func() {
-		jids := []string{jid.ToNonAD().String()}
-		if contact, err := cc.DB.GetContact(jid.ToNonAD().String()); err == nil {
-			if contact.LID.Valid && contact.LID.String != "" {
-				jids = append(jids, contact.LID.String)
-			}
-		}
+		jids := cc.GetChatJIDs(jid.ToNonAD().String())
 
 		msgs, err := cc.DB.GetMessagesAround(jids, targetID, 50)
 		if err != nil || len(msgs) == 0 {
@@ -131,12 +126,7 @@ func (cc *ChatController) HandleSearch(t string) {
 
 func (cc *ChatController) RenderMessageSearch(jidStr string, query string) {
 	go func() {
-		jids := []string{jidStr}
-		if contact, err := cc.DB.GetContact(jidStr); err == nil {
-			if contact.LID.Valid && contact.LID.String != "" {
-				jids = append(jids, contact.LID.String)
-			}
-		}
+		jids := cc.GetChatJIDs(jidStr)
 
 		msgs, err := cc.DB.SearchMessagesInChat(jids, query, 100)
 		if err != nil {
@@ -205,12 +195,7 @@ func (cc *ChatController) LoadOlderMessages(jidStr string, targetID string) {
 			return
 		}
 
-		jids := []string{jidStr}
-		if contact, err := cc.DB.GetContact(jidStr); err == nil {
-			if contact.LID.Valid && contact.LID.String != "" {
-				jids = append(jids, contact.LID.String)
-			}
-		}
+		jids := cc.GetChatJIDs(jidStr)
 
 		var msgs []database.Message
 		var err error

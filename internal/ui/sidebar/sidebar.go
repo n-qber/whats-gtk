@@ -363,3 +363,13 @@ func (s *Sidebar) SetProfiles(profiles []database.Profile, activeID int64) {
 	s.ProfileCombo.SetActive(activeIdx)
 }
 
+func (s *Sidebar) SelectProfileIndex(index int) {
+	if index >= 0 && index < len(s.profileItems) {
+		if s.ProfileCombo.Active() == index {
+			s.ListBox.GrabFocus()
+			return
+		}
+		s.ProfileCombo.SetActive(index)
+	}
+}
+

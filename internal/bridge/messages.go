@@ -76,26 +76,65 @@ func (ms *MessageService) ResolveJIDString(jStr string) string {
 	return ms.ResolveJID(parsed).String()
 }
 
-// UnwrapMessage removes ViewOnce wrappers and returns the underlying message and a boolean indicating if it was ViewOnce.
+// UnwrapMessage recursively removes wrapper messages (ViewOnce, Ephemeral, DeviceSent, etc.)
+// and returns the underlying message and whether it was marked ViewOnce.
 func (ms *MessageService) UnwrapMessage(msg *waProto.Message) (*waProto.Message, bool) {
 	if msg == nil {
 		return nil, false
 	}
-	if vo := msg.GetViewOnceMessage(); vo != nil && vo.GetMessage() != nil {
-		return vo.GetMessage(), true
+	isViewOnce := false
+	current := msg
+	for {
+		if vo := current.GetViewOnceMessage(); vo != nil && vo.GetMessage() != nil {
+			isViewOnce = true
+			current = vo.GetMessage()
+			continue
+		}
+		if vo2 := current.GetViewOnceMessageV2(); vo2 != nil && vo2.GetMessage() != nil {
+			isViewOnce = true
+			current = vo2.GetMessage()
+			continue
+		}
+		if vo2e := current.GetViewOnceMessageV2Extension(); vo2e != nil && vo2e.GetMessage() != nil {
+			isViewOnce = true
+			current = vo2e.GetMessage()
+			continue
+		}
+		if eph := current.GetEphemeralMessage(); eph != nil && eph.GetMessage() != nil {
+			current = eph.GetMessage()
+			continue
+		}
+		if ds := current.GetDeviceSentMessage(); ds != nil && ds.GetMessage() != nil {
+			current = ds.GetMessage()
+			continue
+		}
+		if docCap := current.GetDocumentWithCaptionMessage(); docCap != nil && docCap.GetMessage() != nil {
+			current = docCap.GetMessage()
+			continue
+		}
+		if bot := current.GetBotInvokeMessage(); bot != nil && bot.GetMessage() != nil {
+			current = bot.GetMessage()
+			continue
+		}
+		if gm := current.GetGroupMentionedMessage(); gm != nil && gm.GetMessage() != nil {
+			current = gm.GetMessage()
+			continue
+		}
+		if ed := current.GetEditedMessage(); ed != nil && ed.GetMessage() != nil {
+			current = ed.GetMessage()
+			continue
+		}
+		break
 	}
-	if vo2 := msg.GetViewOnceMessageV2(); vo2 != nil && vo2.GetMessage() != nil {
-		return vo2.GetMessage(), true
-	}
-	if vo2e := msg.GetViewOnceMessageV2Extension(); vo2e != nil && vo2e.GetMessage() != nil {
-		return vo2e.GetMessage(), true
-	}
-	return msg, false
+	return current, isViewOnce
 }
 
 // ExtractContentFromProto extracts the text content from a waProto.Message
 func (ms *MessageService) ExtractContentFromProto(protoMsg *waProto.Message) string {
 	protoMsg, _ = ms.UnwrapMessage(protoMsg)
+	if protoMsg == nil {
+		return ""
+	}
 	if protoMsg.GetConversation() != "" {
 		return protoMsg.GetConversation()
 	}
@@ -108,6 +147,9 @@ func (ms *MessageService) ExtractContentFromProto(protoMsg *waProto.Message) str
 	if protoMsg.GetVideoMessage().GetCaption() != "" {
 		return protoMsg.GetVideoMessage().GetCaption()
 	}
+	if protoMsg.GetPtvMessage().GetCaption() != "" {
+		return protoMsg.GetPtvMessage().GetCaption()
+	}
 	if protoMsg.GetDocumentMessage().GetCaption() != "" {
 		return protoMsg.GetDocumentMessage().GetCaption()
 	}
@@ -116,7 +158,10 @@ func (ms *MessageService) ExtractContentFromProto(protoMsg *waProto.Message) str
 		return "[Audio Message]"
 	}
 	if protoMsg.GetDocumentMessage() != nil {
-		return fmt.Sprintf("[Document: %s]", protoMsg.GetDocumentMessage().GetFileName())
+		if protoMsg.GetDocumentMessage().GetFileName() != "" {
+			return fmt.Sprintf("[Document: %s]", protoMsg.GetDocumentMessage().GetFileName())
+		}
+		return "[Document]"
 	}
 	if pm := ms.GetPollCreationMessage(protoMsg); pm != nil {
 		return fmt.Sprintf("[Poll: %s]", pm.GetName())
@@ -124,8 +169,53 @@ func (ms *MessageService) ExtractContentFromProto(protoMsg *waProto.Message) str
 	if protoMsg.GetContactMessage() != nil {
 		return fmt.Sprintf("[Contact: %s]", protoMsg.GetContactMessage().GetDisplayName())
 	}
+	if protoMsg.GetContactsArrayMessage() != nil {
+		return fmt.Sprintf("[Contacts: %s]", protoMsg.GetContactsArrayMessage().GetDisplayName())
+	}
 	if protoMsg.GetLocationMessage() != nil {
 		return "[Location]"
+	}
+	if protoMsg.GetLiveLocationMessage() != nil {
+		return "[Live Location]"
+	}
+	if im := protoMsg.GetInteractiveMessage(); im != nil {
+		if im.GetBody() != nil && im.GetBody().GetText() != "" {
+			return im.GetBody().GetText()
+		}
+		return "[Interactive Message]"
+	}
+	if tm := protoMsg.GetTemplateMessage(); tm != nil {
+		if tm.GetHydratedTemplate() != nil && tm.GetHydratedTemplate().GetHydratedContentText() != "" {
+			return tm.GetHydratedTemplate().GetHydratedContentText()
+		}
+		if tm.GetHydratedFourRowTemplate() != nil && tm.GetHydratedFourRowTemplate().GetHydratedContentText() != "" {
+			return tm.GetHydratedFourRowTemplate().GetHydratedContentText()
+		}
+		return "[Template Message]"
+	}
+	if hsm := protoMsg.GetHighlyStructuredMessage(); hsm != nil {
+		if hsm.GetHydratedHsm() != nil && hsm.GetHydratedHsm().GetHydratedTemplate() != nil {
+			return hsm.GetHydratedHsm().GetHydratedTemplate().GetHydratedContentText()
+		}
+		return "[Template Message]"
+	}
+	if bm := protoMsg.GetButtonsMessage(); bm != nil {
+		if bm.GetContentText() != "" {
+			return bm.GetContentText()
+		}
+		return "[Buttons Message]"
+	}
+	if lm := protoMsg.GetListMessage(); lm != nil {
+		if lm.GetDescription() != "" {
+			return lm.GetDescription()
+		}
+		return "[List Message]"
+	}
+	if gi := protoMsg.GetGroupInviteMessage(); gi != nil {
+		return fmt.Sprintf("[Group Invite: %s]", gi.GetGroupName())
+	}
+	if ev := protoMsg.GetEventMessage(); ev != nil {
+		return fmt.Sprintf("[Event: %s]", ev.GetName())
 	}
 
 	return ""
@@ -161,7 +251,13 @@ func (ms *MessageService) ExtractContent(msg *events.Message) string {
 
 // ExtractContextInfo extracts the ContextInfo (quoted message info) from various message types.
 func (ms *MessageService) ExtractContextInfo(msg *events.Message) *waProto.ContextInfo {
+	if msg == nil || msg.Message == nil {
+		return nil
+	}
 	protoMsg, _ := ms.UnwrapMessage(msg.Message)
+	if protoMsg == nil {
+		return nil
+	}
 	if etm := protoMsg.GetExtendedTextMessage(); etm != nil {
 		return etm.GetContextInfo()
 	}
@@ -171,6 +267,9 @@ func (ms *MessageService) ExtractContextInfo(msg *events.Message) *waProto.Conte
 	if vid := protoMsg.GetVideoMessage(); vid != nil {
 		return vid.GetContextInfo()
 	}
+	if ptv := protoMsg.GetPtvMessage(); ptv != nil {
+		return ptv.GetContextInfo()
+	}
 	if aud := protoMsg.GetAudioMessage(); aud != nil {
 		return aud.GetContextInfo()
 	}
@@ -179,6 +278,48 @@ func (ms *MessageService) ExtractContextInfo(msg *events.Message) *waProto.Conte
 	}
 	if stkr := protoMsg.GetStickerMessage(); stkr != nil {
 		return stkr.GetContextInfo()
+	}
+	if contact := protoMsg.GetContactMessage(); contact != nil {
+		return contact.GetContextInfo()
+	}
+	if loc := protoMsg.GetLocationMessage(); loc != nil {
+		return loc.GetContextInfo()
+	}
+	if liveLoc := protoMsg.GetLiveLocationMessage(); liveLoc != nil {
+		return liveLoc.GetContextInfo()
+	}
+	if bm := protoMsg.GetButtonsMessage(); bm != nil {
+		return bm.GetContextInfo()
+	}
+	if brm := protoMsg.GetButtonsResponseMessage(); brm != nil {
+		return brm.GetContextInfo()
+	}
+	if lm := protoMsg.GetListMessage(); lm != nil {
+		return lm.GetContextInfo()
+	}
+	if lrm := protoMsg.GetListResponseMessage(); lrm != nil {
+		return lrm.GetContextInfo()
+	}
+	if tm := protoMsg.GetTemplateMessage(); tm != nil {
+		return tm.GetContextInfo()
+	}
+	if tbrm := protoMsg.GetTemplateButtonReplyMessage(); tbrm != nil {
+		return tbrm.GetContextInfo()
+	}
+	if im := protoMsg.GetInteractiveMessage(); im != nil {
+		return im.GetContextInfo()
+	}
+	if irm := protoMsg.GetInteractiveResponseMessage(); irm != nil {
+		return irm.GetContextInfo()
+	}
+	if pm := protoMsg.GetPollCreationMessage(); pm != nil {
+		return pm.GetContextInfo()
+	}
+	if pm := protoMsg.GetPollCreationMessageV2(); pm != nil {
+		return pm.GetContextInfo()
+	}
+	if pm := protoMsg.GetPollCreationMessageV3(); pm != nil {
+		return pm.GetContextInfo()
 	}
 	return nil
 }
@@ -192,6 +333,9 @@ func (ms *MessageService) PersistMessage(msg *events.Message) {
 // PersistMessageTx extracts message type, content, and media metadata from protobuf
 // and saves it to the database, optionally within an active SQL transaction.
 func (ms *MessageService) PersistMessageTx(tx *sql.Tx, msg *events.Message) {
+	if msg == nil || msg.Message == nil {
+		return
+	}
 	if msg.Message.GetReactionMessage() != nil || 
 	   msg.Message.GetProtocolMessage() != nil ||
 	   msg.Message.GetSenderKeyDistributionMessage() != nil {
@@ -199,6 +343,9 @@ func (ms *MessageService) PersistMessageTx(tx *sql.Tx, msg *events.Message) {
 	}
 
 	protoMsg, isViewOnce := ms.UnwrapMessage(msg.Message)
+	if protoMsg == nil {
+		return
+	}
 
 	msgType := "text"; content := ms.ExtractContent(msg); var thumb []byte
 	var metadata database.Message
@@ -206,6 +353,9 @@ func (ms *MessageService) PersistMessageTx(tx *sql.Tx, msg *events.Message) {
 
 	if img := protoMsg.GetImageMessage(); img != nil {
 		msgType = "image"; thumb = img.GetJPEGThumbnail()
+		if img.GetCaption() != "" {
+			metadata.Caption = sql.NullString{String: img.GetCaption(), Valid: true}
+		}
 		metadata.MediaURL = sql.NullString{String: img.GetURL(), Valid: img.GetURL() != ""}
 		metadata.MediaDirectPath = sql.NullString{String: img.GetDirectPath(), Valid: img.GetDirectPath() != ""}
 		metadata.MediaKey = img.GetMediaKey()
@@ -226,8 +376,25 @@ func (ms *MessageService) PersistMessageTx(tx *sql.Tx, msg *events.Message) {
 		metadata.MediaLength = sql.NullInt64{Int64: int64(stkr.GetFileLength()), Valid: true}
 		metadata.MediaWidth = sql.NullInt64{Int64: int64(stkr.GetWidth()), Valid: true}
 		metadata.MediaHeight = sql.NullInt64{Int64: int64(stkr.GetHeight()), Valid: true}
+	} else if ptv := protoMsg.GetPtvMessage(); ptv != nil {
+		msgType = "video"; thumb = ptv.GetJPEGThumbnail()
+		if ptv.GetCaption() != "" {
+			metadata.Caption = sql.NullString{String: ptv.GetCaption(), Valid: true}
+		}
+		metadata.MediaURL = sql.NullString{String: ptv.GetURL(), Valid: ptv.GetURL() != ""}
+		metadata.MediaDirectPath = sql.NullString{String: ptv.GetDirectPath(), Valid: ptv.GetDirectPath() != ""}
+		metadata.MediaKey = ptv.GetMediaKey()
+		metadata.MediaMimetype = sql.NullString{String: ptv.GetMimetype(), Valid: ptv.GetMimetype() != ""}
+		metadata.MediaEncSHA256 = ptv.GetFileEncSHA256()
+		metadata.MediaSHA256 = ptv.GetFileSHA256()
+		metadata.MediaLength = sql.NullInt64{Int64: int64(ptv.GetFileLength()), Valid: true}
+		metadata.MediaWidth = sql.NullInt64{Int64: int64(ptv.GetWidth()), Valid: true}
+		metadata.MediaHeight = sql.NullInt64{Int64: int64(ptv.GetHeight()), Valid: true}
 	} else if vid := protoMsg.GetVideoMessage(); vid != nil {
 		msgType = "video"; thumb = vid.GetJPEGThumbnail()
+		if vid.GetCaption() != "" {
+			metadata.Caption = sql.NullString{String: vid.GetCaption(), Valid: true}
+		}
 		metadata.MediaURL = sql.NullString{String: vid.GetURL(), Valid: vid.GetURL() != ""}
 		metadata.MediaDirectPath = sql.NullString{String: vid.GetDirectPath(), Valid: vid.GetDirectPath() != ""}
 		metadata.MediaKey = vid.GetMediaKey()
@@ -239,6 +406,9 @@ func (ms *MessageService) PersistMessageTx(tx *sql.Tx, msg *events.Message) {
 		metadata.MediaHeight = sql.NullInt64{Int64: int64(vid.GetHeight()), Valid: true}
 	} else if doc := protoMsg.GetDocumentMessage(); doc != nil {
 		msgType = "document"; thumb = doc.GetJPEGThumbnail()
+		if doc.GetCaption() != "" {
+			metadata.Caption = sql.NullString{String: doc.GetCaption(), Valid: true}
+		}
 		metadata.MediaURL = sql.NullString{String: doc.GetURL(), Valid: doc.GetURL() != ""}
 		metadata.MediaDirectPath = sql.NullString{String: doc.GetDirectPath(), Valid: doc.GetDirectPath() != ""}
 		metadata.MediaKey = doc.GetMediaKey()
@@ -258,7 +428,7 @@ func (ms *MessageService) PersistMessageTx(tx *sql.Tx, msg *events.Message) {
 	} else if poll := ms.GetPollCreationMessage(protoMsg); poll != nil {
 		msgType = "poll"
 		for _, opt := range poll.GetOptions() {
-			ms.DB.SavePollOption(msg.Info.ID, opt.GetOptionName())
+			_ = ms.DB.SavePollOptionTx(tx, msg.Info.ID, opt.GetOptionName())
 		}
 	}
 

@@ -164,8 +164,6 @@ func CleanStaleConflictFiles(dir string) {
 		filepath.Join(dir, "whats-gtk.sync-conflict-*"),
 		filepath.Join(dir, "*.sync-conflict-*.db-wal"),
 		filepath.Join(dir, "*.sync-conflict-*.db-shm"),
-		filepath.Join(dir, "*.db-wal"),
-		filepath.Join(dir, "*.db-shm"),
 		filepath.Join(dir, ".git", "*.sync-conflict-*"),
 		filepath.Join(dir, ".git", "logs", "refs", "remotes", "origin", "*.sync-conflict-*"),
 	}

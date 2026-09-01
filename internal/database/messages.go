@@ -55,6 +55,9 @@ func (a *AppDB) SaveMessage(m Message) error {
 }
 
 func (a *AppDB) SaveMessageTx(tx *sql.Tx, m Message) error {
+	if tx == nil {
+		return a.saveMessage(a.db, m)
+	}
 	return a.saveMessage(tx, m)
 }
 
@@ -66,7 +69,12 @@ func (a *AppDB) saveMessage(exec DBExecutor, m Message) error {
 		quoted_msg_id, quoted_msg_content, quoted_msg_sender, is_pinned, is_edited, is_view_once, is_forwarded
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(msg_id) DO UPDATE SET
-		status = excluded.status,
+		chat_jid = CASE WHEN excluded.chat_jid != '' THEN excluded.chat_jid ELSE messages.chat_jid END,
+		sender_jid = CASE WHEN excluded.sender_jid != '' THEN excluded.sender_jid ELSE messages.sender_jid END,
+		type = CASE WHEN excluded.type != '' AND excluded.type IS NOT NULL THEN excluded.type ELSE messages.type END,
+		timestamp = CASE WHEN excluded.timestamp IS NOT NULL AND excluded.timestamp != '' THEN excluded.timestamp ELSE messages.timestamp END,
+		status = CASE WHEN excluded.status != '' THEN excluded.status ELSE messages.status END,
+		is_from_me = excluded.is_from_me,
 		content = CASE WHEN excluded.content != '' THEN excluded.content ELSE messages.content END,
 		caption = CASE WHEN excluded.caption IS NOT NULL AND excluded.caption != '' THEN excluded.caption ELSE messages.caption END,
 		thumbnail = CASE WHEN excluded.thumbnail IS NOT NULL THEN excluded.thumbnail ELSE messages.thumbnail END,
@@ -79,8 +87,13 @@ func (a *AppDB) saveMessage(exec DBExecutor, m Message) error {
 		media_length = CASE WHEN excluded.media_length IS NOT NULL AND excluded.media_length > 0 THEN excluded.media_length ELSE messages.media_length END,
 		media_width = CASE WHEN excluded.media_width IS NOT NULL AND excluded.media_width > 0 THEN excluded.media_width ELSE messages.media_width END,
 		media_height = CASE WHEN excluded.media_height IS NOT NULL AND excluded.media_height > 0 THEN excluded.media_height ELSE messages.media_height END,
+		quoted_msg_id = CASE WHEN excluded.quoted_msg_id IS NOT NULL AND excluded.quoted_msg_id != '' THEN excluded.quoted_msg_id ELSE messages.quoted_msg_id END,
+		quoted_msg_content = CASE WHEN excluded.quoted_msg_content IS NOT NULL AND excluded.quoted_msg_content != '' THEN excluded.quoted_msg_content ELSE messages.quoted_msg_content END,
+		quoted_msg_sender = CASE WHEN excluded.quoted_msg_sender IS NOT NULL AND excluded.quoted_msg_sender != '' THEN excluded.quoted_msg_sender ELSE messages.quoted_msg_sender END,
 		is_pinned = excluded.is_pinned,
-		is_edited = excluded.is_edited`
+		is_edited = excluded.is_edited,
+		is_view_once = excluded.is_view_once,
+		is_forwarded = excluded.is_forwarded`
 
 	_, err := exec.Exec(query,
 		m.ID, m.ChatJID, m.SenderJID, m.Content, m.Caption, m.Type, m.Timestamp, m.Status, m.IsFromMe, m.Thumbnail,

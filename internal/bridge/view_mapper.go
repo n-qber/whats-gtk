@@ -110,7 +110,7 @@ func (vm *ViewMapper) MapMessage(m database.Message, sName, tStr string, av *gdk
 
 	if m.Type == "image" || m.Type == "sticker" || m.Type == "video" {
 		filePath := m.Content
-		if filePath == "" {
+		if filePath == "" || (!strings.HasPrefix(filePath, "/") && !strings.Contains(filePath, "media/")) {
 			ext := ".jpg"
 			if m.Type == "sticker" {
 				ext = ".webp"
@@ -132,14 +132,16 @@ func (vm *ViewMapper) MapMessage(m database.Message, sName, tStr string, av *gdk
 						uiMsg.StickerAnim = anim
 					}
 					uiMsg.Content = filePath
-				} else {
-					uiMsg.Content = filePath
 				}
 			}
 		}
 
 		if m.Type != "sticker" {
-			uiMsg.Content = vm.formatMentions(m.Caption.String) // For caption
+			caption := m.Caption.String
+			if caption == "" && m.Content != "" && !strings.HasPrefix(m.Content, "/") && !strings.Contains(m.Content, ".jpg") && !strings.Contains(m.Content, ".mp4") && !strings.Contains(m.Content, ".webp") {
+				caption = m.Content
+			}
+			uiMsg.Content = vm.formatMentions(caption) // For caption
 		}
 
 	} else if m.Type == "audio" {

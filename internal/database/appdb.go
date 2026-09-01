@@ -19,7 +19,7 @@ type AppDB struct {
 }
 
 func InitDB(path string) (*AppDB, error) {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on&_journal_mode=DELETE&_sync=NORMAL&_busy_timeout=5000&_parse_time=true", path))
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on&_journal_mode=WAL&_sync=NORMAL&_busy_timeout=10000&_parse_time=true", path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open app db: %w", err)
 	}
@@ -223,6 +223,12 @@ func (a *AppDB) createTables() error {
 			WHERE msg_id NOT IN (SELECT msg_id FROM messages_fts);
 		`)
 	}
+
+	// Purge corrupted non-message entries merged from external sync conflicts
+	_, _ = a.db.Exec(`DELETE FROM messages WHERE type IS NULL AND (timestamp IS NULL OR timestamp = '')`)
+
+	// Migrate captions from content for historical media messages
+	_, _ = a.db.Exec(`UPDATE messages SET caption = content WHERE type IN ('image', 'video', 'document') AND (caption IS NULL OR caption = '') AND content NOT LIKE 'media/%' AND content NOT LIKE '/%' AND content NOT LIKE '%.jpg' AND content NOT LIKE '%.mp4' AND content NOT LIKE '%.png' AND content NOT LIKE '%.bin' AND content != ''`)
 
 	return nil
 }

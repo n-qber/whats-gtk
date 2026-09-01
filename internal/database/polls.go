@@ -2,15 +2,27 @@ package database
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 )
 
 func (a *AppDB) SavePollOption(msgID, optionName string) error {
+	return a.savePollOption(a.db, msgID, optionName)
+}
+
+func (a *AppDB) SavePollOptionTx(tx *sql.Tx, msgID, optionName string) error {
+	if tx == nil {
+		return a.savePollOption(a.db, msgID, optionName)
+	}
+	return a.savePollOption(tx, msgID, optionName)
+}
+
+func (a *AppDB) savePollOption(exec DBExecutor, msgID, optionName string) error {
 	hashBytes := sha256.Sum256([]byte(optionName))
 	hash := hex.EncodeToString(hashBytes[:])
 
 	query := `INSERT OR REPLACE INTO poll_options (msg_id, option_hash, option_name) VALUES (?, ?, ?)`
-	_, err := a.db.Exec(query, msgID, hash, optionName)
+	_, err := exec.Exec(query, msgID, hash, optionName)
 	return err
 }
 

@@ -40,6 +40,7 @@ type EventHandler struct {
 
 	eventChan           chan backend.AppEvent
 	syncMutex           sync.RWMutex
+	syncWG              sync.WaitGroup
 	isSyncing           bool
 	isOfflineSyncing    bool
 	offlineSyncTotal    int
@@ -70,6 +71,20 @@ func NewEventHandler(b *backend.Backend, app *ui.App, db *database.AppDB, msgs *
 func (eh *EventHandler) eventLoop() {
 	for evt := range eh.eventChan {
 		eh.processEvent(evt)
+	}
+}
+
+// WaitSync waits for all ongoing history sync operations to complete, up to timeout.
+func (eh *EventHandler) WaitSync(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		eh.syncWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		fmt.Println("Bridge: Timed out waiting for sync to complete")
 	}
 }
 
@@ -142,6 +157,10 @@ func (eh *EventHandler) processEvent(evt backend.AppEvent) {
 // handleHistorySync processes history sync events: parses web messages,
 // persists them, handles reactions, and refreshes the sidebar.
 func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
+	if v == nil || v.Data == nil || v.Data.Data == nil {
+		return
+	}
+
 	eh.syncMutex.Lock()
 	eh.isSyncing = true
 	eh.syncMutex.Unlock()
@@ -152,7 +171,22 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 		eh.App.Sidebar.ShowSyncing(true) 
 		eh.App.Sidebar.SetSyncProgress(fraction)
 	})
+
+	eh.syncWG.Add(1)
 	go func() {
+		defer eh.syncWG.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("Bridge: Recovered from panic in history sync: %v\n", r)
+			}
+			eh.syncMutex.Lock()
+			eh.isSyncing = false
+			eh.syncMutex.Unlock()
+			
+			glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(false) })
+			eh.Chat.RefreshSidebarUI()
+		}()
+
 		tx, err := eh.DB.Begin()
 		if err != nil {
 			fmt.Printf("Bridge: Failed to begin transaction for history sync: %v\n", err)
@@ -161,8 +195,15 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 
 		commitTx := func() {
 			if tx != nil {
-				_ = tx.Commit()
-				tx, _ = eh.DB.Begin()
+				if err := tx.Commit(); err != nil {
+					fmt.Printf("Bridge: History sync commit error: %v\n", err)
+				}
+				var beginErr error
+				tx, beginErr = eh.DB.Begin()
+				if beginErr != nil {
+					fmt.Printf("Bridge: Failed to begin next tx for history sync: %v\n", beginErr)
+					tx = nil
+				}
 				commitCount = 0
 			}
 		}
@@ -170,38 +211,35 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 		defer func() {
 			if tx != nil {
 				_ = tx.Commit()
+				tx = nil
 			}
 		}()
 
 		for _, conv := range v.Data.Data.GetConversations() {
-			chatJID, _ := types.ParseJID(conv.GetID()); chatJID = chatJID.ToNonAD()
+			chatJID, _ := types.ParseJID(conv.GetID())
+			chatJID = chatJID.ToNonAD()
 			contact := database.Contact{JID: chatJID.String(), IsGroup: sql.NullBool{Bool: chatJID.Server == types.GroupServer, Valid: true}}
-			if tx != nil {
-				_ = eh.DB.SaveContactTx(tx, contact)
-			} else {
-				_ = eh.DB.SaveContact(contact)
-			}
+			_ = eh.DB.SaveContactTx(tx, contact)
 			
 			// Save sync metadata
 			unreadCount := int(conv.GetUnreadCount())
 			isPinned := conv.GetPinned() > 0
 			isArchived := conv.GetArchived()
 			timestamp := conv.GetConversationTimestamp()
-			if tx != nil {
-				_ = eh.DB.SaveSyncDataTx(tx, chatJID.String(), unreadCount, isPinned, isArchived, conv.GetName(), "", timestamp)
-			} else {
-				_ = eh.DB.SaveSyncData(chatJID.String(), unreadCount, isPinned, isArchived, conv.GetName(), "", timestamp)
-			}
+			_ = eh.DB.SaveSyncDataTx(tx, chatJID.String(), unreadCount, isPinned, isArchived, conv.GetName(), "", timestamp)
 			
 			for _, hMsg := range conv.GetMessages() {
+				if hMsg == nil || hMsg.GetMessage() == nil {
+					continue
+				}
 				pMsg, err := eh.Backend.Client.ParseWebMessage(chatJID, hMsg.GetMessage())
-				if err == nil {
+				if err == nil && pMsg != nil {
 					eh.Messages.PersistMessageTx(tx, pMsg)
-					if pMsg.Message.GetReactionMessage() != nil {
+					if pMsg.Message != nil && pMsg.Message.GetReactionMessage() != nil {
 						eh.Messages.HandleReactionTx(tx, pMsg.Info.Chat, pMsg.Info.Sender, pMsg.Message.GetReactionMessage().GetText(), pMsg.Message.GetReactionMessage().GetKey().GetID(), pMsg.Info.Timestamp)
 					}
 					commitCount++
-					if commitCount >= 250 {
+					if commitCount >= 100 {
 						commitTx()
 					}
 				}
@@ -212,13 +250,6 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 			_ = tx.Commit()
 			tx = nil
 		}
-
-		eh.syncMutex.Lock()
-		eh.isSyncing = false
-		eh.syncMutex.Unlock()
-		
-		glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(false) })
-		eh.Chat.RefreshSidebarUI()
 	}()
 }
 
@@ -471,12 +502,12 @@ func (eh *EventHandler) handleReceipt(v *backend.ReceiptEvent) {
 			fmt.Printf("Bridge: Error updating receipt status for %s: %v\n", id, err)
 		}
 
-		selectedJID := eh.Chat.SelectedJID()
-		if selectedJID != nil && selectedJID.ToNonAD().String() == chatJIDStr {
+		cv := eh.App.GetChatViewForJID(chatJIDStr)
+		if cv != nil {
 			st := newStatus
 			msgID := id
 			glib.IdleAdd(func() {
-				eh.App.ChatView.UpdateMessageStatus(msgID, st)
+				cv.UpdateMessageStatus(msgID, st)
 			})
 		}
 	}
