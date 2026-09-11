@@ -2,11 +2,15 @@ package chat
 
 import (
 	"context"
+	"net/url"
+	"os"
+	"strings"
 	"whats-gtk/internal/database"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
+	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
@@ -347,6 +351,8 @@ func NewChatView() (*ChatView, error) {
 	box.Append(cv.Banner)
 	box.Append(cv.Stack)
 
+	cv.setupDropTarget()
+
 	return cv, nil
 }
 
@@ -529,4 +535,133 @@ func (cv *ChatView) SetTopBarInfo(name string, tex *gdk.Texture) {
 	if cv.TopBar != nil {
 		cv.TopBar.SetInfo(name, tex)
 	}
+}
+
+func (cv *ChatView) setupDropTarget() {
+	dropTarget := gtk.NewDropTarget(glib.TypeInvalid, gdk.ActionCopy)
+	dropTarget.SetPropagationPhase(gtk.PhaseCapture)
+	dropTarget.SetGTypes([]glib.Type{
+		gdk.GTypeFileList,
+		gio.GTypeFile,
+		glib.TypeString,
+		gdk.GTypeTexture,
+	})
+
+	dropTarget.ConnectEnter(func(x, y float64) gdk.DragAction {
+		if cv.Stack != nil && cv.Stack.VisibleChildName() != "chat" {
+			return 0
+		}
+		cv.Box.AddCSSClass("chat-drop-active")
+		return gdk.ActionCopy
+	})
+
+	dropTarget.ConnectLeave(func() {
+		cv.Box.RemoveCSSClass("chat-drop-active")
+	})
+
+	dropTarget.ConnectDrop(func(val *glib.Value, x, y float64) bool {
+		cv.Box.RemoveCSSClass("chat-drop-active")
+		if cv.Stack != nil && cv.Stack.VisibleChildName() != "chat" {
+			return false
+		}
+		if val == nil {
+			return false
+		}
+
+		goVal := val.GoValue()
+		if goVal == nil {
+			return false
+		}
+
+		// 1. gdk.FileList
+		if fl, ok := goVal.(*gdk.FileList); ok && fl != nil {
+			handled := false
+			for _, file := range fl.Files() {
+				if file != nil {
+					p := file.Path()
+					if p != "" {
+						if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+							if cv.OnSendFile != nil {
+								cv.OnSendFile(p)
+								handled = true
+							}
+						}
+					}
+				}
+			}
+			return handled
+		}
+
+		// 2. gio.File
+		if file, ok := goVal.(*gio.File); ok && file != nil {
+			p := file.Path()
+			if p != "" {
+				if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+					if cv.OnSendFile != nil {
+						cv.OnSendFile(p)
+						return true
+					}
+				}
+			}
+		}
+
+		// 3. gio.Filer interface
+		if filer, ok := goVal.(gio.Filer); ok && filer != nil {
+			p := filer.Path()
+			if p != "" {
+				if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+					if cv.OnSendFile != nil {
+						cv.OnSendFile(p)
+						return true
+					}
+				}
+			}
+		}
+
+		// 4. gdk.Texture
+		if tex, ok := goVal.(*gdk.Texture); ok && tex != nil {
+			if cv.OnPasteImage != nil {
+				cv.OnPasteImage(tex)
+				return true
+			}
+		}
+
+		// 5. String (URI list or file path)
+		if str, ok := goVal.(string); ok && str != "" {
+			lines := strings.Split(str, "\n")
+			handled := false
+			for _, line := range lines {
+				line = strings.TrimRight(line, "\r")
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				p := ""
+				if strings.HasPrefix(line, "file://") {
+					if u, err := url.Parse(line); err == nil {
+						if unescaped, err := url.PathUnescape(u.Path); err == nil {
+							p = unescaped
+						} else {
+							p = u.Path
+						}
+					}
+				} else if strings.HasPrefix(line, "/") {
+					p = line
+				}
+				if p != "" {
+					if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+						if cv.OnSendFile != nil {
+							cv.OnSendFile(p)
+							handled = true
+						}
+					}
+				}
+			}
+			return handled
+		}
+
+		return false
+	})
+
+	cv.Box.AddController(dropTarget)
 }

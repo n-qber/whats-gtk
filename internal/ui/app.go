@@ -618,6 +618,11 @@ func loadCSS() {
 			color: #e01b24;
 			font-size: 9pt;
 		}
+		.chat-drop-active {
+			outline: 2px dashed #3584e4;
+			outline-offset: -4px;
+			background-color: rgba(53, 132, 228, 0.08);
+		}
 	`)
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), cssProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 }

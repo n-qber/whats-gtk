@@ -98,7 +98,7 @@ func (cc *ChatController) HandleSendFile(targetJID types.JID, path string) {
 		msgType = "audio"
 	}
 
-	tempID := "temp_file"
+	tempID := fmt.Sprintf("temp_file_%d", time.Now().UnixNano())
 	glib.IdleAdd(func() {
 		if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
 			jidStr := targetJID.ToNonAD().String()
