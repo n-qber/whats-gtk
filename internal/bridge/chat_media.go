@@ -53,9 +53,27 @@ func (cc *ChatController) HandlePasteImage(targetJID types.JID, tex *gdk.Texture
 			return
 		}
 
-		resp, err := cc.Backend.SendImage(cc.ctx, targetJID, data, "image/png")
+		var lastPercent int = -1
+		onProgress := func(frac float64) {
+			percent := int(frac * 100)
+			if percent != lastPercent {
+				lastPercent = percent
+				glib.IdleAdd(func() {
+					if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
+						cv.UpdateMessageProgress(tempID, frac)
+					}
+				})
+			}
+		}
+
+		resp, err := cc.Backend.SendImage(cc.ctx, targetJID, data, "image/png", onProgress)
 		if err != nil {
 			fmt.Printf("Bridge: SendImage failed: %v\n", err)
+			glib.IdleAdd(func() {
+				if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
+					cv.UpdateMessageStatus(tempID, "failed")
+				}
+			})
 			return
 		}
 
@@ -125,19 +143,37 @@ func (cc *ChatController) HandleSendFile(targetJID types.JID, path string) {
 		var resp whatsmeow.SendResponse
 		var err error
 
+		var lastPercent int = -1
+		onProgress := func(frac float64) {
+			percent := int(frac * 100)
+			if percent != lastPercent {
+				lastPercent = percent
+				glib.IdleAdd(func() {
+					if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
+						cv.UpdateMessageProgress(tempID, frac)
+					}
+				})
+			}
+		}
+
 		switch msgType {
 		case "image":
-			resp, err = cc.Backend.SendImage(cc.ctx, targetJID, data, mimetype)
+			resp, err = cc.Backend.SendImage(cc.ctx, targetJID, data, mimetype, onProgress)
 		case "video":
-			resp, err = cc.Backend.SendVideo(cc.ctx, targetJID, data, mimetype)
+			resp, err = cc.Backend.SendVideo(cc.ctx, targetJID, data, mimetype, onProgress)
 		case "audio":
-			resp, err = cc.Backend.SendAudio(cc.ctx, targetJID, data, mimetype)
+			resp, err = cc.Backend.SendAudio(cc.ctx, targetJID, data, mimetype, onProgress)
 		case "document":
-			resp, err = cc.Backend.SendDocument(cc.ctx, targetJID, data, mimetype, filename)
+			resp, err = cc.Backend.SendDocument(cc.ctx, targetJID, data, mimetype, filename, onProgress)
 		}
 
 		if err != nil {
 			fmt.Printf("Bridge: SendFile failed: %v\n", err)
+			glib.IdleAdd(func() {
+				if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
+					cv.UpdateMessageStatus(tempID, "failed")
+				}
+			})
 			return
 		}
 
@@ -207,15 +243,15 @@ func (cc *ChatController) HandleOpenImage(path string) {
 // promoteTempMessage replaces a temporary message ID with the real one in the UI.
 func (cc *ChatController) promoteTempMessage(targetJID types.JID, tempID, realID string) {
 	glib.IdleAdd(func() {
-		if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == targetJID.ToNonAD().String() {
-			cc.App.ChatView.UpdateMessageStatus(tempID, "sent")
-			if b, exists := cc.App.ChatView.MessageList.MessageRows[tempID]; exists {
-				cc.App.ChatView.MessageList.MessageRows[realID] = b
-				delete(cc.App.ChatView.MessageList.MessageRows, tempID)
+		if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
+			cv.UpdateMessageStatus(tempID, "sent")
+			if b, exists := cv.MessageList.MessageRows[tempID]; exists {
+				cv.MessageList.MessageRows[realID] = b
+				delete(cv.MessageList.MessageRows, tempID)
 			}
-			if r, exists := cc.App.ChatView.MessageList.MessageListRows[tempID]; exists {
-				cc.App.ChatView.MessageList.MessageListRows[realID] = r
-				delete(cc.App.ChatView.MessageList.MessageListRows, tempID)
+			if r, exists := cv.MessageList.MessageListRows[tempID]; exists {
+				cv.MessageList.MessageListRows[realID] = r
+				delete(cv.MessageList.MessageListRows, tempID)
 			}
 		}
 	})

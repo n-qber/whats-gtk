@@ -1042,6 +1042,12 @@ func (ml *MessageList) UpdateMessageStatus(id, status string) {
 	}
 }
 
+func (ml *MessageList) UpdateMessageProgress(id string, fraction float64) {
+	if bubble, exists := ml.MessageRows[id]; exists {
+		bubble.SetProgress(fraction)
+	}
+}
+
 func (ml *MessageList) UpdateMessageContent(id, content string, isEdited bool) {
 	if bubble, exists := ml.MessageRows[id]; exists {
 		glib.IdleAdd(func() {

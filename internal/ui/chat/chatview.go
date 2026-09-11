@@ -470,6 +470,10 @@ func (cv *ChatView) UpdateMessageStatus(id, status string) {
 	cv.MessageList.UpdateMessageStatus(id, status)
 }
 
+func (cv *ChatView) UpdateMessageProgress(id string, fraction float64) {
+	cv.MessageList.UpdateMessageProgress(id, fraction)
+}
+
 func (cv *ChatView) UpdateMessageContent(id, content string, isEdited bool) {
 	cv.MessageList.UpdateMessageContent(id, content, isEdited)
 }

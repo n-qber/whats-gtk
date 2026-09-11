@@ -1,6 +1,7 @@
 package bubbles
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -16,6 +17,7 @@ type Bubble interface {
 	UpdateImage(tex *gdk.Texture, path string)
 	UpdateDocument(path string)
 	SetStatus(status string)
+	SetProgress(fraction float64)
 	SetReactions(reactions []string)
 	SetPinned(pinned bool)
 	SetQuotedMessage(id, sender, content string)
@@ -487,6 +489,29 @@ func (b *baseBubble) SetStatus(status string) {
 			}
 		}
 	}
+}
+
+func (b *baseBubble) SetProgress(fraction float64) {
+	if fraction < 0 {
+		fraction = 0
+	}
+	if fraction > 1.0 {
+		fraction = 1.0
+	}
+	glib.IdleAdd(func() {
+		if b.progressBar != nil {
+			if b.progressTick != 0 {
+				glib.SourceRemove(b.progressTick)
+				b.progressTick = 0
+			}
+			b.progressBar.Show()
+			b.progressBar.SetFraction(fraction)
+		}
+		if b.StatusLabel != nil {
+			percent := int(fraction * 100)
+			b.StatusLabel.SetText(fmt.Sprintf("🕒 %d%%", percent))
+		}
+	})
 }
 
 func getStatusIcon(status string) string {

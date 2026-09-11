@@ -1,9 +1,11 @@
 package backend
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,8 +127,79 @@ func (b *Backend) PinMessage(ctx context.Context, chat types.JID, msgID types.Me
 }
 
 
-func (b *Backend) SendImage(ctx context.Context, to types.JID, data []byte, mimetype string) (whatsmeow.SendResponse, error) {
-	resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaImage)
+type progressFile struct {
+	file        *os.File
+	uploadSize  int64
+	readBytes   int64
+	onProgress  func(float64)
+	isUploading bool
+}
+
+func (pf *progressFile) Write(p []byte) (int, error) {
+	return pf.file.Write(p)
+}
+
+func (pf *progressFile) Seek(offset int64, whence int) (int64, error) {
+	n, err := pf.file.Seek(offset, whence)
+	if offset == 0 && whence == io.SeekStart {
+		pf.isUploading = true
+		if fi, err := pf.file.Stat(); err == nil {
+			pf.uploadSize = fi.Size()
+		}
+		if pf.onProgress != nil {
+			pf.onProgress(0.0)
+		}
+	}
+	return n, err
+}
+
+func (pf *progressFile) Read(p []byte) (int, error) {
+	n, err := pf.file.Read(p)
+	if pf.isUploading && pf.uploadSize > 0 && n > 0 {
+		pf.readBytes += int64(n)
+		if pf.onProgress != nil {
+			frac := float64(pf.readBytes) / float64(pf.uploadSize)
+			if frac > 1.0 {
+				frac = 1.0
+			}
+			pf.onProgress(frac)
+		}
+	}
+	return n, err
+}
+
+func (b *Backend) UploadWithProgress(ctx context.Context, data []byte, appInfo whatsmeow.MediaType, onProgress func(float64)) (whatsmeow.UploadResponse, error) {
+	if b.Client == nil {
+		return whatsmeow.UploadResponse{}, fmt.Errorf("client not connected")
+	}
+
+	if onProgress == nil {
+		return b.Client.Upload(ctx, data, appInfo)
+	}
+
+	tmp, err := os.CreateTemp("", "whats-gtk-upload-*")
+	if err != nil {
+		return b.Client.Upload(ctx, data, appInfo)
+	}
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+	}()
+
+	pf := &progressFile{
+		file:       tmp,
+		onProgress: onProgress,
+	}
+
+	return b.Client.UploadReader(ctx, bytes.NewReader(data), pf, appInfo)
+}
+
+func (b *Backend) SendImage(ctx context.Context, to types.JID, data []byte, mimetype string, onProgress ...func(float64)) (whatsmeow.SendResponse, error) {
+	var prog func(float64)
+	if len(onProgress) > 0 {
+		prog = onProgress[0]
+	}
+	resp, err := b.UploadWithProgress(ctx, data, whatsmeow.MediaImage, prog)
 	if err != nil {
 		return whatsmeow.SendResponse{}, err
 	}
@@ -144,8 +217,12 @@ func (b *Backend) SendImage(ctx context.Context, to types.JID, data []byte, mime
 	})
 }
 
-func (b *Backend) SendVideo(ctx context.Context, to types.JID, data []byte, mimetype string) (whatsmeow.SendResponse, error) {
-	resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaVideo)
+func (b *Backend) SendVideo(ctx context.Context, to types.JID, data []byte, mimetype string, onProgress ...func(float64)) (whatsmeow.SendResponse, error) {
+	var prog func(float64)
+	if len(onProgress) > 0 {
+		prog = onProgress[0]
+	}
+	resp, err := b.UploadWithProgress(ctx, data, whatsmeow.MediaVideo, prog)
 	if err != nil {
 		return whatsmeow.SendResponse{}, err
 	}
@@ -163,8 +240,12 @@ func (b *Backend) SendVideo(ctx context.Context, to types.JID, data []byte, mime
 	})
 }
 
-func (b *Backend) SendAudio(ctx context.Context, to types.JID, data []byte, mimetype string) (whatsmeow.SendResponse, error) {
-	resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaAudio)
+func (b *Backend) SendAudio(ctx context.Context, to types.JID, data []byte, mimetype string, onProgress ...func(float64)) (whatsmeow.SendResponse, error) {
+	var prog func(float64)
+	if len(onProgress) > 0 {
+		prog = onProgress[0]
+	}
+	resp, err := b.UploadWithProgress(ctx, data, whatsmeow.MediaAudio, prog)
 	if err != nil {
 		return whatsmeow.SendResponse{}, err
 	}
@@ -182,8 +263,12 @@ func (b *Backend) SendAudio(ctx context.Context, to types.JID, data []byte, mime
 	})
 }
 
-func (b *Backend) SendDocument(ctx context.Context, to types.JID, data []byte, mimetype, filename string) (whatsmeow.SendResponse, error) {
-	resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaDocument)
+func (b *Backend) SendDocument(ctx context.Context, to types.JID, data []byte, mimetype, filename string, onProgress ...func(float64)) (whatsmeow.SendResponse, error) {
+	var prog func(float64)
+	if len(onProgress) > 0 {
+		prog = onProgress[0]
+	}
+	resp, err := b.UploadWithProgress(ctx, data, whatsmeow.MediaDocument, prog)
 	if err != nil {
 		return whatsmeow.SendResponse{}, err
 	}
@@ -202,8 +287,12 @@ func (b *Backend) SendDocument(ctx context.Context, to types.JID, data []byte, m
 	})
 }
 
-func (b *Backend) SendSticker(ctx context.Context, to types.JID, data []byte, isAnimated bool) (whatsmeow.SendResponse, error) {
-	resp, err := b.Client.Upload(ctx, data, whatsmeow.MediaImage)
+func (b *Backend) SendSticker(ctx context.Context, to types.JID, data []byte, isAnimated bool, onProgress ...func(float64)) (whatsmeow.SendResponse, error) {
+	var prog func(float64)
+	if len(onProgress) > 0 {
+		prog = onProgress[0]
+	}
+	resp, err := b.UploadWithProgress(ctx, data, whatsmeow.MediaImage, prog)
 	if err != nil {
 		return whatsmeow.SendResponse{}, err
 	}
