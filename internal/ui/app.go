@@ -32,6 +32,9 @@ type App struct {
 	OnNewChatRequested      func()
 	OnNextChatRequested     func()
 	OnPreviousChatRequested func()
+	OnCtrlReleased          func()
+	OnCancelCycle           func() bool
+	OnCommitCycle           func() bool
 	DetachedChats      map[string]*chat.ChatView
 	ActiveMainJID      string
 	EventBus           *events.EventBus
@@ -141,6 +144,9 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 				// When released, we explicitly clear the control mask bit for the callback
 				a.OnModifiersChanged(state &^ gdk.ControlMask)
 			}
+			if a.OnCtrlReleased != nil {
+				a.OnCtrlReleased()
+			}
 		}
 	})
 	captureKeyCtrl := gtk.NewEventControllerKey()
@@ -164,7 +170,25 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 			}
 			return true
 		}
+		if isCtrl && (keyval == gdk.KEY_Return || keyval == gdk.KEY_KP_Enter || keyName == "Return" || keyName == "KP_Enter") {
+			if a.OnCommitCycle != nil && a.OnCommitCycle() {
+				return true
+			}
+		}
+		if keyval == gdk.KEY_Escape || keyName == "Escape" {
+			if a.OnCancelCycle != nil && a.OnCancelCycle() {
+				return true
+			}
+		}
 		return false
+	})
+	captureKeyCtrl.ConnectKeyReleased(func(keyval uint, keycode uint, state gdk.ModifierType) {
+		keyName := gdk.KeyvalName(keyval)
+		if keyval == gdk.KEY_Control_L || keyval == gdk.KEY_Control_R || keyName == "Control_L" || keyName == "Control_R" {
+			if a.OnCtrlReleased != nil {
+				a.OnCtrlReleased()
+			}
+		}
 	})
 	window.AddController(captureKeyCtrl)
 

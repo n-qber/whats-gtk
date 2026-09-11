@@ -36,6 +36,9 @@ type Sidebar struct {
 	chatAvatars  map[string]*adw.Avatar
 	chatIndices  map[string]*gtk.Label
 	isRefreshing bool
+	isCycling    bool
+	originalJID  string
+	pendingJID   string
 	syncPulseId  glib.SourceHandle
 }
 
@@ -142,6 +145,9 @@ func NewSidebar() (*Sidebar, error) {
 
 	listBox.ConnectRowSelected(func(row *gtk.ListBoxRow) {
 		if row == nil || s.isRefreshing { return }
+		s.isCycling = false
+		s.originalJID = ""
+		s.pendingJID = ""
 		if s.OnChatSelected != nil {
 			s.OnChatSelected(row.Name())
 		}
@@ -197,6 +203,9 @@ func (s *Sidebar) SelectChat(jid string) {
 }
 
 func (s *Sidebar) SelectIndex(index int) {
+	s.isCycling = false
+	s.originalJID = ""
+	s.pendingJID = ""
 	row := s.ListBox.RowAtIndex(index)
 	if row != nil {
 		s.ListBox.SelectRow(row)
@@ -265,6 +274,115 @@ func (s *Sidebar) SelectOffset(offset int) {
 		}
 	}
 	s.SelectIndex(newIdx)
+}
+
+func (s *Sidebar) IsCycling() bool {
+	return s.isCycling
+}
+
+func (s *Sidebar) CycleOffset(offset int) {
+	count := 0
+	for {
+		if s.ListBox.RowAtIndex(count) == nil {
+			break
+		}
+		count++
+	}
+	if count == 0 {
+		return
+	}
+
+	selected := s.ListBox.SelectedRow()
+	var currentIdx int = -1
+
+	if !s.isCycling {
+		s.isCycling = true
+		if selected != nil {
+			s.originalJID = selected.Name()
+			currentIdx = selected.Index()
+		} else {
+			s.originalJID = ""
+		}
+	} else if selected != nil {
+		currentIdx = selected.Index()
+	}
+
+	var newIdx int
+	if currentIdx == -1 {
+		if offset > 0 {
+			newIdx = 0
+		} else {
+			newIdx = count - 1
+		}
+	} else {
+		newIdx = (currentIdx + offset) % count
+		if newIdx < 0 {
+			newIdx = count + newIdx
+		}
+	}
+
+	row := s.ListBox.RowAtIndex(newIdx)
+	if row != nil {
+		s.pendingJID = row.Name()
+		s.isRefreshing = true
+		s.ListBox.SelectRow(row)
+		s.isRefreshing = false
+
+		if s.ScrolledWindow != nil {
+			glib.IdleAdd(func() {
+				_, destY, success := row.TranslateCoordinates(s.ListBox, 0, 0)
+				if success {
+					adj := s.ScrolledWindow.VAdjustment()
+					val := adj.Value()
+					pageSize := adj.PageSize()
+					h := float64(row.Height())
+					if h <= 0 {
+						h = 60
+					}
+					targetY := destY - 10
+					if targetY < 0 {
+						targetY = 0
+					}
+					if destY < val {
+						adj.SetValue(targetY)
+					} else if destY+h > val+pageSize {
+						adj.SetValue(destY + h - pageSize + 10)
+					}
+				}
+			})
+		}
+	}
+}
+
+func (s *Sidebar) CommitCycle() {
+	if !s.isCycling {
+		return
+	}
+	targetJID := s.pendingJID
+	s.isCycling = false
+	s.originalJID = ""
+	s.pendingJID = ""
+
+	if targetJID != "" && s.OnChatSelected != nil {
+		s.OnChatSelected(targetJID)
+	}
+}
+
+func (s *Sidebar) CancelCycle() bool {
+	if !s.isCycling {
+		return false
+	}
+	orig := s.originalJID
+	s.isCycling = false
+	s.originalJID = ""
+	s.pendingJID = ""
+
+	if orig != "" {
+		s.SelectChat(orig)
+	} else {
+		s.ClearSelection()
+	}
+	return true
 }
 
 func (s *Sidebar) ClearSelection() {

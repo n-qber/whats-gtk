@@ -57,6 +57,9 @@ type ChatView struct {
 	OnStopTyping            func()
 	OnNextChat              func()
 	OnPreviousChat          func()
+	OnCtrlReleased          func()
+	OnCancelCycle           func() bool
+	OnCommitCycle           func() bool
 
 	// Direct Field Accessors for legacy compatibility
 	IsSearching bool
@@ -277,6 +280,23 @@ func NewChatView() (*ChatView, error) {
 			cv.OnPreviousChat()
 		}
 	}
+	cv.InputBar.OnCtrlReleased = func() {
+		if cv.OnCtrlReleased != nil {
+			cv.OnCtrlReleased()
+		}
+	}
+	cv.InputBar.OnCancelCycle = func() bool {
+		if cv.OnCancelCycle != nil {
+			return cv.OnCancelCycle()
+		}
+		return false
+	}
+	cv.InputBar.OnCommitCycle = func() bool {
+		if cv.OnCommitCycle != nil {
+			return cv.OnCommitCycle()
+		}
+		return false
+	}
 
 	// ChatView key controller for message navigation when outside entry
 	chatKeyCtrl := gtk.NewEventControllerKey()
@@ -328,12 +348,20 @@ func NewChatView() (*ChatView, error) {
 			}
 		}
 		if !isShift && (keyval == gdk.KEY_Return || keyval == gdk.KEY_KP_Enter || keyval == gdk.KEY_ISO_Enter || name == "Return" || name == "KP_Enter") {
+			if cv.OnCommitCycle != nil && cv.OnCommitCycle() {
+				cv.FocusEntry()
+				return true
+			}
 			if cv.MessageList.ConfirmKeyboardReply() {
 				cv.FocusEntry()
 				return true
 			}
 		}
 		if keyval == gdk.KEY_Escape || name == "Escape" {
+			if cv.OnCancelCycle != nil && cv.OnCancelCycle() {
+				cv.FocusEntry()
+				return true
+			}
 			if cv.InputBar.ReplyToID != "" {
 				cv.InputBar.CancelReply()
 				cv.FocusEntry()
@@ -346,6 +374,14 @@ func NewChatView() (*ChatView, error) {
 			}
 		}
 		return false
+	})
+	chatKeyCtrl.ConnectKeyReleased(func(keyval uint, keycode uint, state gdk.ModifierType) {
+		name := gdk.KeyvalName(keyval)
+		if keyval == gdk.KEY_Control_L || keyval == gdk.KEY_Control_R || name == "Control_L" || name == "Control_R" {
+			if cv.OnCtrlReleased != nil {
+				cv.OnCtrlReleased()
+			}
+		}
 	})
 	box.AddController(chatKeyCtrl)
 

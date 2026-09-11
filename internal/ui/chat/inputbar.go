@@ -47,6 +47,9 @@ type InputBar struct {
 	OnStopTyping                    func()
 	OnNextChat                      func()
 	OnPreviousChat                  func()
+	OnCtrlReleased                  func()
+	OnCancelCycle                   func() bool
+	OnCommitCycle                   func() bool
 
 	suppressTyping bool
 	ctx            context.Context
@@ -249,6 +252,9 @@ func NewInputBar(ctx context.Context) *InputBar {
 			}
 		}
 		if !isShift && (keyval == gdk.KEY_Return || keyval == gdk.KEY_KP_Enter || keyval == gdk.KEY_ISO_Enter || name == "Return" || name == "KP_Enter") {
+			if ib.OnCommitCycle != nil && ib.OnCommitCycle() {
+				return true
+			}
 			if ib.OnConfirmMessageSelection != nil && ib.OnConfirmMessageSelection() {
 				return true
 			}
@@ -256,6 +262,9 @@ func NewInputBar(ctx context.Context) *InputBar {
 			return true
 		}
 		if keyval == gdk.KEY_Escape || name == "Escape" {
+			if ib.OnCancelCycle != nil && ib.OnCancelCycle() {
+				return true
+			}
 			if ib.ReplyToID != "" {
 				ib.CancelReply()
 				return true
@@ -277,6 +286,14 @@ func NewInputBar(ctx context.Context) *InputBar {
 			}
 		}
 		return false
+	})
+	keyCtrl.ConnectKeyReleased(func(keyval uint, keycode uint, state gdk.ModifierType) {
+		name := gdk.KeyvalName(keyval)
+		if keyval == gdk.KEY_Control_L || keyval == gdk.KEY_Control_R || name == "Control_L" || name == "Control_R" {
+			if ib.OnCtrlReleased != nil {
+				ib.OnCtrlReleased()
+			}
+		}
 	})
 	ib.TextView.AddController(keyCtrl)
 

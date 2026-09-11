@@ -261,16 +261,40 @@ func (br *Bridge) setupUIHandlers() {
 	br.App.Window.Connect("notify::is-active", br.Chat.HandleWindowActive)
 
 	br.App.OnKeyPressed = br.handleKeyPressed
+	commitCycle := func() bool {
+		if br.App.Sidebar != nil && br.App.Sidebar.IsCycling() {
+			glib.IdleAdd(func() {
+				br.App.Sidebar.CommitCycle()
+			})
+			return true
+		}
+		return false
+	}
+	cancelCycle := func() bool {
+		if br.App.Sidebar != nil && br.App.Sidebar.IsCycling() {
+			glib.IdleAdd(func() {
+				br.App.Sidebar.CancelCycle()
+			})
+			return true
+		}
+		return false
+	}
+
 	br.App.OnNextChatRequested = func() {
 		glib.IdleAdd(func() {
-			br.App.Sidebar.SelectOffset(1)
+			br.App.Sidebar.CycleOffset(1)
 		})
 	}
 	br.App.OnPreviousChatRequested = func() {
 		glib.IdleAdd(func() {
-			br.App.Sidebar.SelectOffset(-1)
+			br.App.Sidebar.CycleOffset(-1)
 		})
 	}
+	br.App.OnCtrlReleased = func() {
+		commitCycle()
+	}
+	br.App.OnCommitCycle = commitCycle
+	br.App.OnCancelCycle = cancelCycle
 	br.App.OnSearchRequested = func() {
 		var searchDialog *ui.SearchDialog
 		onSearch := func(query string) {
@@ -398,12 +422,12 @@ func (br *Bridge) setupUIHandlers() {
 	// Ctrl+Tab and Ctrl+Shift+Tab for next/prev chat
 	nextChat := func() {
 		glib.IdleAdd(func() {
-			br.App.Sidebar.SelectOffset(1)
+			br.App.Sidebar.CycleOffset(1)
 		})
 	}
 	prevChat := func() {
 		glib.IdleAdd(func() {
-			br.App.Sidebar.SelectOffset(-1)
+			br.App.Sidebar.CycleOffset(-1)
 		})
 	}
 	br.Input.Register("Control+Tab", nextChat)
@@ -464,6 +488,9 @@ func (br *Bridge) setupUIHandlers() {
 	})
 	br.Input.Register("Escape", func() {
 		glib.IdleAdd(func() {
+			if br.App.Sidebar != nil && br.App.Sidebar.CancelCycle() {
+				return
+			}
 			if br.App.ChatView != nil {
 				if br.App.ChatView.InputBar.ReplyToID != "" {
 					br.App.ChatView.InputBar.CancelReply()
@@ -565,13 +592,38 @@ func (br *Bridge) handleKeyPressed(key string, mods gdk.ModifierType) bool {
 func (br *Bridge) WireChatView(cv *chat.ChatView) {
 	cv.OnNextChat = func() {
 		glib.IdleAdd(func() {
-			br.App.Sidebar.SelectOffset(1)
+			br.App.Sidebar.CycleOffset(1)
 		})
 	}
 	cv.OnPreviousChat = func() {
 		glib.IdleAdd(func() {
-			br.App.Sidebar.SelectOffset(-1)
+			br.App.Sidebar.CycleOffset(-1)
 		})
+	}
+	cv.OnCtrlReleased = func() {
+		if br.App.Sidebar != nil && br.App.Sidebar.IsCycling() {
+			glib.IdleAdd(func() {
+				br.App.Sidebar.CommitCycle()
+			})
+		}
+	}
+	cv.OnCommitCycle = func() bool {
+		if br.App.Sidebar != nil && br.App.Sidebar.IsCycling() {
+			glib.IdleAdd(func() {
+				br.App.Sidebar.CommitCycle()
+			})
+			return true
+		}
+		return false
+	}
+	cv.OnCancelCycle = func() bool {
+		if br.App.Sidebar != nil && br.App.Sidebar.IsCycling() {
+			glib.IdleAdd(func() {
+				br.App.Sidebar.CancelCycle()
+			})
+			return true
+		}
+		return false
 	}
 	cv.OnTyping = func() {
 		if jid := br.Chat.SelectedJID(); jid != nil {
