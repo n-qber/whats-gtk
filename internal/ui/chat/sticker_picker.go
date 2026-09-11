@@ -347,12 +347,6 @@ func (sp *StickerPicker) createTile(item database.StickerItem, fromFavoritesTab 
 
 func (sp *StickerPicker) Popup() {
 	sp.Reload()
-	if sp.OnSyncFavorites != nil && sp.FavFlowBox != nil && sp.FavFlowBox.FirstChild() == nil {
-		if time.Since(sp.lastSyncTime) > 5*time.Minute {
-			sp.lastSyncTime = time.Now()
-			sp.OnSyncFavorites()
-		}
-	}
 	sp.Popover.Popup()
 }
 

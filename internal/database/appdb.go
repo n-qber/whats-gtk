@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"os"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -148,6 +149,12 @@ func (a *AppDB) createTables() error {
 			use_count INTEGER DEFAULT 1
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_sticker_history_used ON sticker_history(last_used_at)`,
+		`CREATE TABLE IF NOT EXISTS media_failures (
+			id TEXT PRIMARY KEY,
+			failed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			reason TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_media_failures_failed_at ON media_failures(failed_at)`,
 	}
 
 	for _, q := range queries {
@@ -185,6 +192,24 @@ func (a *AppDB) createTables() error {
 
 	// Create unique index for lid to handle mapping and prevent duplicates
 	_, _ = a.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_lid ON contacts(lid) WHERE lid IS NOT NULL")
+
+	// Seed media_failures for existing favorite stickers whose files do not exist on disk
+	// and whose direct paths are already expired, preventing download storms on startup.
+	if rows, err := a.db.Query("SELECT id, file_path FROM favorite_stickers WHERE id NOT IN (SELECT id FROM media_failures)"); err == nil {
+		var missingIDs []string
+		for rows.Next() {
+			var id, fpath string
+			if err := rows.Scan(&id, &fpath); err == nil {
+				if _, statErr := os.Stat(fpath); statErr != nil {
+					missingIDs = append(missingIDs, id)
+				}
+			}
+		}
+		rows.Close()
+		for _, id := range missingIDs {
+			_ = a.MarkMediaFailed(id, "expired_direct_path")
+		}
+	}
 
 	// Initialize FTS5 virtual table for full-text message search
 	_, err := a.db.Exec(`

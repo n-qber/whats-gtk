@@ -315,7 +315,7 @@ func (b *Backend) FetchFavoriteStickers(ctx context.Context) error {
 	if b.Client == nil {
 		return fmt.Errorf("client not connected")
 	}
-	return b.Client.FetchAppState(ctx, appstate.WAPatchRegularLow, true, false)
+	return b.Client.FetchAppState(ctx, appstate.WAPatchRegularLow, false, false)
 }
 
 func (b *Backend) SetFavoriteStickerAppState(ctx context.Context, item database.StickerItem, isFavorite bool) error {

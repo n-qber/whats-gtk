@@ -649,18 +649,20 @@ func (eh *EventHandler) handleAppState(v *backend.AppStateEvent) {
 			_ = eh.DB.SaveFavoriteSticker(item)
 
 			if _, err := os.Stat(filePath); err != nil && len(act.GetMediaKey()) > 0 {
-				eh.Media.Download(DownloadTask{
-					ID:      id,
-					MsgType: "sticker",
-					Metadata: &MediaMetadata{
-						URL:           act.GetURL(),
-						DirectPath:    act.GetDirectPath(),
-						MediaKey:      act.GetMediaKey(),
-						Mimetype:      "image/webp",
-						FileEncSHA256: act.GetFileEncSHA256(),
-						FileLength:    act.GetFileLength(),
-					},
-				})
+				if (eh.Media == nil || !eh.Media.IsFailed(id)) && (eh.DB == nil || !eh.DB.IsMediaFailed(id)) {
+					eh.Media.Download(DownloadTask{
+						ID:      id,
+						MsgType: "sticker",
+						Metadata: &MediaMetadata{
+							URL:           act.GetURL(),
+							DirectPath:    act.GetDirectPath(),
+							MediaKey:      act.GetMediaKey(),
+							Mimetype:      "image/webp",
+							FileEncSHA256: act.GetFileEncSHA256(),
+							FileLength:    act.GetFileLength(),
+						},
+					})
+				}
 			}
 		} else {
 			_ = eh.DB.DeleteFavoriteSticker(id)

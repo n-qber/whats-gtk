@@ -56,23 +56,49 @@ type MediaService struct {
 	mediaQueue     chan DownloadTask
 	onMediaDown    func(task DownloadTask, data []byte, path string)
 	mu             sync.Mutex
-	inFlight       map[string]bool
-	failedCooldown map[string]time.Time
+	inFlight        map[string]bool
+	failedCooldown  map[string]time.Time
+	failedPermanent map[string]bool
 }
 
 func NewMediaService(b *backend.Backend, db *database.AppDB, ctx context.Context) *MediaService {
+	perm := make(map[string]bool)
+	if db != nil {
+		if ids, err := db.GetFailedMediaIDs(); err == nil {
+			for _, id := range ids {
+				perm[id] = true
+			}
+		}
+	}
+
 	ms := &MediaService{
-		Backend:        b,
-		DB:             db,
-		ctx:            ctx,
-		mediaQueue:     make(chan DownloadTask, 500),
-		inFlight:       make(map[string]bool),
-		failedCooldown: make(map[string]time.Time),
+		Backend:         b,
+		DB:              db,
+		ctx:             ctx,
+		mediaQueue:      make(chan DownloadTask, 500),
+		inFlight:        make(map[string]bool),
+		failedCooldown:  make(map[string]time.Time),
+		failedPermanent: perm,
 	}
 	for i := 0; i < 4; i++ {
 		go ms.mediaWorker()
 	}
 	return ms
+}
+
+func (ms *MediaService) IsFailed(id string) bool {
+	if id == "" {
+		return false
+	}
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	if ms.failedPermanent[id] {
+		return true
+	}
+	if cd, ok := ms.failedCooldown[id]; ok && time.Now().Before(cd) {
+		return true
+	}
+	return false
 }
 
 func (ms *MediaService) SetOnMediaDownloaded(f func(task DownloadTask, data []byte, path string)) {
@@ -85,6 +111,10 @@ func (ms *MediaService) Download(task DownloadTask) {
 	}
 
 	ms.mu.Lock()
+	if ms.failedPermanent[task.ID] {
+		ms.mu.Unlock()
+		return
+	}
 	if ms.inFlight[task.ID] {
 		ms.mu.Unlock()
 		return
@@ -234,15 +264,32 @@ func (ms *MediaService) processTask(task DownloadTask) {
 			ms.onMediaDown(task, data, path)
 		}
 		ms.mu.Lock()
+		delete(ms.failedPermanent, task.ID)
 		delete(ms.failedCooldown, task.ID)
 		ms.mu.Unlock()
+		if ms.DB != nil {
+			_ = ms.DB.ClearMediaFailed(task.ID)
+		}
 	} else {
 		fmt.Printf("MediaService: Download Failed for %s: %v\n", task.ID, err)
 		ms.mu.Lock()
 		ms.failedCooldown[task.ID] = time.Now().Add(1 * time.Hour)
 		ms.mu.Unlock()
 
-		if strings.Contains(err.Error(), "403") {
+		is403 := strings.Contains(err.Error(), "403")
+		isHashMismatch := strings.Contains(err.Error(), "hash")
+		isPermanent := isHashMismatch || (is403 && (task.ChatJID == "" || task.SenderJID == ""))
+
+		if isPermanent {
+			ms.mu.Lock()
+			ms.failedPermanent[task.ID] = true
+			ms.mu.Unlock()
+			if ms.DB != nil {
+				_ = ms.DB.MarkMediaFailed(task.ID, err.Error())
+			}
+		}
+
+		if is403 {
 			// Only attempt media retry request for actual chat messages (not AppState stickers or headless items)
 			if task.ChatJID != "" && task.SenderJID != "" {
 				if len(task.Metadata.MediaKey) == 0 {
