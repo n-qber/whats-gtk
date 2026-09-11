@@ -261,6 +261,16 @@ func (br *Bridge) setupUIHandlers() {
 	br.App.Window.Connect("notify::is-active", br.Chat.HandleWindowActive)
 
 	br.App.OnKeyPressed = br.handleKeyPressed
+	br.App.OnNextChatRequested = func() {
+		glib.IdleAdd(func() {
+			br.App.Sidebar.SelectOffset(1)
+		})
+	}
+	br.App.OnPreviousChatRequested = func() {
+		glib.IdleAdd(func() {
+			br.App.Sidebar.SelectOffset(-1)
+		})
+	}
 	br.App.OnSearchRequested = func() {
 		var searchDialog *ui.SearchDialog
 		onSearch := func(query string) {
@@ -386,16 +396,20 @@ func (br *Bridge) setupUIHandlers() {
 	br.Input.Register("Control+F", searchToggle)
 
 	// Ctrl+Tab and Ctrl+Shift+Tab for next/prev chat
-	br.Input.Register("Control+Tab", func() {
+	nextChat := func() {
 		glib.IdleAdd(func() {
 			br.App.Sidebar.SelectOffset(1)
 		})
-	})
-	br.Input.Register("Control+Shift+Tab", func() {
+	}
+	prevChat := func() {
 		glib.IdleAdd(func() {
 			br.App.Sidebar.SelectOffset(-1)
 		})
-	})
+	}
+	br.Input.Register("Control+Tab", nextChat)
+	br.Input.Register("Control+ISO_Left_Tab", nextChat)
+	br.Input.Register("Control+Shift+Tab", prevChat)
+	br.Input.Register("Control+Shift+ISO_Left_Tab", prevChat)
 
 	// Ctrl+Up and Ctrl+Down for keyboard message selection and reply
 	br.Input.Register("Control+Up", func() {
@@ -530,6 +544,9 @@ func (br *Bridge) setupServiceHandlers() {
 
 // handleKeyPressed builds a key combo string and delegates to InputManager.
 func (br *Bridge) handleKeyPressed(key string, mods gdk.ModifierType) bool {
+	if key == "ISO_Left_Tab" {
+		key = "Tab"
+	}
 	combo := ""
 	if mods&gdk.ControlMask != 0 {
 		combo += "Control+"
@@ -546,6 +563,16 @@ func (br *Bridge) handleKeyPressed(key string, mods gdk.ModifierType) bool {
 }
 
 func (br *Bridge) WireChatView(cv *chat.ChatView) {
+	cv.OnNextChat = func() {
+		glib.IdleAdd(func() {
+			br.App.Sidebar.SelectOffset(1)
+		})
+	}
+	cv.OnPreviousChat = func() {
+		glib.IdleAdd(func() {
+			br.App.Sidebar.SelectOffset(-1)
+		})
+	}
 	cv.OnTyping = func() {
 		if jid := br.Chat.SelectedJID(); jid != nil {
 			br.Chat.StartTyping(*jid)

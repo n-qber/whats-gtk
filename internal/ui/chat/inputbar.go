@@ -45,6 +45,8 @@ type InputBar struct {
 	OnCancelMessageSelection        func() bool
 	OnTyping                        func()
 	OnStopTyping                    func()
+	OnNextChat                      func()
+	OnPreviousChat                  func()
 
 	suppressTyping bool
 	ctx            context.Context
@@ -198,7 +200,23 @@ func NewInputBar(ctx context.Context) *InputBar {
 	keyCtrl.ConnectKeyPressed(func(keyval uint, keycode uint, state gdk.ModifierType) bool {
 		name := gdk.KeyvalName(keyval)
 		isCtrl := state&gdk.ControlMask != 0
-		isShift := state&gdk.ShiftMask != 0
+		isShift := state&gdk.ShiftMask != 0 || keyval == gdk.KEY_ISO_Left_Tab || name == "ISO_Left_Tab"
+
+		isTab := keyval == gdk.KEY_Tab || keyval == gdk.KEY_ISO_Left_Tab || keyval == gdk.KEY_KP_Tab || name == "Tab" || name == "ISO_Left_Tab" || name == "KP_Tab"
+		if isCtrl && isTab {
+			if isShift {
+				if ib.OnPreviousChat != nil {
+					ib.OnPreviousChat()
+					return true
+				}
+			} else {
+				if ib.OnNextChat != nil {
+					ib.OnNextChat()
+					return true
+				}
+			}
+			return true
+		}
 
 		if isCtrl && isShift && (keyval == gdk.KEY_Up || keyval == gdk.KEY_KP_Up || name == "Up" || name == "KP_Up") {
 			if ib.OnSelectReferencedMessage != nil && ib.OnSelectReferencedMessage() {

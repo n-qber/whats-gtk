@@ -28,8 +28,10 @@ type App struct {
 	ZoomCSSProvider    *gtk.CSSProvider
 	OnKeyPressed       func(key string, mods gdk.ModifierType) bool
 	OnModifiersChanged func(mods gdk.ModifierType)
-	OnSearchRequested  func()
-	OnNewChatRequested func()
+	OnSearchRequested       func()
+	OnNewChatRequested      func()
+	OnNextChatRequested     func()
+	OnPreviousChatRequested func()
 	DetachedChats      map[string]*chat.ChatView
 	ActiveMainJID      string
 	EventBus           *events.EventBus
@@ -141,6 +143,31 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 			}
 		}
 	})
+	captureKeyCtrl := gtk.NewEventControllerKey()
+	captureKeyCtrl.SetPropagationPhase(gtk.PhaseCapture)
+	captureKeyCtrl.ConnectKeyPressed(func(keyval uint, keycode uint, state gdk.ModifierType) bool {
+		keyName := gdk.KeyvalName(keyval)
+		isCtrl := state&gdk.ControlMask != 0
+		isShift := state&gdk.ShiftMask != 0 || keyval == gdk.KEY_ISO_Left_Tab || keyName == "ISO_Left_Tab"
+		isTab := keyval == gdk.KEY_Tab || keyval == gdk.KEY_ISO_Left_Tab || keyval == gdk.KEY_KP_Tab || keyName == "Tab" || keyName == "ISO_Left_Tab" || keyName == "KP_Tab"
+		if isCtrl && isTab {
+			if isShift {
+				if a.OnPreviousChatRequested != nil {
+					a.OnPreviousChatRequested()
+					return true
+				}
+			} else {
+				if a.OnNextChatRequested != nil {
+					a.OnNextChatRequested()
+					return true
+				}
+			}
+			return true
+		}
+		return false
+	})
+	window.AddController(captureKeyCtrl)
+
 	window.AddController(keyCtrl)
 
 	return a, nil

@@ -19,6 +19,7 @@ type ProfileItem struct {
 type Sidebar struct {
 	Box               *gtk.Box
 	ListBox           *gtk.ListBox
+	ScrolledWindow    *gtk.ScrolledWindow
 	SearchEntry       *gtk.SearchEntry
 	ProgressBar       *gtk.ProgressBar
 	ProfileCombo      *gtk.ComboBoxText
@@ -87,6 +88,7 @@ func NewSidebar() (*Sidebar, error) {
 	s := &Sidebar{
 		Box:               box,
 		ListBox:           listBox,
+		ScrolledWindow:    scrolled,
 		SearchEntry:       searchEntry,
 		ProgressBar:       progressBar,
 		ProfileCombo:      profileCombo,
@@ -198,40 +200,68 @@ func (s *Sidebar) SelectIndex(index int) {
 	row := s.ListBox.RowAtIndex(index)
 	if row != nil {
 		s.ListBox.SelectRow(row)
+		if s.OnChatSelected != nil && row.Name() != "" {
+			s.OnChatSelected(row.Name())
+		}
+		if s.ScrolledWindow != nil {
+			glib.IdleAdd(func() {
+				_, destY, success := row.TranslateCoordinates(s.ListBox, 0, 0)
+				if success {
+					adj := s.ScrolledWindow.VAdjustment()
+					val := adj.Value()
+					pageSize := adj.PageSize()
+					h := float64(row.Height())
+					if h <= 0 {
+						h = 60
+					}
+					targetY := destY - 10
+					if targetY < 0 {
+						targetY = 0
+					}
+					if destY < val {
+						adj.SetValue(targetY)
+					} else if destY+h > val+pageSize {
+						adj.SetValue(destY + h - pageSize + 10)
+					}
+				}
+			})
+		}
 	}
 }
 
 func (s *Sidebar) SelectOffset(offset int) {
+	count := 0
+	for {
+		if s.ListBox.RowAtIndex(count) == nil {
+			break
+		}
+		count++
+	}
+	if count == 0 {
+		return
+	}
+
 	selected := s.ListBox.SelectedRow()
 	var newIdx int
 	if selected == nil {
 		if offset > 0 {
 			newIdx = 0
 		} else {
-			return
+			newIdx = count - 1
 		}
 	} else {
-		count := 0
-		currentIdx := -1
-		
-		// In GTK4, we can iterate rows more easily or just use RowAtIndex in a loop
-		for {
-			row := s.ListBox.RowAtIndex(count)
-			if row == nil {
-				break
-			}
-			if row == selected {
-				currentIdx = count
-			}
-			count++
-		}
-
+		currentIdx := selected.Index()
 		if currentIdx == -1 {
-			return
-		}
-		newIdx = (currentIdx + offset) % count
-		if newIdx < 0 {
-			newIdx = count + newIdx
+			if offset > 0 {
+				newIdx = 0
+			} else {
+				newIdx = count - 1
+			}
+		} else {
+			newIdx = (currentIdx + offset) % count
+			if newIdx < 0 {
+				newIdx = count + newIdx
+			}
 		}
 	}
 	s.SelectIndex(newIdx)
