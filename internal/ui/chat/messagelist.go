@@ -638,11 +638,12 @@ func (ml *MessageList) SelectReferencedMessage() bool {
 	}
 
 	currentID := ml.KeyboardSelectedID
+	fmt.Printf("MessageList: Jumping to quoted message %s from %s\n", quotedID, currentID)
 
 	if _, exists := ml.MessageListRows[quotedID]; exists {
 		ml.QuoteJumpStack = append(ml.QuoteJumpStack, currentID)
 		ml.setKeyboardSelection(quotedID)
-		ml.HighlightMessage(quotedID)
+		ml.ScrollToMessage(quotedID)
 		return true
 	}
 
@@ -664,10 +665,11 @@ func (ml *MessageList) SelectReferencedMessageReturn() bool {
 
 	prevID := ml.QuoteJumpStack[len(ml.QuoteJumpStack)-1]
 	ml.QuoteJumpStack = ml.QuoteJumpStack[:len(ml.QuoteJumpStack)-1]
+	fmt.Printf("MessageList: Returning to original message %s\n", prevID)
 
 	if _, exists := ml.MessageListRows[prevID]; exists {
 		ml.setKeyboardSelection(prevID)
-		ml.HighlightMessage(prevID)
+		ml.ScrollToMessage(prevID)
 		return true
 	}
 

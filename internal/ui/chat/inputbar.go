@@ -35,14 +35,16 @@ type InputBar struct {
 	LoadFavorites             func() []database.StickerItem
 	LoadHistory               func() []database.StickerItem
 	OnPasteImage              func(tex *gdk.Texture)
-	OnSelectMessageUp         func() bool
-	OnSelectMessageDown       func() bool
-	OnSelectMessageBlockUp    func() bool
-	OnSelectMessageBlockDown  func() bool
-	OnConfirmMessageSelection func() bool
-	OnCancelMessageSelection  func() bool
-	OnTyping                  func()
-	OnStopTyping              func()
+	OnSelectMessageUp               func() bool
+	OnSelectMessageDown             func() bool
+	OnSelectMessageBlockUp          func() bool
+	OnSelectMessageBlockDown        func() bool
+	OnSelectReferencedMessage       func() bool
+	OnSelectReferencedMessageReturn func() bool
+	OnConfirmMessageSelection       func() bool
+	OnCancelMessageSelection        func() bool
+	OnTyping                        func()
+	OnStopTyping                    func()
 
 	suppressTyping bool
 	ctx            context.Context
@@ -198,22 +200,32 @@ func NewInputBar(ctx context.Context) *InputBar {
 		isCtrl := state&gdk.ControlMask != 0
 		isShift := state&gdk.ShiftMask != 0
 
-		if isCtrl && (keyval == gdk.KEY_Up || keyval == gdk.KEY_KP_Up || name == "Up" || name == "KP_Up") {
+		if isCtrl && isShift && (keyval == gdk.KEY_Up || keyval == gdk.KEY_KP_Up || name == "Up" || name == "KP_Up") {
+			if ib.OnSelectReferencedMessage != nil && ib.OnSelectReferencedMessage() {
+				return true
+			}
+		}
+		if isCtrl && isShift && (keyval == gdk.KEY_Down || keyval == gdk.KEY_KP_Down || name == "Down" || name == "KP_Down") {
+			if ib.OnSelectReferencedMessageReturn != nil && ib.OnSelectReferencedMessageReturn() {
+				return true
+			}
+		}
+		if isCtrl && !isShift && (keyval == gdk.KEY_Up || keyval == gdk.KEY_KP_Up || name == "Up" || name == "KP_Up") {
 			if ib.OnSelectMessageUp != nil && ib.OnSelectMessageUp() {
 				return true
 			}
 		}
-		if isCtrl && (keyval == gdk.KEY_Down || keyval == gdk.KEY_KP_Down || name == "Down" || name == "KP_Down") {
+		if isCtrl && !isShift && (keyval == gdk.KEY_Down || keyval == gdk.KEY_KP_Down || name == "Down" || name == "KP_Down") {
 			if ib.OnSelectMessageDown != nil && ib.OnSelectMessageDown() {
 				return true
 			}
 		}
-		if isCtrl && (keyval == gdk.KEY_Left || keyval == gdk.KEY_KP_Left || name == "Left" || name == "KP_Left") {
+		if isCtrl && !isShift && (keyval == gdk.KEY_Left || keyval == gdk.KEY_KP_Left || name == "Left" || name == "KP_Left") {
 			if ib.OnSelectMessageBlockUp != nil && ib.OnSelectMessageBlockUp() {
 				return true
 			}
 		}
-		if isCtrl && (keyval == gdk.KEY_Right || keyval == gdk.KEY_KP_Right || name == "Right" || name == "KP_Right") {
+		if isCtrl && !isShift && (keyval == gdk.KEY_Right || keyval == gdk.KEY_KP_Right || name == "Right" || name == "KP_Right") {
 			if ib.OnSelectMessageBlockDown != nil && ib.OnSelectMessageBlockDown() {
 				return true
 			}

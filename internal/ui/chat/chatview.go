@@ -255,6 +255,8 @@ func NewChatView() (*ChatView, error) {
 	cv.InputBar.OnSelectMessageDown = cv.MessageList.SelectMessageDown
 	cv.InputBar.OnSelectMessageBlockUp = cv.MessageList.SelectMessageBlockUp
 	cv.InputBar.OnSelectMessageBlockDown = cv.MessageList.SelectMessageBlockDown
+	cv.InputBar.OnSelectReferencedMessage = cv.MessageList.SelectReferencedMessage
+	cv.InputBar.OnSelectReferencedMessageReturn = cv.MessageList.SelectReferencedMessageReturn
 	cv.InputBar.OnConfirmMessageSelection = cv.MessageList.ConfirmKeyboardReply
 	cv.InputBar.OnCancelMessageSelection = func() bool {
 		if cv.MessageList.HasKeyboardSelection() {
@@ -272,19 +274,27 @@ func NewChatView() (*ChatView, error) {
 		isCtrl := state&gdk.ControlMask != 0
 		isShift := state&gdk.ShiftMask != 0
 
-		if isCtrl && (keyval == gdk.KEY_Up || keyval == gdk.KEY_KP_Up || name == "Up" || name == "KP_Up") {
+		if isCtrl && isShift && (keyval == gdk.KEY_Up || keyval == gdk.KEY_KP_Up || name == "Up" || name == "KP_Up") {
+			if cv.MessageList.SelectReferencedMessage() {
+				return true
+			}
+		} else if isCtrl && isShift && (keyval == gdk.KEY_Down || keyval == gdk.KEY_KP_Down || name == "Down" || name == "KP_Down") {
+			if cv.MessageList.SelectReferencedMessageReturn() {
+				return true
+			}
+		} else if isCtrl && !isShift && (keyval == gdk.KEY_Up || keyval == gdk.KEY_KP_Up || name == "Up" || name == "KP_Up") {
 			if cv.MessageList.SelectMessageUp() {
 				return true
 			}
-		} else if isCtrl && (keyval == gdk.KEY_Down || keyval == gdk.KEY_KP_Down || name == "Down" || name == "KP_Down") {
+		} else if isCtrl && !isShift && (keyval == gdk.KEY_Down || keyval == gdk.KEY_KP_Down || name == "Down" || name == "KP_Down") {
 			if cv.MessageList.SelectMessageDown() {
 				return true
 			}
-		} else if isCtrl && (keyval == gdk.KEY_Left || keyval == gdk.KEY_KP_Left || name == "Left" || name == "KP_Left") {
+		} else if isCtrl && !isShift && (keyval == gdk.KEY_Left || keyval == gdk.KEY_KP_Left || name == "Left" || name == "KP_Left") {
 			if cv.MessageList.SelectMessageBlockUp() {
 				return true
 			}
-		} else if isCtrl && (keyval == gdk.KEY_Right || keyval == gdk.KEY_KP_Right || name == "Right" || name == "KP_Right") {
+		} else if isCtrl && !isShift && (keyval == gdk.KEY_Right || keyval == gdk.KEY_KP_Right || name == "Right" || name == "KP_Right") {
 			if cv.MessageList.SelectMessageBlockDown() {
 				return true
 			}
