@@ -41,8 +41,11 @@ type InputBar struct {
 	OnSelectMessageBlockDown  func() bool
 	OnConfirmMessageSelection func() bool
 	OnCancelMessageSelection  func() bool
+	OnTyping                  func()
+	OnStopTyping              func()
 
-	ctx context.Context
+	suppressTyping bool
+	ctx            context.Context
 }
 
 func NewInputBar(ctx context.Context) *InputBar {
@@ -83,6 +86,24 @@ func NewInputBar(ctx context.Context) *InputBar {
 	ib.TextView.SetAcceptsTab(false)
 	ib.TextView.AddCSSClass("message-input-view")
 	inputScrolled.SetChild(ib.TextView)
+
+	buffer := ib.TextView.Buffer()
+	buffer.ConnectChanged(func() {
+		if ib.suppressTyping {
+			return
+		}
+		start, end := buffer.Bounds()
+		text := buffer.Text(start, end, false)
+		if strings.TrimSpace(text) == "" {
+			if ib.OnStopTyping != nil {
+				ib.OnStopTyping()
+			}
+		} else {
+			if ib.OnTyping != nil {
+				ib.OnTyping()
+			}
+		}
+	})
 
 	stickerButton := gtk.NewButtonFromIconName("face-smile-symbolic")
 	stickerButton.SetVAlign(gtk.AlignEnd)
@@ -161,7 +182,12 @@ func NewInputBar(ctx context.Context) *InputBar {
 		if text != "" && ib.OnSendMessage != nil {
 			ib.OnSendMessage(text, ib.ReplyToID)
 			ib.CancelReply()
+			if ib.OnStopTyping != nil {
+				ib.OnStopTyping()
+			}
+			ib.suppressTyping = true
 			buffer.SetText("")
+			ib.suppressTyping = false
 		}
 	}
 
@@ -275,7 +301,14 @@ func (ib *InputBar) SetText(text string) {
 	if ib.TextView != nil {
 		buffer := ib.TextView.Buffer()
 		if buffer != nil {
+			ib.suppressTyping = true
 			buffer.SetText(text)
+			ib.suppressTyping = false
+			if strings.TrimSpace(text) == "" {
+				if ib.OnStopTyping != nil {
+					ib.OnStopTyping()
+				}
+			}
 		}
 		ib.TextView.GrabFocus()
 	}

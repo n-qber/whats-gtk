@@ -49,6 +49,8 @@ type ChatController struct {
 	lastGroupSync   map[string]time.Time
 	cachedGroupInfo map[string]*types.GroupInfo
 	groupMutex      sync.RWMutex
+	typingMu        sync.Mutex
+	typingStates    map[string]*typingState
 }
 
 // NewChatController creates a new ChatController.
@@ -68,6 +70,7 @@ func NewChatController(b *backend.Backend, app *ui.App, db *database.AppDB, msgs
 		lastGroupSync:      make(map[string]time.Time),
 		cachedGroupInfo:    make(map[string]*types.GroupInfo),
 		OldestMessageTimes: make(map[string]time.Time),
+		typingStates:       make(map[string]*typingState),
 	}
 	cc.setupSubscriptions()
 	return cc
@@ -215,6 +218,10 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 		return
 	}
 
+	if cc.selectedJID != nil {
+		cc.StopTyping(*cc.selectedJID)
+	}
+
 	cc.selectedJID = &jid
 	cc.lastSender = ""
 	cc.App.ActiveMainJID = jid.ToNonAD().String()
@@ -237,6 +244,7 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 
 	if cc.App.ChatView != nil {
 		cc.App.ChatView.Clear()
+		cc.App.ChatView.ClearInput()
 	}
 
 	cc.RefreshMessages(jid)
@@ -262,6 +270,7 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 }
 
 func (cc *ChatController) HandleSendMessage(targetJID types.JID, text string, replyToID string) {
+	cc.StopTyping(targetJID)
 	now := time.Now().Format("15:04")
 	msgID := cc.Backend.GenerateMessageID()
 
@@ -390,7 +399,10 @@ func (c *ChatController) HandleDetach() {
 
 		c.App.DetachedChats[jidStr] = cv
 		targetJID, _ := types.ParseJID(jidStr)
+		c.StopTyping(targetJID)
 
+		cv.OnTyping = func() { c.StartTyping(targetJID) }
+		cv.OnStopTyping = func() { c.StopTyping(targetJID) }
 		cv.OnSendMessage = func(text, replyToID string) { c.HandleSendMessage(targetJID, text, replyToID) }
 		cv.OnPasteImage = func(tex *gdk.Texture) { c.HandlePasteImage(targetJID, tex) }
 		cv.OnSendFile = func(path string) { c.HandleSendFile(targetJID, path) }
@@ -464,6 +476,7 @@ func (c *ChatController) HandleDetach() {
 		})
 
 		win.Connect("close-request", func() bool {
+			c.StopTyping(targetJID)
 			delete(c.App.DetachedChats, jidStr)
 			return false
 		})

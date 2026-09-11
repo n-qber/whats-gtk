@@ -46,6 +46,13 @@ func (b *Backend) MarkRead(ctx context.Context, jid types.JID, ids []string, sen
 	return b.Client.MarkRead(ctx, mids, timestamp, jid, sender)
 }
 
+func (b *Backend) SendChatPresence(ctx context.Context, jid types.JID, state types.ChatPresence, media types.ChatPresenceMedia) error {
+	if b.Client == nil || !b.Client.IsConnected() {
+		return nil
+	}
+	return b.Client.SendChatPresence(ctx, jid.ToNonAD(), state, media)
+}
+
 func (b *Backend) GetChats(ctx context.Context) ([]types.JID, error) {
 	return nil, nil
 }

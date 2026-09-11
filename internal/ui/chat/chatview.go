@@ -49,6 +49,8 @@ type ChatView struct {
 	OnSendPollVote          func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
 	OnHeaderClick           func()
 	OnForwardMessages       func(ids []string)
+	OnTyping                func()
+	OnStopTyping            func()
 
 	// Direct Field Accessors for legacy compatibility
 	IsSearching bool
@@ -177,6 +179,16 @@ func NewChatView() (*ChatView, error) {
 	}
 
 	// Wire InputBar
+	cv.InputBar.OnTyping = func() {
+		if cv.OnTyping != nil {
+			cv.OnTyping()
+		}
+	}
+	cv.InputBar.OnStopTyping = func() {
+		if cv.OnStopTyping != nil {
+			cv.OnStopTyping()
+		}
+	}
 	cv.InputBar.OnSendMessage = func(text, replyToID string) {
 		if cv.OnSendMessage != nil {
 			cv.OnSendMessage(text, replyToID)
@@ -361,6 +373,7 @@ func (cv *ChatView) SetConnectionStatus(status string, showReconnect bool) {
 
 func (cv *ChatView) SetNoConversation() {
 	cv.Clear()
+	cv.ClearInput()
 	if cv.Stack != nil {
 		cv.Stack.SetVisibleChildName("empty")
 	}
@@ -496,6 +509,19 @@ func (cv *ChatView) SetAvatar(jid string, tex *gdk.Texture) {
 func (cv *ChatView) SetInputText(text string) {
 	if cv.InputBar != nil {
 		cv.InputBar.SetText(text)
+	}
+}
+
+func (cv *ChatView) ClearInput() {
+	if cv.InputBar != nil {
+		cv.InputBar.CancelReply()
+		cv.InputBar.SetText("")
+	}
+}
+
+func (cv *ChatView) StopTyping() {
+	if cv.OnStopTyping != nil {
+		cv.OnStopTyping()
 	}
 }
 

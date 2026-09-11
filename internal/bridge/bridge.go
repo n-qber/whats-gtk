@@ -109,6 +109,9 @@ func (br *Bridge) Start(ctx context.Context) {
 
 // Shutdown gracefully finishes pending database sync operations and disconnects.
 func (br *Bridge) Shutdown() {
+	if br.Chat != nil {
+		br.Chat.StopAllTyping()
+	}
 	if br.Events != nil {
 		br.Events.WaitSync(3 * time.Second)
 	}
@@ -331,12 +334,16 @@ func (br *Bridge) setupUIHandlers() {
 
 	closeChat := func() {
 		glib.IdleAdd(func() {
+			if br.Chat.SelectedJID() != nil {
+				br.Chat.StopTyping(*br.Chat.SelectedJID())
+			}
 			br.Chat.selectedJID = nil
 			br.App.ActiveMainJID = ""
 			if br.App.Sidebar != nil {
 				br.App.Sidebar.ClearSelection()
 			}
 			if br.App.ChatView != nil {
+				br.App.ChatView.ClearInput()
 				br.App.ChatView.SetNoConversation()
 			}
 		})
@@ -525,6 +532,16 @@ func (br *Bridge) handleKeyPressed(key string, mods gdk.ModifierType) bool {
 }
 
 func (br *Bridge) WireChatView(cv *chat.ChatView) {
+	cv.OnTyping = func() {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Chat.StartTyping(*jid)
+		}
+	}
+	cv.OnStopTyping = func() {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Chat.StopTyping(*jid)
+		}
+	}
 	cv.OnReconnect = func() {
 		go func() {
 			glib.IdleAdd(func() {
