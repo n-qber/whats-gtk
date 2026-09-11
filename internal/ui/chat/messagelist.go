@@ -33,10 +33,12 @@ type MessageList struct {
 	AudioPlayer *AudioPlayer
 
 	// State
-	IsLoadingOlder     bool
-	NoMoreOlder        bool
-	IsSearching        bool
-	KeyboardSelectedID string
+	IsLoadingOlder          bool
+	NoMoreOlder             bool
+	IsSearching             bool
+	KeyboardSelectedID      string
+	QuoteJumpStack          []string
+	PendingKeyboardSelectID string
 
 	// Selection mode state
 	IsSelectionMode     bool
@@ -204,6 +206,9 @@ func (ml *MessageList) Clear() {
 	ml.RowToMessageID = make(map[*gtk.ListBoxRow]string)
 	ml.BubblesByJID = make(map[string][]bubbles.Bubble)
 	ml.InsertIndex = -1
+	ml.KeyboardSelectedID = ""
+	ml.QuoteJumpStack = nil
+	ml.PendingKeyboardSelectID = ""
 }
 
 func (ml *MessageList) ScrollToBottom() {
@@ -604,7 +609,7 @@ func (ml *MessageList) ConfirmKeyboardReply() bool {
 	return false
 }
 
-// ClearKeyboardSelection clears any active keyboard selection highlight.
+// ClearKeyboardSelection clears any active keyboard selection highlight and resets the quote jump stack.
 func (ml *MessageList) ClearKeyboardSelection() {
 	if ml.KeyboardSelectedID != "" {
 		if row, ok := ml.MessageListRows[ml.KeyboardSelectedID]; ok {
@@ -612,6 +617,67 @@ func (ml *MessageList) ClearKeyboardSelection() {
 		}
 		ml.KeyboardSelectedID = ""
 	}
+	ml.QuoteJumpStack = nil
+	ml.PendingKeyboardSelectID = ""
+}
+
+// SelectReferencedMessage jumps the keyboard selection to the message quoted/referenced by the currently selected message.
+func (ml *MessageList) SelectReferencedMessage() bool {
+	if ml.KeyboardSelectedID == "" {
+		return false
+	}
+
+	bubble, ok := ml.MessageRows[ml.KeyboardSelectedID]
+	if !ok || bubble == nil {
+		return false
+	}
+
+	quotedID := bubble.QuotedID()
+	if quotedID == "" {
+		return false
+	}
+
+	currentID := ml.KeyboardSelectedID
+
+	if _, exists := ml.MessageListRows[quotedID]; exists {
+		ml.QuoteJumpStack = append(ml.QuoteJumpStack, currentID)
+		ml.setKeyboardSelection(quotedID)
+		ml.HighlightMessage(quotedID)
+		return true
+	}
+
+	if ml.OnLoadMessageRequest != nil {
+		ml.QuoteJumpStack = append(ml.QuoteJumpStack, currentID)
+		ml.PendingKeyboardSelectID = quotedID
+		ml.OnLoadMessageRequest(quotedID)
+		return true
+	}
+
+	return false
+}
+
+// SelectReferencedMessageReturn jumps the keyboard selection back to the message that referenced the currently selected message.
+func (ml *MessageList) SelectReferencedMessageReturn() bool {
+	if len(ml.QuoteJumpStack) == 0 {
+		return false
+	}
+
+	prevID := ml.QuoteJumpStack[len(ml.QuoteJumpStack)-1]
+	ml.QuoteJumpStack = ml.QuoteJumpStack[:len(ml.QuoteJumpStack)-1]
+
+	if _, exists := ml.MessageListRows[prevID]; exists {
+		ml.setKeyboardSelection(prevID)
+		ml.HighlightMessage(prevID)
+		return true
+	}
+
+	if ml.OnLoadMessageRequest != nil {
+		ml.PendingKeyboardSelectID = prevID
+		ml.OnLoadMessageRequest(prevID)
+		return true
+	}
+
+	return false
 }
 
 func (ml *MessageList) setKeyboardSelection(id string) {
@@ -852,6 +918,16 @@ func (ml *MessageList) addBubble(id string, b bubbles.Bubble, isCont bool) {
 		ml.InsertIndex++
 	} else {
 		ml.ListBox.Append(row)
+	}
+
+	if ml.PendingKeyboardSelectID != "" && id == ml.PendingKeyboardSelectID {
+		targetID := ml.PendingKeyboardSelectID
+		ml.PendingKeyboardSelectID = ""
+		glib.TimeoutAdd(100, func() bool {
+			ml.setKeyboardSelection(targetID)
+			ml.HighlightMessage(targetID)
+			return false
+		})
 	}
 }
 

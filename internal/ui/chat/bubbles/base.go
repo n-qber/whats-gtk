@@ -21,6 +21,7 @@ type Bubble interface {
 	SetReactions(reactions []string)
 	SetPinned(pinned bool)
 	SetQuotedMessage(id, sender, content string)
+	QuotedID() string
 	IsSelf() bool
 	Sender() string
 	Content() string
@@ -63,8 +64,9 @@ type baseBubble struct {
 	viewOnceLabel  *gtk.Label
 }
 
-func (b *baseBubble) Sender() string  { return b.sender }
-func (b *baseBubble) Content() string { return b.content }
+func (b *baseBubble) Sender() string   { return b.sender }
+func (b *baseBubble) Content() string  { return b.content }
+func (b *baseBubble) QuotedID() string { return b.quotedID }
 func (b *baseBubble) SetOnQuotedClick(f func(id string)) { b.onQuotedClick = f }
 func (b *baseBubble) SetOnReplyRequest(f func()) { b.onReplyRequest = f }
 func (b *baseBubble) SetOnReactionRequest(f func(emoji string)) { b.onReactionRequest = f }
