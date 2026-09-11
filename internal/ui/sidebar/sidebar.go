@@ -22,11 +22,13 @@ type Sidebar struct {
 	SearchEntry       *gtk.SearchEntry
 	ProgressBar       *gtk.ProgressBar
 	ProfileCombo      *gtk.ComboBoxText
+	NewChatBtn        *gtk.Button
 	ManageProfilesBtn *gtk.Button
 	OnChatSelected    func(jid string)
 	OnSearch          func(text string)
 	OnProfileSelected func(profileID int64)
 	OnManageProfiles  func()
+	OnNewChat         func()
 
 	profileItems []ProfileItem
 	chatRows     map[string]*adw.ActionRow
@@ -48,6 +50,10 @@ func NewSidebar() (*Sidebar, error) {
 	profileCombo.SetHExpand(true)
 	profileCombo.SetFocusable(false)
 	profileBar.Append(profileCombo)
+
+	newChatBtn := gtk.NewButtonFromIconName("chat-new-symbolic")
+	newChatBtn.SetTooltipText("New Conversation (Ctrl+N)")
+	profileBar.Append(newChatBtn)
 
 	manageBtn := gtk.NewButtonFromIconName("preferences-system-symbolic")
 	manageBtn.SetTooltipText("Manage Profiles")
@@ -84,6 +90,7 @@ func NewSidebar() (*Sidebar, error) {
 		SearchEntry:       searchEntry,
 		ProgressBar:       progressBar,
 		ProfileCombo:      profileCombo,
+		NewChatBtn:        newChatBtn,
 		ManageProfilesBtn: manageBtn,
 		chatRows:          make(map[string]*adw.ActionRow),
 		chatAvatars:       make(map[string]*adw.Avatar),
@@ -103,6 +110,12 @@ func NewSidebar() (*Sidebar, error) {
 		glib.IdleAdd(func() {
 			s.ListBox.GrabFocus()
 		})
+	})
+
+	newChatBtn.ConnectClicked(func() {
+		if s.OnNewChat != nil {
+			s.OnNewChat()
+		}
 	})
 
 	manageBtn.ConnectClicked(func() {
@@ -318,24 +331,44 @@ func (s *Sidebar) MoveChatToTop(jid string) {
 }
 
 func (s *Sidebar) SetAvatar(jid string, tex *gdk.Texture) {
-	// Normalize JID for lookup
-	jid = strings.Split(jid, ".")[0] // Handle potential .AD suffixes
 	if avatar, exists := s.chatAvatars[jid]; exists {
 		if tex != nil {
 			avatar.SetCustomImage(tex)
 		} else {
 			avatar.SetCustomImage(nil)
 		}
-	} else {
-		// Try search by Name if JID didn't match exactly
-		for j, av := range s.chatAvatars {
-			if strings.HasPrefix(j, jid) || strings.HasPrefix(jid, j) {
-				if tex != nil {
-					av.SetCustomImage(tex)
-				} else {
-					av.SetCustomImage(nil)
-				}
+		return
+	}
+
+	cleanJID := jid
+	if atIdx := strings.Index(jid, "@"); atIdx != -1 {
+		user := jid[:atIdx]
+		server := jid[atIdx:]
+		if dotIdx := strings.Index(user, "."); dotIdx != -1 {
+			cleanJID = user[:dotIdx] + server
+		}
+		if colonIdx := strings.Index(user, ":"); colonIdx != -1 {
+			cleanJID = user[:colonIdx] + server
+		}
+	}
+
+	if avatar, exists := s.chatAvatars[cleanJID]; exists {
+		if tex != nil {
+			avatar.SetCustomImage(tex)
+		} else {
+			avatar.SetCustomImage(nil)
+		}
+		return
+	}
+
+	for j, av := range s.chatAvatars {
+		if strings.HasPrefix(j, cleanJID) || strings.HasPrefix(cleanJID, j) {
+			if tex != nil {
+				av.SetCustomImage(tex)
+			} else {
+				av.SetCustomImage(nil)
 			}
+			return
 		}
 	}
 }

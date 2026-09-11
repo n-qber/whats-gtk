@@ -29,6 +29,7 @@ type App struct {
 	OnKeyPressed       func(key string, mods gdk.ModifierType) bool
 	OnModifiersChanged func(mods gdk.ModifierType)
 	OnSearchRequested  func()
+	OnNewChatRequested func()
 	DetachedChats      map[string]*chat.ChatView
 	ActiveMainJID      string
 	EventBus           *events.EventBus
@@ -104,6 +105,11 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 			}
 		} else if state&gdk.ControlMask != 0 {
 			switch keyName {
+			case "n", "N":
+				if a.OnNewChatRequested != nil {
+					a.OnNewChatRequested()
+					return true
+				}
 			case "plus", "equal", "KP_Add":
 				a.Zoom(0.1)
 				return true
@@ -607,6 +613,10 @@ func loadCSS() {
 		}
 		.message-row-reply-target .message-bubble {
 			box-shadow: 0 0 0 2px #3584e4;
+		}
+		.error-label {
+			color: #e01b24;
+			font-size: 9pt;
 		}
 	`)
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), cssProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)

@@ -353,6 +353,21 @@ func (br *Bridge) setupUIHandlers() {
 		closeChat()
 	})
 
+	newConversation := func() {
+		glib.IdleAdd(func() {
+			ui.ShowNewConversationDialog(&br.App.Window.Window, func(phone, message string, done func(err error)) {
+				go func() {
+					err := br.Chat.StartNewConversation(phone, message)
+					done(err)
+				}()
+			})
+		})
+	}
+	br.App.OnNewChatRequested = newConversation
+	br.App.Sidebar.OnNewChat = newConversation
+	br.Input.Register("Control+n", newConversation)
+	br.Input.Register("Control+N", newConversation)
+
 	searchToggle := func() {
 		glib.IdleAdd(func() {
 			if br.App.ChatView != nil {
@@ -439,8 +454,22 @@ func (br *Bridge) setupUIHandlers() {
 // setupServiceHandlers wires ContactService and MediaService callbacks to the UI.
 func (br *Bridge) setupServiceHandlers() {
 	br.Contacts.SetOnAvatarSet(func(jid string, tex *gdk.Texture) {
-		br.App.ChatView.SetAvatar(jid, tex)
-		br.App.Sidebar.SetAvatar(jid, tex)
+		glib.IdleAdd(func() {
+			if br.App.ChatView != nil {
+				br.App.ChatView.SetAvatar(jid, tex)
+				if br.App.ActiveMainJID == jid || br.App.IsSameJID(br.App.ActiveMainJID, jid) {
+					if br.App.ChatView.TopBar != nil && br.App.ChatView.TopBar.Avatar != nil {
+						br.App.ChatView.TopBar.Avatar.SetCustomImage(tex)
+					}
+					if br.App.InfoView != nil && br.App.InfoView.Avatar != nil {
+						br.App.InfoView.Avatar.SetCustomImage(tex)
+					}
+				}
+			}
+			if br.App.Sidebar != nil {
+				br.App.Sidebar.SetAvatar(jid, tex)
+			}
+		})
 	})
 
 	br.Media.SetOnMediaDownloaded(func(task DownloadTask, data []byte, path string) {

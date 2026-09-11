@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"database/sql"
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
@@ -196,3 +197,64 @@ func (cc *ChatController) HandleOpenURL(rawURL string) {
 		})
 	}()
 }
+
+// StartNewConversation checks if a phone number is on WhatsApp, creates/selects the chat, and optionally fills initial text.
+func (cc *ChatController) StartNewConversation(phone string, initialText string) error {
+	var sb strings.Builder
+	for _, ch := range phone {
+		if ch >= '0' && ch <= '9' {
+			sb.WriteRune(ch)
+		}
+	}
+	cleanPhone := sb.String()
+	if len(cleanPhone) < 8 {
+		return fmt.Errorf("phone number is too short")
+	}
+
+	targetJID := cleanPhone + "@s.whatsapp.net"
+
+	if cc.Backend != nil && cc.Backend.Client != nil && cc.Backend.Client.IsConnected() {
+		isOn, err := cc.Backend.Client.IsOnWhatsApp(cc.ctx, []string{cleanPhone})
+		if err == nil && len(isOn) > 0 {
+			if !isOn[0].IsIn {
+				return fmt.Errorf("phone number +%s is not registered on WhatsApp", cleanPhone)
+			}
+			if !isOn[0].JID.IsEmpty() {
+				targetJID = isOn[0].JID.ToNonAD().String()
+			}
+		}
+	}
+
+	contactName := cc.EnsureContactName(targetJID, cleanPhone)
+	if contactName == "" {
+		contactName = cc.Contacts.formatPhoneNumber(cleanPhone)
+	}
+
+	if cc.Contacts != nil {
+		_ = cc.Contacts.GetAvatar(targetJID)
+	}
+
+	glib.IdleAdd(func() {
+		if cc.App != nil && cc.App.Window != nil {
+			cc.App.Window.Present()
+		}
+
+		if cc.App != nil && cc.App.Sidebar != nil {
+			cc.App.Sidebar.UpdateChatRow(targetJID, contactName, false, 0, false)
+			cc.App.Sidebar.SelectChat(targetJID)
+		}
+
+		cc.HandleChatSelected(targetJID)
+
+		if initialText != "" && cc.App != nil && cc.App.ChatView != nil {
+			cc.App.ChatView.SetInputText(initialText)
+		}
+
+		if cc.App != nil && cc.App.ChatView != nil {
+			cc.App.ChatView.FocusEntry()
+		}
+	})
+
+	return nil
+}
+

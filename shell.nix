@@ -36,6 +36,7 @@ in
 pkgs.mkShell {
   nativeBuildInputs = with pkgs; [
     go
+    gnumake
     pkg-config
     gobject-introspection
     sqlite

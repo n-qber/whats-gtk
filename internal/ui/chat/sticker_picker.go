@@ -253,14 +253,33 @@ func (sp *StickerPicker) createTile(item database.StickerItem, fromFavoritesTab 
 	pic.SetContentFit(gtk.ContentFitContain)
 	pic.SetSizeRequest(64, 64)
 
-	pixbuf, _ := gdkpixbuf.NewPixbufFromFileAtSize(item.FilePath, 64, 64)
-	if pixbuf != nil {
-		pic.SetPaintable(gdk.NewTextureForPixbuf(pixbuf))
+	anim, _ := gdkpixbuf.NewPixbufAnimationFromFile(item.FilePath)
+	if anim != nil && !anim.IsStaticImage() {
+		animIter := anim.Iter(nil)
+		if pb := animIter.Pixbuf(); pb != nil {
+			pic.SetPaintable(gdk.NewTextureForPixbuf(pb))
+		}
+		pic.AddTickCallback(func(widget gtk.Widgetter, frameClock gdk.FrameClocker) bool {
+			if animIter != nil {
+				if animIter.Advance(nil) {
+					if pb := animIter.Pixbuf(); pb != nil {
+						pic.SetPaintable(gdk.NewTextureForPixbuf(pb))
+					}
+				}
+				return true
+			}
+			return false
+		})
 	} else {
-		icon := gtk.NewImageFromIconName("image-missing-symbolic")
-		icon.SetPixelSize(32)
-		btn.SetChild(icon)
-		return btn
+		pixbuf, _ := gdkpixbuf.NewPixbufFromFileAtSize(item.FilePath, 64, 64)
+		if pixbuf != nil {
+			pic.SetPaintable(gdk.NewTextureForPixbuf(pixbuf))
+		} else {
+			icon := gtk.NewImageFromIconName("image-missing-symbolic")
+			icon.SetPixelSize(32)
+			btn.SetChild(icon)
+			return btn
+		}
 	}
 
 	btn.SetChild(pic)

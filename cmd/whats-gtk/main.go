@@ -5,18 +5,20 @@ import (
 	"log"
 	_ "embed"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/bridge"
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/events"
 	"whats-gtk/internal/paths"
-	"whats-gtk/internal/tray"
 	"whats-gtk/internal/ui"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
+	"fyne.io/systray"
 )
 
 //go:embed assets/icon.png
@@ -31,6 +33,23 @@ func main() {
 	var initialized bool
 	var mainApp *ui.App
 	var mainBridge *bridge.Bridge
+	var currentAppDB *database.AppDB
+
+	shutdown := func() {
+		if currentAppDB != nil {
+			log.Println("Closing app database cleanly...")
+			_ = currentAppDB.Close()
+			currentAppDB = nil
+		}
+	}
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		shutdown()
+		os.Exit(0)
+	}()
 
 	initApp := func() {
 		if initialized {
@@ -59,6 +78,7 @@ func main() {
 		if err != nil {
 			log.Fatal("Failed to init app db:", err)
 		}
+		currentAppDB = appDB
 
 		// Initialize Backend
 		container, err := backend.InitStore(ctx, storeDBPath)
@@ -86,7 +106,7 @@ func main() {
 		mainBridge = br
 		br.Start(ctx)
 
-		setupTray(ctx, app, application, func() *bridge.Bridge { return mainBridge })
+		setupTray(app, application, shutdown)
 
 		app.Show()
 	}
@@ -118,31 +138,50 @@ func main() {
 		handleArgs()
 	})
 
-	os.Exit(application.Run(os.Args))
+	code := application.Run(os.Args)
+	shutdown()
+	os.Exit(code)
 }
 
-func setupTray(ctx context.Context, app *ui.App, application *adw.Application, getBridge func() *bridge.Bridge) {
-	toggleFunc := func() {
-		glib.IdleAdd(func() {
-			if app.Window.IsVisible() {
-				app.Window.Hide()
-			} else {
-				app.Window.Present()
+func setupTray(app *ui.App, application *adw.Application, shutdown func()) {
+	go func() {
+		systray.Run(func() {
+			systray.SetIcon(iconData)
+			systray.SetTitle("WhatsApp")
+			systray.SetTooltip("WhatsApp GTK")
+
+			toggleFunc := func() {
+				glib.IdleAdd(func() {
+					if app.Window.IsVisible() {
+						app.Window.Hide()
+					} else {
+						app.Window.Present()
+					}
+				})
 			}
-		})
-	}
 
-	quitFunc := func() {
-		if br := getBridge(); br != nil {
-			br.Shutdown()
-		}
-		glib.IdleAdd(func() {
-			application.Release()
-			application.Quit()
-		})
-		os.Exit(0)
-	}
+			systray.SetOnTapped(toggleFunc)
 
-	tray.Setup(ctx, iconData, toggleFunc, quitFunc)
+			mToggle := systray.AddMenuItem("Show/Hide", "Toggle WhatsApp GTK Window")
+			mQuit := systray.AddMenuItem("Quit", "Quit WhatsApp GTK")
+
+			go func() {
+				for {
+					select {
+					case <-mToggle.ClickedCh:
+						toggleFunc()
+					case <-mQuit.ClickedCh:
+						shutdown()
+						glib.IdleAdd(func() {
+							application.Release()
+							application.Quit()
+						})
+						systray.Quit()
+						os.Exit(0)
+					}
+				}
+			}()
+		}, func() {})
+	}()
 }
 
