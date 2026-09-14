@@ -36,6 +36,7 @@ type App struct {
 	OnCancelCycle           func() bool
 	OnCommitCycle           func() bool
 	DetachedChats      map[string]*chat.ChatView
+	DetachedWindows    map[string]*adw.Window
 	ActiveMainJID      string
 	EventBus           *events.EventBus
 	ResolveJIDFunc     func(jid string) string
@@ -90,6 +91,7 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 		ZoomLevel:       1.0,
 		ZoomCSSProvider: gtk.NewCSSProvider(),
 		DetachedChats:   make(map[string]*chat.ChatView),
+		DetachedWindows: make(map[string]*adw.Window),
 		EventBus:        bus,
 	}
 

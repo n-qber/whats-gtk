@@ -168,6 +168,11 @@ func (br *Bridge) registerDefaultHooks() {
 		if br.App.Window.IsActive() && isCurrentChat {
 			return nil
 		}
+		if br.App.DetachedWindows != nil {
+			if dWin, ok := br.App.DetachedWindows[chatJID]; ok && dWin != nil && dWin.IsActive() {
+				return nil
+			}
+		}
 
 		senderJID := br.Messages.ResolveJID(msg.Info.Sender).ToNonAD().String()
 		isGroup := msg.Info.Chat.Server == types.GroupServer

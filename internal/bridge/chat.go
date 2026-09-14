@@ -141,6 +141,16 @@ func (cc *ChatController) HandleLiveMessage(msg *meowEvents.Message, isSyncing b
 			if cc.App.Window.IsActive() {
 				go cc.Backend.MarkRead(cc.ctx, msg.Info.Chat, []string{msg.Info.ID}, msg.Info.Sender, time.Now())
 			}
+		} else if cc.App != nil && cc.App.DetachedWindows != nil {
+			isDetachedActive := false
+			if dWin, ok := cc.App.DetachedWindows[jidStr]; ok && dWin != nil && dWin.IsActive() {
+				isDetachedActive = true
+			} else if dWin, ok := cc.App.DetachedWindows[rawChatJID]; ok && dWin != nil && dWin.IsActive() {
+				isDetachedActive = true
+			}
+			if isDetachedActive {
+				go cc.Backend.MarkRead(cc.ctx, msg.Info.Chat, []string{msg.Info.ID}, msg.Info.Sender, time.Now())
+			}
 		}
 
 		cc.EventBus.Publish(events.Event{
@@ -208,6 +218,20 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 		return
 	}
 	jid = cc.Messages.ResolveJID(jid)
+	cleanJID := jid.ToNonAD().String()
+
+	if cc.App != nil && cc.App.DetachedWindows != nil {
+		if win, ok := cc.App.DetachedWindows[cleanJID]; ok && win != nil {
+			win.Present()
+			return
+		}
+		for dJID, win := range cc.App.DetachedWindows {
+			if cc.App.IsSameJID(dJID, cleanJID) && win != nil {
+				win.Present()
+				return
+			}
+		}
+	}
 
 	if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == jid.ToNonAD().String() {
 		glib.IdleAdd(func() {
@@ -380,15 +404,18 @@ func (c *ChatController) HandleDetach() {
 	if c.selectedJID == nil {
 		return
 	}
-	jidStr := c.selectedJID.ToNonAD().String()
+	targetJID := *c.selectedJID
+	jidStr := targetJID.ToNonAD().String()
 
-	if _, ok := c.App.DetachedChats[jidStr]; ok {
-		return
+	if c.App != nil && c.App.DetachedWindows != nil {
+		if win, ok := c.App.DetachedWindows[jidStr]; ok && win != nil {
+			win.Present()
+			return
+		}
 	}
 
 	glib.IdleAdd(func() {
 		win := adw.NewWindow()
-		win.SetTitle("WhatsApp - Detached Chat")
 		win.SetDefaultSize(600, 700)
 
 		cv, err := chat.NewChatView()
@@ -398,8 +425,49 @@ func (c *ChatController) HandleDetach() {
 		}
 
 		c.App.DetachedChats[jidStr] = cv
-		targetJID, _ := types.ParseJID(jidStr)
+		if c.App.DetachedWindows != nil {
+			c.App.DetachedWindows[jidStr] = win
+		}
 		c.StopTyping(targetJID)
+
+		var headerName string
+		var avatar *gdk.Texture
+		if contact, err := c.DB.GetContact(targetJID.String()); err == nil && contact != nil {
+			headerName = contact.DisplayName()
+			if targetJID.Server == types.GroupServer {
+				headerName = "[G] " + headerName
+			}
+			avatar = c.Contacts.GetAvatar(targetJID.String())
+		} else {
+			headerName = targetJID.String()
+			avatar = c.Contacts.GetAvatar(targetJID.String())
+		}
+
+		win.SetTitle(headerName + " - WhatsApp")
+		cv.SetHeader(headerName, avatar)
+		cv.TopBar.SetDetachAction("go-previous-symbolic", "Attach chat to main window")
+
+		reattaching := false
+		reattachFunc := func() {
+			if reattaching {
+				return
+			}
+			reattaching = true
+			c.StopTyping(targetJID)
+			delete(c.App.DetachedChats, jidStr)
+			if c.App.DetachedWindows != nil {
+				delete(c.App.DetachedWindows, jidStr)
+			}
+			win.Close()
+			if c.App.Sidebar != nil {
+				c.App.Sidebar.SelectChat(jidStr)
+			}
+			c.HandleChatSelected(jidStr)
+			if c.App.Window != nil {
+				c.App.Window.Present()
+			}
+		}
+		cv.OnDetach = reattachFunc
 
 		cv.OnTyping = func() { c.StartTyping(targetJID) }
 		cv.OnStopTyping = func() { c.StopTyping(targetJID) }
@@ -443,7 +511,7 @@ func (c *ChatController) HandleDetach() {
 				c.LoadOlderMessages(targetJID.ToNonAD().String(), id)
 			}
 		}
-		cv.OnSearchMessages = func(query string) { c.HandleSearch(query) }
+		cv.OnSearchMessages = func(query string) { c.RenderMessageSearch(targetJID.ToNonAD().String(), query) }
 		cv.OnCancelSearch = func() { c.CancelMessageSearch(targetJID.ToNonAD().String()) }
 		cv.OnCancelSearchAndJump = func(id string) { c.CancelMessageSearchAndJump(targetJID.ToNonAD().String(), id) }
 		cv.OnSearchResultClick = func(id string) {
@@ -465,9 +533,30 @@ func (c *ChatController) HandleDetach() {
 		cv.OnPinMessage = func(id string, pin bool, duration uint32) { c.HandlePinMessage(targetJID, id, pin, duration) }
 		cv.OnDownloadMedia = c.HandleDownloadMedia
 		cv.OnOpenImage = c.HandleOpenImage
-		cv.OnDetach = c.HandleDetach
+		cv.OnForwardMessages = func(msgIDs []string) {
+			contacts := c.GetForwardContactItems()
+			glib.IdleAdd(func() {
+				chat.ShowForwardDialog(&win.Window, contacts, func(targetJIDs []string) {
+					c.HandleForwardMessages(targetJIDs, msgIDs)
+				})
+			})
+		}
+		cv.OnReconnect = func() {
+			if c.Backend != nil {
+				go func() {
+					glib.IdleAdd(func() {
+						cv.SetConnectionStatus("Connecting to WhatsApp...", false)
+					})
+					_ = c.Backend.Connect()
+				}()
+			}
+		}
 
-		win.Connect("notify::is-active", func() { c.HandleWindowActive() })
+		win.Connect("notify::is-active", func() {
+			if win.IsActive() && c.Backend != nil && c.Backend.Client != nil {
+				go c.Backend.MarkRead(c.ctx, targetJID, []string{}, types.JID{}, time.Now())
+			}
+		})
 
 		win.SetContent(cv.Box)
 		win.Show()
@@ -476,8 +565,14 @@ func (c *ChatController) HandleDetach() {
 		})
 
 		win.Connect("close-request", func() bool {
+			if reattaching {
+				return false
+			}
 			c.StopTyping(targetJID)
 			delete(c.App.DetachedChats, jidStr)
+			if c.App.DetachedWindows != nil {
+				delete(c.App.DetachedWindows, jidStr)
+			}
 			return false
 		})
 
@@ -486,6 +581,9 @@ func (c *ChatController) HandleDetach() {
 		c.App.ChatView.SetNoConversation()
 		c.App.ActiveMainJID = ""
 		c.selectedJID = nil
+		if c.App.Sidebar != nil {
+			c.App.Sidebar.ClearSelection()
+		}
 	})
 }
 

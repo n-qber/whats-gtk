@@ -11,6 +11,8 @@ type TopBar struct {
 	Label  *gtk.Label
 	Avatar *adw.Avatar
 
+	DetachBtn *gtk.Button
+
 	OnHeaderClick func()
 	OnDetach      func()
 }
@@ -26,12 +28,14 @@ func NewTopBar() *TopBar {
 	header.PackStart(headerAvatar)
 
 	detachBtn := gtk.NewButtonFromIconName("window-new-symbolic")
+	detachBtn.SetTooltipText("Detach chat into separate window")
 	header.PackEnd(detachBtn)
 
 	tb := &TopBar{
-		Header: header,
-		Label:  headerLabel,
-		Avatar: headerAvatar,
+		Header:    header,
+		Label:     headerLabel,
+		Avatar:    headerAvatar,
+		DetachBtn: detachBtn,
 	}
 
 	detachBtn.ConnectClicked(func() {
@@ -70,6 +74,17 @@ func (tb *TopBar) SetInfo(name string, tex *gdk.Texture) {
 			tb.Avatar.SetCustomImage(tex)
 		} else {
 			tb.Avatar.SetCustomImage(nil)
+		}
+	}
+}
+
+func (tb *TopBar) SetDetachAction(iconName, tooltip string) {
+	if tb.DetachBtn != nil {
+		if iconName != "" {
+			tb.DetachBtn.SetIconName(iconName)
+		}
+		if tooltip != "" {
+			tb.DetachBtn.SetTooltipText(tooltip)
 		}
 	}
 }
