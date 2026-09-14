@@ -501,9 +501,8 @@ func loadCSS() {
 			background-color: rgba(0, 0, 0, 0.55);
 			color: #ffffff;
 			border-radius: 50%;
-			width: 48px;
-			height: 48px;
-			margin: auto;
+			min-width: 48px;
+			min-height: 48px;
 			box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 		}
 		.image-download-button:hover {
@@ -608,7 +607,7 @@ func loadCSS() {
 			background-color: #ffffff;
 			border-radius: 8px;
 			padding: 4px 12px;
-			margin: 8px auto;
+			margin: 8px 0;
 			font-size: 9pt;
 			color: #54656f;
 			box-shadow: 0 1px 1px rgba(0,0,0,0.05);

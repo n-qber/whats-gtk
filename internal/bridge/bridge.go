@@ -50,7 +50,11 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 	contacts := NewContactService(b, db, ctx)
 	media := NewMediaService(b, db, ctx)
 	msgs := NewMessageService(db, b, contacts, a, ctx)
-	mapper := NewViewMapper(contacts, db, b.Client.Store.ID.ToNonAD().String())
+	var myJID string
+	if b != nil && b.Client != nil && b.Client.Store != nil && b.Client.Store.ID != nil {
+		myJID = b.Client.Store.ID.ToNonAD().String()
+	}
+	mapper := NewViewMapper(contacts, db, myJID)
 	chat := NewChatController(b, a, db, msgs, contacts, media, ctx, bus, mapper)
 	evts := NewEventHandler(b, a, db, msgs, chat, contacts, media, pipeline, ctx)
 	notifier := notifications.NewNotifier(func(chatJID string) {

@@ -281,7 +281,10 @@ func (eh *EventHandler) handleMessage(v *backend.MessageEvent) {
 				
 				votes, _ := eh.DB.GetPollVotes(msgKey.GetID())
 				chatJIDStr := eh.Messages.ResolveJID(msg.Info.Chat).ToNonAD().String()
-				myJID := eh.Backend.Client.Store.ID.ToNonAD().String()
+				var myJID string
+				if eh.Backend != nil && eh.Backend.Client != nil && eh.Backend.Client.Store != nil && eh.Backend.Client.Store.ID != nil {
+					myJID = eh.Backend.Client.Store.ID.ToNonAD().String()
+				}
 				glib.IdleAdd(func() {
 					cv := eh.App.GetChatViewForJID(chatJIDStr)
 					if cv != nil {
@@ -305,6 +308,11 @@ func (eh *EventHandler) handleMessage(v *backend.MessageEvent) {
 
 // handleConnected hides the QR dialog, syncs contacts, clears status banner, and refreshes the sidebar.
 func (eh *EventHandler) handleConnected() {
+	if eh.Backend != nil && eh.Backend.Client != nil && eh.Backend.Client.Store != nil && eh.Backend.Client.Store.ID != nil {
+		if eh.Chat != nil && eh.Chat.Mapper != nil {
+			eh.Chat.Mapper.MyJID = eh.Backend.Client.Store.ID.ToNonAD().String()
+		}
+	}
 	glib.IdleAdd(func() {
 		eh.App.HideQRCode()
 		if eh.App.ChatView != nil {

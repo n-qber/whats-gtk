@@ -5,6 +5,10 @@
 *.db-wal
 *.db-shm
 
+// Session store must NOT be synced between machines (Signal protocol Double Ratchet is stateful per-device)
+store.db
+store.db*
+
 // Ignore compiled binary executables
 whats-gtk
 
