@@ -262,12 +262,26 @@ func (a *AppDB) GetContact(jid string) (*Contact, error) {
 	return &c, nil
 }
 
+func (a *AppDB) SetContactArchived(jid string, isArchived bool) error {
+	query := `UPDATE contacts SET is_archived = ? WHERE jid = ? OR lid = ?`
+	_, err := a.db.Exec(query, isArchived, jid, jid)
+	return err
+}
+
 func (a *AppDB) GetAllContacts(profileID int64, limit int) ([]Contact, error) {
 	var query string
 	var rows *sql.Rows
 	var err error
 
-	if profileID > 0 {
+	if profileID == ProfileArchivedID {
+		query = `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
+		          FROM contacts 
+		          WHERE ((jid NOT LIKE '%@lid') OR (lid IS NULL OR lid = ''))
+		            AND is_archived = 1
+		          ORDER BY is_pinned DESC, last_message_at DESC, saved_name ASC, jid ASC 
+		          LIMIT ?`
+		rows, err = a.db.Query(query, limit)
+	} else if profileID > 0 {
 		query = `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
 		          FROM contacts 
 		          WHERE ((jid NOT LIKE '%@lid') OR (lid IS NULL OR lid = ''))
@@ -275,13 +289,15 @@ func (a *AppDB) GetAllContacts(profileID int64, limit int) ([]Contact, error) {
 		                jid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?)
 		                OR lid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?)
 		            )
+		            AND (is_archived IS NULL OR is_archived = 0)
 		          ORDER BY is_pinned DESC, last_message_at DESC, saved_name ASC, jid ASC 
 		          LIMIT ?`
 		rows, err = a.db.Query(query, profileID, profileID, limit)
 	} else {
 		query = `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
 		          FROM contacts 
-		          WHERE (jid NOT LIKE '%@lid') OR (lid IS NULL OR lid = '')
+		          WHERE ((jid NOT LIKE '%@lid') OR (lid IS NULL OR lid = ''))
+		            AND (is_archived IS NULL OR is_archived = 0)
 		          ORDER BY is_pinned DESC, last_message_at DESC, saved_name ASC, jid ASC 
 		          LIMIT ?`
 		rows, err = a.db.Query(query, limit)
@@ -318,7 +334,25 @@ func (a *AppDB) SearchContacts(profileID int64, term string, limit int) ([]Conta
 	var rows *sql.Rows
 	var err error
 
-	if profileID > 0 {
+	if profileID == ProfileArchivedID {
+		query = `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
+		          FROM contacts 
+		          WHERE (IFNULL(saved_name, '') LIKE ? OR IFNULL(push_name, '') LIKE ? OR jid LIKE ?)
+		          AND (jid NOT LIKE '%@lid' OR lid IS NULL OR lid = '')
+		          AND is_archived = 1
+		          ORDER BY 
+		              is_pinned DESC,
+		              CASE 
+		                  WHEN IFNULL(saved_name, '') = ? COLLATE NOCASE THEN 1
+		                  WHEN IFNULL(saved_name, '') LIKE ? THEN 2
+		                  WHEN IFNULL(push_name, '') = ? COLLATE NOCASE THEN 3
+		                  WHEN IFNULL(push_name, '') LIKE ? THEN 4
+		                  ELSE 5 
+		              END,
+		              last_message_at DESC 
+		          LIMIT ?`
+		rows, err = a.db.Query(query, pattern, pattern, pattern, cleanTerm, prefixPattern, cleanTerm, prefixPattern, limit)
+	} else if profileID > 0 {
 		query = `SELECT jid, lid, saved_name, push_name, avatar_path, is_group, last_message_at, unread_count, is_pinned, is_archived 
 		          FROM contacts 
 		          WHERE (IFNULL(saved_name, '') LIKE ? OR IFNULL(push_name, '') LIKE ? OR jid LIKE ?)
@@ -327,6 +361,7 @@ func (a *AppDB) SearchContacts(profileID int64, term string, limit int) ([]Conta
 		              jid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?)
 		              OR lid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?)
 		          )
+		          AND (is_archived IS NULL OR is_archived = 0)
 		          ORDER BY 
 		              is_pinned DESC,
 		              CASE 
@@ -344,6 +379,7 @@ func (a *AppDB) SearchContacts(profileID int64, term string, limit int) ([]Conta
 		          FROM contacts 
 		          WHERE (IFNULL(saved_name, '') LIKE ? OR IFNULL(push_name, '') LIKE ? OR jid LIKE ?)
 		          AND (jid NOT LIKE '%@lid' OR lid IS NULL OR lid = '')
+		          AND (is_archived IS NULL OR is_archived = 0)
 		          ORDER BY 
 		              is_pinned DESC,
 		              CASE 

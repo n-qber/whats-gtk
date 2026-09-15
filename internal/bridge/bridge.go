@@ -174,6 +174,17 @@ func (br *Bridge) registerDefaultHooks() {
 			}
 		}
 
+		// Archived chats must NOT send notifications
+		if contact, err := br.DB.GetContact(chatJID); err == nil && contact != nil && contact.IsArchived {
+			return nil
+		}
+		rawChatJID := msg.Info.Chat.ToNonAD().String()
+		if rawChatJID != chatJID {
+			if contact, err := br.DB.GetContact(rawChatJID); err == nil && contact != nil && contact.IsArchived {
+				return nil
+			}
+		}
+
 		senderJID := br.Messages.ResolveJID(msg.Info.Sender).ToNonAD().String()
 		isGroup := msg.Info.Chat.Server == types.GroupServer
 
@@ -265,6 +276,28 @@ func (br *Bridge) setupUIHandlers() {
 	}
 
 	br.RefreshProfilesUI()
+
+	if br.App.InfoView != nil {
+		br.App.InfoView.OnArchiveToggled = func(archived bool) {
+			selJID := br.Chat.SelectedJID()
+			if selJID == nil {
+				return
+			}
+			jid := *selJID
+			go func() {
+				if br.Backend != nil {
+					_ = br.Backend.ArchiveChat(context.Background(), jid, archived)
+				}
+				_ = br.DB.SetContactArchived(jid.ToNonAD().String(), archived)
+				br.Chat.RefreshSidebarUI()
+				glib.IdleAdd(func() {
+					if br.App.InfoView != nil {
+						br.App.InfoView.SetArchived(archived)
+					}
+				})
+			}()
+		}
+	}
 
 	br.WireChatView(br.App.ChatView)
 	br.App.Window.Connect("notify::is-active", br.Chat.HandleWindowActive)

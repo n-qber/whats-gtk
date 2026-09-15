@@ -29,6 +29,12 @@ type InfoView struct {
 	ParticipantsList  *gtk.ListBox
 
 	OptionsGroup *adw.PreferencesGroup
+	ArchiveRow   *adw.ActionRow
+	ArchiveSwitch *gtk.Switch
+	ExitRow      *adw.ActionRow
+
+	OnArchiveToggled func(archived bool)
+	isArchiving      bool
 }
 
 func NewInfoView() *InfoView {
@@ -83,11 +89,28 @@ func NewInfoView() *InfoView {
 	muteSwitch.SetVAlign(gtk.AlignCenter)
 	muteRow.AddSuffix(muteSwitch)
 	iv.OptionsGroup.Add(muteRow)
+
+	iv.ArchiveRow = adw.NewActionRow()
+	iv.ArchiveRow.SetTitle("Archive Chat")
+	iv.ArchiveSwitch = gtk.NewSwitch()
+	iv.ArchiveSwitch.SetVAlign(gtk.AlignCenter)
+	iv.ArchiveRow.AddSuffix(iv.ArchiveSwitch)
+	iv.OptionsGroup.Add(iv.ArchiveRow)
+
+	iv.ArchiveSwitch.ConnectStateSet(func(state bool) bool {
+		if iv.isArchiving {
+			return false
+		}
+		if iv.OnArchiveToggled != nil {
+			iv.OnArchiveToggled(state)
+		}
+		return false
+	})
 	
-	exitRow := adw.NewActionRow()
-	exitRow.SetTitle("Exit Group")
-	exitRow.SetTitleLines(1)
-	iv.OptionsGroup.Add(exitRow)
+	iv.ExitRow = adw.NewActionRow()
+	iv.ExitRow.SetTitle("Exit Group")
+	iv.ExitRow.SetTitleLines(1)
+	iv.OptionsGroup.Add(iv.ExitRow)
 
 	mainBox.Append(iv.OptionsGroup)
 
@@ -118,7 +141,19 @@ func (iv *InfoView) SetInfo(name string, jid string, tex *gdk.Texture) {
 	
 	iv.GroupDescGroup.Hide()
 	iv.ParticipantsGroup.Hide()
-	iv.OptionsGroup.Hide()
+	iv.ExitRow.Hide()
+	iv.OptionsGroup.Show()
+}
+
+func (iv *InfoView) SetArchived(archived bool) {
+	iv.isArchiving = true
+	iv.ArchiveSwitch.SetActive(archived)
+	if archived {
+		iv.ArchiveRow.SetTitle("Archived Chat")
+	} else {
+		iv.ArchiveRow.SetTitle("Archive Chat")
+	}
+	iv.isArchiving = false
 }
 
 func (iv *InfoView) SetGroupDetails(desc string, participants []ParticipantModel) {

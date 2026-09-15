@@ -9,3 +9,6 @@
 ## Build Workflow
 - **ALWAYS** prefer `make` (e.g. `make dev` or `make`) instead of `go build`.
 - The Makefile configures fast CGO optimizations (`-O1`) and faster linkers (`mold`), preventing long compilation times for gotk4 bindings.
+
+## Toolset
+  a lot of tools are only available inside of nix-shell

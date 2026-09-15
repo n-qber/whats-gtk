@@ -107,6 +107,13 @@ func (cc *ChatController) HandleSearch(t string) {
 		}
 		var items []events.SidebarItem
 		for _, contact := range c {
+			if cc.activeProfileID == database.ProfileArchivedID {
+				if !contact.IsArchived {
+					continue
+				}
+			} else if contact.IsArchived {
+				continue
+			}
 			tex := cc.Contacts.GetAvatarNoFetch(contact.JID)
 			items = append(items, events.SidebarItem{
 				JID:         contact.JID,

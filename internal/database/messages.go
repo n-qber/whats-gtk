@@ -464,7 +464,21 @@ func (a *AppDB) SearchMessages(profileID int64, query string, limit int) ([]Mess
 			var ftsSql string
 			var ftsRows *sql.Rows
 			var ftsErr error
-			if profileID > 0 {
+			if profileID == ProfileArchivedID {
+				ftsSql = `SELECT m.msg_id, m.chat_jid, m.sender_jid, m.content, m.caption, m.type, m.timestamp, m.status, m.is_from_me, m.thumbnail,
+						m.media_url, m.media_direct_path, m.media_key, m.media_mimetype, m.media_enc_sha256, m.media_sha256, m.media_length,
+						m.media_width, m.media_height,
+						m.quoted_msg_id, m.quoted_msg_content, m.quoted_msg_sender, m.is_pinned, m.is_edited, m.is_view_once, m.is_forwarded
+					FROM messages m
+					JOIN messages_fts f ON m.msg_id = f.msg_id
+					WHERE messages_fts MATCH ?
+					  AND (
+					      m.chat_jid IN (SELECT jid FROM contacts WHERE is_archived = 1)
+					      OR m.chat_jid IN (SELECT lid FROM contacts WHERE is_archived = 1)
+					  )
+					ORDER BY m.timestamp DESC LIMIT ?`
+				ftsRows, ftsErr = a.db.Query(ftsSql, ftsQ, limit)
+			} else if profileID > 0 {
 				ftsSql = `SELECT m.msg_id, m.chat_jid, m.sender_jid, m.content, m.caption, m.type, m.timestamp, m.status, m.is_from_me, m.thumbnail,
 						m.media_url, m.media_direct_path, m.media_key, m.media_mimetype, m.media_enc_sha256, m.media_sha256, m.media_length,
 						m.media_width, m.media_height,
@@ -476,6 +490,10 @@ func (a *AppDB) SearchMessages(profileID int64, query string, limit int) ([]Mess
 					      m.chat_jid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?)
 					      OR m.chat_jid IN (SELECT lid FROM contacts WHERE jid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?))
 					  )
+					  AND (
+					      m.chat_jid NOT IN (SELECT jid FROM contacts WHERE is_archived = 1)
+					      AND m.chat_jid NOT IN (SELECT lid FROM contacts WHERE is_archived = 1 AND lid IS NOT NULL AND lid != '')
+					  )
 					ORDER BY m.timestamp DESC LIMIT ?`
 				ftsRows, ftsErr = a.db.Query(ftsSql, ftsQ, profileID, profileID, limit)
 			} else {
@@ -486,6 +504,10 @@ func (a *AppDB) SearchMessages(profileID int64, query string, limit int) ([]Mess
 					FROM messages m
 					JOIN messages_fts f ON m.msg_id = f.msg_id
 					WHERE messages_fts MATCH ?
+					  AND (
+					      m.chat_jid NOT IN (SELECT jid FROM contacts WHERE is_archived = 1)
+					      AND m.chat_jid NOT IN (SELECT lid FROM contacts WHERE is_archived = 1 AND lid IS NOT NULL AND lid != '')
+					  )
 					ORDER BY m.timestamp DESC LIMIT ?`
 				ftsRows, ftsErr = a.db.Query(ftsSql, ftsQ, limit)
 			}
@@ -510,7 +532,20 @@ func (a *AppDB) SearchMessages(profileID int64, query string, limit int) ([]Mess
 
 	searchStr := "%" + query + "%"
 
-	if profileID > 0 {
+	if profileID == ProfileArchivedID {
+		q = `SELECT msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
+				media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
+				media_width, media_height,
+				quoted_msg_id, quoted_msg_content, quoted_msg_sender, is_pinned, is_edited, is_view_once, is_forwarded
+			  FROM messages 
+			  WHERE (content LIKE ? OR caption LIKE ?)
+			    AND (
+			        chat_jid IN (SELECT jid FROM contacts WHERE is_archived = 1)
+			        OR chat_jid IN (SELECT lid FROM contacts WHERE is_archived = 1)
+			    )
+			  ORDER BY timestamp DESC LIMIT ?`
+		rows, err = a.db.Query(q, searchStr, searchStr, limit)
+	} else if profileID > 0 {
 		q = `SELECT msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
 				media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
 				media_width, media_height,
@@ -521,6 +556,10 @@ func (a *AppDB) SearchMessages(profileID int64, query string, limit int) ([]Mess
 			        chat_jid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?)
 			        OR chat_jid IN (SELECT lid FROM contacts WHERE jid IN (SELECT jid FROM profile_contacts WHERE profile_id = ?))
 			    )
+			    AND (
+			        chat_jid NOT IN (SELECT jid FROM contacts WHERE is_archived = 1)
+			        AND chat_jid NOT IN (SELECT lid FROM contacts WHERE is_archived = 1 AND lid IS NOT NULL AND lid != '')
+			    )
 			  ORDER BY timestamp DESC LIMIT ?`
 		rows, err = a.db.Query(q, searchStr, searchStr, profileID, profileID, limit)
 	} else {
@@ -529,7 +568,11 @@ func (a *AppDB) SearchMessages(profileID int64, query string, limit int) ([]Mess
 				media_width, media_height,
 				quoted_msg_id, quoted_msg_content, quoted_msg_sender, is_pinned, is_edited, is_view_once, is_forwarded
 			  FROM messages 
-			  WHERE content LIKE ? OR caption LIKE ? 
+			  WHERE (content LIKE ? OR caption LIKE ?)
+			    AND (
+			        chat_jid NOT IN (SELECT jid FROM contacts WHERE is_archived = 1)
+			        AND chat_jid NOT IN (SELECT lid FROM contacts WHERE is_archived = 1 AND lid IS NOT NULL AND lid != '')
+			    )
 			  ORDER BY timestamp DESC LIMIT ?`
 		rows, err = a.db.Query(q, searchStr, searchStr, limit)
 	}

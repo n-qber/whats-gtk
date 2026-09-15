@@ -257,9 +257,11 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 		}
 		cc.App.ChatView.SetHeader(headerName, cc.Contacts.GetAvatar(jid.String()))
 		cc.App.InfoView.SetInfo(headerName, jid.String(), cc.Contacts.GetAvatar(jid.String()))
+		cc.App.InfoView.SetArchived(contact.IsArchived)
 	} else {
 		cc.App.ChatView.SetHeader(jid.String(), cc.Contacts.GetAvatar(jid.String()))
 		cc.App.InfoView.SetInfo(jid.String(), jid.String(), cc.Contacts.GetAvatar(jid.String()))
+		cc.App.InfoView.SetArchived(false)
 	}
 	cc.DB.ClearUnreadCount(jid.String())
 	if contact, err := cc.DB.GetContact(jid.String()); err == nil {

@@ -592,3 +592,11 @@ func (b *Backend) ForwardMessage(ctx context.Context, to types.JID, msg database
 
 	return b.Client.SendMessage(ctx, to, waMsg)
 }
+
+func (b *Backend) ArchiveChat(ctx context.Context, jid types.JID, archive bool) error {
+	if b.Client == nil {
+		return fmt.Errorf("client not connected")
+	}
+	patch := appstate.BuildArchive(jid, archive, time.Time{}, nil)
+	return b.Client.SendAppState(ctx, patch)
+}

@@ -151,6 +151,8 @@ func (eh *EventHandler) processEvent(evt backend.AppEvent) {
 		eh.handleUndecryptable(v)
 	case *backend.AppStateEvent:
 		eh.handleAppState(v)
+	case *backend.ArchiveEvent:
+		eh.handleArchive(v)
 	}
 }
 
@@ -678,5 +680,17 @@ func (eh *EventHandler) handleAppState(v *backend.AppStateEvent) {
 		}
 
 		eh.triggerStickerReload()
+	}
+}
+
+func (eh *EventHandler) handleArchive(v *backend.ArchiveEvent) {
+	if v == nil || v.Info == nil || v.Info.Action == nil {
+		return
+	}
+	chatJID := v.Info.JID.ToNonAD().String()
+	isArchived := v.Info.Action.GetArchived()
+	_ = eh.DB.SetContactArchived(chatJID, isArchived)
+	if eh.Chat != nil {
+		eh.Chat.RefreshSidebarUI()
 	}
 }

@@ -108,7 +108,11 @@ func (cc *ChatController) RefreshSidebarUI() {
 	if c, err := cc.DB.GetAllContacts(cc.activeProfileID, 200); err == nil {
 		var items []events.SidebarItem
 		for _, contact := range c {
-			if contact.IsArchived {
+			if cc.activeProfileID == database.ProfileArchivedID {
+				if !contact.IsArchived {
+					continue
+				}
+			} else if contact.IsArchived {
 				continue
 			}
 			tex := cc.Contacts.GetAvatarNoFetch(contact.JID)

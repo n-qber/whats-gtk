@@ -529,15 +529,23 @@ func (s *Sidebar) SetProfiles(profiles []database.Profile, activeID int64) {
 	s.profileItems = nil
 
 	// Add Default "All Chats"
-	s.profileItems = append(s.profileItems, ProfileItem{ID: 0, Name: "All Chats"})
+	s.profileItems = append(s.profileItems, ProfileItem{ID: database.ProfileAllChatsID, Name: "All Chats"})
 	s.ProfileCombo.AppendText("All Chats")
 
-	activeIdx := 0
-	for i, p := range profiles {
+	for _, p := range profiles {
 		s.profileItems = append(s.profileItems, ProfileItem{ID: p.ID, Name: p.Name})
 		s.ProfileCombo.AppendText(p.Name)
-		if p.ID == activeID {
-			activeIdx = i + 1
+	}
+
+	// Add System "Archived" (always the last profile)
+	s.profileItems = append(s.profileItems, ProfileItem{ID: database.ProfileArchivedID, Name: "Archived"})
+	s.ProfileCombo.AppendText("Archived")
+
+	activeIdx := 0
+	for i, item := range s.profileItems {
+		if item.ID == activeID {
+			activeIdx = i
+			break
 		}
 	}
 

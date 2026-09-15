@@ -60,6 +60,10 @@ type AppStateEvent struct {
 	Info *events.AppState
 }
 
+type ArchiveEvent struct {
+	Info *events.Archive
+}
+
 func (b *Backend) registerEventHandlers() {
 	b.Client.AddEventHandler(func(evt interface{}) {
 		var appEvt AppEvent
@@ -95,6 +99,8 @@ func (b *Backend) registerEventHandlers() {
 			appEvt = &UndecryptableEvent{Info: v}
 		case *events.AppState:
 			appEvt = &AppStateEvent{Info: v}
+		case *events.Archive:
+			appEvt = &ArchiveEvent{Info: v}
 		default:
 			if v != nil {
 				// Log the type for debugging

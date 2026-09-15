@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+const (
+	ProfileArchivedID int64 = -1
+	ProfileAllChatsID int64 = 0
+)
+
 type Profile struct {
 	ID           int64
 	Name         string
@@ -175,4 +180,13 @@ func (a *AppDB) SetActiveProfileID(profileID int64) error {
 	val := fmt.Sprintf("%d", profileID)
 	_, err := a.db.Exec("INSERT INTO app_settings (key, value) VALUES ('active_profile_id', ?) ON CONFLICT(key) DO UPDATE SET value = ?", val, val)
 	return err
+}
+
+func (a *AppDB) GetArchivedContactsCount() (int, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM contacts 
+	          WHERE ((jid NOT LIKE '%@lid') OR (lid IS NULL OR lid = ''))
+	            AND is_archived = 1`
+	err := a.db.QueryRow(query).Scan(&count)
+	return count, err
 }

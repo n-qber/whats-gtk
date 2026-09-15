@@ -110,4 +110,65 @@ func TestProfilesDB(t *testing.T) {
 	if activeID != 0 {
 		t.Errorf("Expected active profile to reset to 0, got %d", activeID)
 	}
+
+	// 9. Test Archived Profile (ProfileArchivedID)
+	// Initially no contacts are archived
+	archCount, err := db.GetArchivedContactsCount()
+	if err != nil {
+		t.Fatalf("GetArchivedContactsCount failed: %v", err)
+	}
+	if archCount != 0 {
+		t.Errorf("Expected 0 archived contacts, got %d", archCount)
+	}
+
+	// Archive c2
+	err = db.SetContactArchived(c2.JID, true)
+	if err != nil {
+		t.Fatalf("SetContactArchived failed: %v", err)
+	}
+
+	archCount, err = db.GetArchivedContactsCount()
+	if err != nil || archCount != 1 {
+		t.Fatalf("Expected 1 archived contact, got %d (err: %v)", archCount, err)
+	}
+
+	// GetAllContacts(0) should now only return c1 and c3 (2 contacts)
+	allActive, err := db.GetAllContacts(ProfileAllChatsID, 100)
+	if err != nil {
+		t.Fatalf("GetAllContacts(0) failed: %v", err)
+	}
+	if len(allActive) != 2 {
+		t.Errorf("Expected 2 active contacts, got %d", len(allActive))
+	}
+
+	// GetAllContacts(ProfileArchivedID) should only return c2 (1 contact)
+	archivedContacts, err := db.GetAllContacts(ProfileArchivedID, 100)
+	if err != nil {
+		t.Fatalf("GetAllContacts(ProfileArchivedID) failed: %v", err)
+	}
+	if len(archivedContacts) != 1 || archivedContacts[0].JID != c2.JID {
+		t.Errorf("Expected 1 archived contact (c2), got %v", archivedContacts)
+	}
+
+	// SearchContacts in ProfileArchivedID
+	archSearch, err := db.SearchContacts(ProfileArchivedID, "Member 2", 100)
+	if err != nil || len(archSearch) != 1 || archSearch[0].JID != c2.JID {
+		t.Errorf("Expected to find c2 in ProfileArchivedID search, got: %v (err: %v)", archSearch, err)
+	}
+
+	// SearchContacts for c2 in ProfileAllChatsID should return 0 results
+	activeSearch, err := db.SearchContacts(ProfileAllChatsID, "Member 2", 100)
+	if err != nil || len(activeSearch) != 0 {
+		t.Errorf("Expected 0 results for archived contact in ProfileAllChatsID search, got: %v", activeSearch)
+	}
+
+	// Unarchive c2
+	err = db.SetContactArchived(c2.JID, false)
+	if err != nil {
+		t.Fatalf("SetContactArchived(false) failed: %v", err)
+	}
+	archCount, _ = db.GetArchivedContactsCount()
+	if archCount != 0 {
+		t.Errorf("Expected 0 archived contacts after unarchive, got %d", archCount)
+	}
 }

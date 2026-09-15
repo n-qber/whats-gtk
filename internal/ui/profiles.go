@@ -87,9 +87,9 @@ func (d *ProfileManagerDialog) Refresh() {
 	// 1. System default "All Chats"
 	defaultRow := adw.NewActionRow()
 	defaultRow.SetTitle("All Chats")
-	defaultRow.SetSubtitle("Default profile (shows all conversations)")
+	defaultRow.SetSubtitle("Default profile (shows all active conversations)")
 
-	if activeID == 0 {
+	if activeID == database.ProfileAllChatsID {
 		activeBadge := gtk.NewLabel("Active")
 		activeBadge.AddCSSClass("accent")
 		activeBadge.SetMarginEnd(8)
@@ -97,7 +97,7 @@ func (d *ProfileManagerDialog) Refresh() {
 	} else {
 		selectBtn := gtk.NewButtonWithLabel("Select")
 		selectBtn.ConnectClicked(func() {
-			d.onSelectActive(0)
+			d.onSelectActive(database.ProfileAllChatsID)
 			d.Refresh()
 		})
 		defaultRow.AddSuffix(selectBtn)
@@ -151,6 +151,27 @@ func (d *ProfileManagerDialog) Refresh() {
 
 		d.ListBox.Append(row)
 	}
+
+	// 3. System default "Archived" (always the last profile)
+	archivedRow := adw.NewActionRow()
+	archivedRow.SetTitle("Archived")
+	archivedCount, _ := d.db.GetArchivedContactsCount()
+	archivedRow.SetSubtitle(fmt.Sprintf("%d archived conversations", archivedCount))
+
+	if activeID == database.ProfileArchivedID {
+		activeBadge := gtk.NewLabel("Active")
+		activeBadge.AddCSSClass("accent")
+		activeBadge.SetMarginEnd(8)
+		archivedRow.AddSuffix(activeBadge)
+	} else {
+		selectBtn := gtk.NewButtonWithLabel("Select")
+		selectBtn.ConnectClicked(func() {
+			d.onSelectActive(database.ProfileArchivedID)
+			d.Refresh()
+		})
+		archivedRow.AddSuffix(selectBtn)
+	}
+	d.ListBox.Append(archivedRow)
 }
 
 func (d *ProfileManagerDialog) showCreateProfileDialog() {
