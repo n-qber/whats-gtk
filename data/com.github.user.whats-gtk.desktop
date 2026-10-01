@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=WhatsApp
+GenericName=WhatsApp Client
+Comment=Modern GNOME / GTK4 desktop client for WhatsApp
+Exec=whats-gtk %u
+Icon=com.github.user.whats-gtk
+Terminal=false
+Type=Application
+Categories=Network;InstantMessaging;Chat;GTK;GNOME;
+MimeType=x-scheme-handler/whatsapp;
+Keywords=whatsapp;chat;messaging;im;
+StartupWMClass=whats-gtk

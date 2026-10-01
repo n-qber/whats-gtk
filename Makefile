@@ -32,3 +32,23 @@ build:
 clean:
 	rm -f $(BINARY_NAME)
 
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
+DATADIR ?= $(PREFIX)/share
+APPID = com.github.user.whats-gtk
+
+# Install binary, desktop file, and icon
+install: dev
+	install -d $(DESTDIR)$(BINDIR)
+	install -m 755 $(BINARY_NAME) $(DESTDIR)$(BINDIR)/$(BINARY_NAME)
+	install -d $(DESTDIR)$(DATADIR)/applications
+	install -m 644 data/$(APPID).desktop $(DESTDIR)$(DATADIR)/applications/$(APPID).desktop
+	install -d $(DESTDIR)$(DATADIR)/icons/hicolor/512x512/apps
+	install -m 644 cmd/whats-gtk/assets/icon.png $(DESTDIR)$(DATADIR)/icons/hicolor/512x512/apps/$(APPID).png
+
+# Uninstall installed files
+uninstall:
+	rm -f $(DESTDIR)$(BINDIR)/$(BINARY_NAME)
+	rm -f $(DESTDIR)$(DATADIR)/applications/$(APPID).desktop
+	rm -f $(DESTDIR)$(DATADIR)/icons/hicolor/512x512/apps/$(APPID).png
+
