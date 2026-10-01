@@ -48,29 +48,33 @@ type ChatController struct {
 	searchSerial    int
 	lastGroupSync   map[string]time.Time
 	cachedGroupInfo map[string]*types.GroupInfo
-	groupMutex      sync.RWMutex
-	typingMu        sync.Mutex
-	typingStates    map[string]*typingState
+	groupMutex           sync.RWMutex
+	typingMu             sync.Mutex
+	typingStates         map[string]*typingState
+	incomingPresence     map[string]string
+	incomingTypingTimers map[string]*time.Timer
 }
 
 // NewChatController creates a new ChatController.
 func NewChatController(b *backend.Backend, app *ui.App, db *database.AppDB, msgs *MessageService, contacts *ContactService, media *MediaService, ctx context.Context, bus *events.EventBus, mapper *ViewMapper) *ChatController {
 	activeProfileID, _ := db.GetActiveProfileID()
 	cc := &ChatController{
-		Backend:            b,
-		App:                app,
-		DB:                 db,
-		Messages:           msgs,
-		Contacts:           contacts,
-		Media:              media,
-		Mapper:             mapper,
-		EventBus:           bus,
-		ctx:                ctx,
-		activeProfileID:    activeProfileID,
-		lastGroupSync:      make(map[string]time.Time),
-		cachedGroupInfo:    make(map[string]*types.GroupInfo),
-		OldestMessageTimes: make(map[string]time.Time),
-		typingStates:       make(map[string]*typingState),
+		Backend:              b,
+		App:                  app,
+		DB:                   db,
+		Messages:             msgs,
+		Contacts:             contacts,
+		Media:                media,
+		Mapper:               mapper,
+		EventBus:             bus,
+		ctx:                  ctx,
+		activeProfileID:      activeProfileID,
+		lastGroupSync:        make(map[string]time.Time),
+		cachedGroupInfo:      make(map[string]*types.GroupInfo),
+		OldestMessageTimes:   make(map[string]time.Time),
+		typingStates:         make(map[string]*typingState),
+		incomingPresence:     make(map[string]string),
+		incomingTypingTimers: make(map[string]*time.Timer),
 	}
 	cc.setupSubscriptions()
 	return cc
@@ -271,6 +275,13 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 	if cc.App.ChatView != nil {
 		cc.App.ChatView.Clear()
 		cc.App.ChatView.ClearInput()
+		cc.typingMu.Lock()
+		cachedStatus := ""
+		if cc.incomingPresence != nil {
+			cachedStatus = cc.incomingPresence[jid.ToNonAD().String()]
+		}
+		cc.typingMu.Unlock()
+		cc.App.ChatView.SetTopBarSubtitle(cachedStatus)
 	}
 
 	cc.RefreshMessages(jid)
@@ -278,6 +289,11 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 	if cc.Backend != nil && cc.Backend.Client != nil {
 		if cc.App.Window.IsActive() {
 			go cc.Backend.MarkRead(cc.ctx, jid, []string{}, types.JID{}, time.Now())
+		}
+		if jid.Server != types.GroupServer {
+			go func(target types.JID) {
+				_ = cc.Backend.Client.SubscribePresence(context.Background(), target)
+			}(jid)
 		}
 	}
 

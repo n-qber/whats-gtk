@@ -424,6 +424,12 @@ func (s *Sidebar) UpdateChatRow(jid, name string, isGroup bool, unreadCount int,
 	s.AddChat(jid, name, isGroup, unreadCount, isPinned)
 }
 
+func (s *Sidebar) SetChatSubtitle(jid, subtitle string) {
+	if row, exists := s.chatRows[jid]; exists && row != nil {
+		row.SetSubtitle(subtitle)
+	}
+}
+
 func (s *Sidebar) AddChat(jid, name string, isGroup bool, unreadCount int, isPinned bool) {
 	if _, exists := s.chatRows[jid]; exists {
 		s.UpdateChatRow(jid, name, isGroup, unreadCount, isPinned)

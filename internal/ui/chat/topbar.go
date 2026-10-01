@@ -7,9 +7,9 @@ import (
 )
 
 type TopBar struct {
-	Header *adw.HeaderBar
-	Label  *gtk.Label
-	Avatar *adw.Avatar
+	Header      *adw.HeaderBar
+	WindowTitle *adw.WindowTitle
+	Avatar      *adw.Avatar
 
 	DetachBtn *gtk.Button
 
@@ -20,9 +20,9 @@ type TopBar struct {
 func NewTopBar() *TopBar {
 	header := adw.NewHeaderBar()
 
-	headerLabel := gtk.NewLabel("Select a chat")
-	headerLabel.AddCSSClass("chat-header-name")
-	header.SetTitleWidget(headerLabel)
+	winTitle := adw.NewWindowTitle("Select a chat", "")
+	winTitle.AddCSSClass("chat-header-name")
+	header.SetTitleWidget(winTitle)
 
 	headerAvatar := adw.NewAvatar(32, "", true)
 	header.PackStart(headerAvatar)
@@ -32,10 +32,10 @@ func NewTopBar() *TopBar {
 	header.PackEnd(detachBtn)
 
 	tb := &TopBar{
-		Header:    header,
-		Label:     headerLabel,
-		Avatar:    headerAvatar,
-		DetachBtn: detachBtn,
+		Header:      header,
+		WindowTitle: winTitle,
+		Avatar:      headerAvatar,
+		DetachBtn:   detachBtn,
 	}
 
 	detachBtn.ConnectClicked(func() {
@@ -50,7 +50,7 @@ func NewTopBar() *TopBar {
 			tb.OnHeaderClick()
 		}
 	})
-	headerLabel.AddController(headerTitleGesture)
+	winTitle.AddController(headerTitleGesture)
 
 	headerAvatarGesture := gtk.NewGestureClick()
 	headerAvatarGesture.ConnectReleased(func(nPress int, x, y float64) {
@@ -64,9 +64,10 @@ func NewTopBar() *TopBar {
 }
 
 func (tb *TopBar) SetInfo(name string, tex *gdk.Texture) {
-	tb.Label.SetText(name)
+	tb.WindowTitle.SetTitle(name)
 	if name == "WhatsApp GTK" {
 		tb.Avatar.SetVisible(false)
+		tb.WindowTitle.SetSubtitle("")
 	} else {
 		tb.Avatar.SetVisible(true)
 		tb.Avatar.SetText(name)
@@ -76,6 +77,19 @@ func (tb *TopBar) SetInfo(name string, tex *gdk.Texture) {
 			tb.Avatar.SetCustomImage(nil)
 		}
 	}
+}
+
+func (tb *TopBar) SetSubtitle(sub string) {
+	if tb.WindowTitle != nil {
+		tb.WindowTitle.SetSubtitle(sub)
+	}
+}
+
+func (tb *TopBar) Subtitle() string {
+	if tb.WindowTitle != nil {
+		return tb.WindowTitle.Subtitle()
+	}
+	return ""
 }
 
 func (tb *TopBar) SetDetachAction(iconName, tooltip string) {

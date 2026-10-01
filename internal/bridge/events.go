@@ -153,6 +153,10 @@ func (eh *EventHandler) processEvent(evt backend.AppEvent) {
 		eh.handleAppState(v)
 	case *backend.ArchiveEvent:
 		eh.handleArchive(v)
+	case *backend.PresenceEvent:
+		eh.handlePresence(v)
+	case *backend.ChatPresenceEvent:
+		eh.handleChatPresence(v)
 	}
 }
 
@@ -328,6 +332,9 @@ func (eh *EventHandler) handleConnected() {
 		}
 	})
 	go func() {
+		if eh.Backend != nil && eh.Backend.Client != nil {
+			_ = eh.Backend.Client.SendPresence(eh.ctx, types.PresenceAvailable)
+		}
 		eh.Contacts.Sync(eh.ctx)
 		eh.Chat.RefreshSidebarUI()
 		if eh.Backend != nil {
@@ -699,4 +706,18 @@ func (eh *EventHandler) handleArchive(v *backend.ArchiveEvent) {
 	if eh.Chat != nil {
 		eh.Chat.RefreshSidebarUI()
 	}
+}
+
+func (eh *EventHandler) handlePresence(v *backend.PresenceEvent) {
+	if v == nil || v.Info == nil || eh.Chat == nil {
+		return
+	}
+	eh.Chat.HandleIncomingPresence(v.Info.From, v.Info.Unavailable, v.Info.LastSeen)
+}
+
+func (eh *EventHandler) handleChatPresence(v *backend.ChatPresenceEvent) {
+	if v == nil || v.Info == nil || eh.Chat == nil {
+		return
+	}
+	eh.Chat.HandleIncomingChatPresence(v.Info.Chat, v.Info.Sender, v.Info.State, v.Info.Media)
 }

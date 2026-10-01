@@ -30,6 +30,10 @@ type PresenceEvent struct {
 	Info *events.Presence
 }
 
+type ChatPresenceEvent struct {
+	Info *events.ChatPresence
+}
+
 type OfflineSyncCompletedEvent struct{}
 
 type OfflineSyncPreviewEvent struct {
@@ -87,6 +91,8 @@ func (b *Backend) registerEventHandlers() {
 			appEvt = &ReceiptEvent{Info: v}
 		case *events.Presence:
 			appEvt = &PresenceEvent{Info: v}
+		case *events.ChatPresence:
+			appEvt = &ChatPresenceEvent{Info: v}
 		case *events.OfflineSyncCompleted:
 			appEvt = &OfflineSyncCompletedEvent{}
 		case *events.OfflineSyncPreview:

@@ -631,6 +631,12 @@ func (cv *ChatView) SetTopBarInfo(name string, tex *gdk.Texture) {
 	}
 }
 
+func (cv *ChatView) SetTopBarSubtitle(subtitle string) {
+	if cv.TopBar != nil {
+		cv.TopBar.SetSubtitle(subtitle)
+	}
+}
+
 func (cv *ChatView) setupDropTarget() {
 	dropTarget := gtk.NewDropTarget(glib.TypeInvalid, gdk.ActionCopy)
 	dropTarget.SetPropagationPhase(gtk.PhaseCapture)
