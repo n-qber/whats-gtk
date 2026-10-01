@@ -19,6 +19,8 @@ type TopBar struct {
 
 func NewTopBar() *TopBar {
 	header := adw.NewHeaderBar()
+	header.SetDecorationLayout(WindowDecorationLayout())
+	header.SetShowEndTitleButtons(true)
 
 	winTitle := adw.NewWindowTitle("Select a chat", "")
 	winTitle.AddCSSClass("chat-header-name")

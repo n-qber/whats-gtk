@@ -40,13 +40,14 @@ type App struct {
 	ActiveMainJID      string
 	EventBus           *events.EventBus
 	ResolveJIDFunc     func(jid string) string
+	OnClose            func()
 }
 
 func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 	window := adw.NewApplicationWindow(&app.Application)
 	window.SetTitle("WhatsApp GTK")
 	window.SetDefaultSize(1000, 700)
-	window.SetHideOnClose(true)
+	window.SetHideOnClose(false)
 
 	loadCSS()
 
@@ -97,6 +98,14 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 
 	a.setupSubscriptions()
 
+	window.Connect("close-request", func() bool {
+		if a.OnClose != nil {
+			a.OnClose()
+			return true
+		}
+		return false
+	})
+
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), a.ZoomCSSProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
 	keyCtrl := gtk.NewEventControllerKey()
@@ -112,6 +121,11 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 			}
 		} else if state&gdk.ControlMask != 0 {
 			switch keyName {
+			case "q", "Q":
+				if a.OnClose != nil {
+					a.OnClose()
+					return true
+				}
 			case "n", "N":
 				if a.OnNewChatRequested != nil {
 					a.OnNewChatRequested()

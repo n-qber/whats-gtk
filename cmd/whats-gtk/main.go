@@ -2,10 +2,11 @@ package main
 
 import (
 	"context"
-	"log"
 	_ "embed"
+	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"whats-gtk/internal/backend"
@@ -15,10 +16,10 @@ import (
 	"whats-gtk/internal/paths"
 	"whats-gtk/internal/ui"
 
+	"fyne.io/systray"
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
-	"fyne.io/systray"
 )
 
 //go:embed assets/icon.png
@@ -34,8 +35,14 @@ func main() {
 	var mainApp *ui.App
 	var mainBridge *bridge.Bridge
 	var currentAppDB *database.AppDB
+	var mainBackend *backend.Backend
 
 	shutdown := func() {
+		if mainBackend != nil {
+			log.Println("Disconnecting backend...")
+			mainBackend.Disconnect()
+			mainBackend = nil
+		}
 		if currentAppDB != nil {
 			log.Println("Closing app database cleanly...")
 			_ = currentAppDB.Close()
@@ -43,12 +50,21 @@ func main() {
 		}
 	}
 
+	var quitOnce sync.Once
+	quitApp := func() {
+		quitOnce.Do(func() {
+			log.Println("Quitting whats-gtk...")
+			shutdown()
+			systray.Quit()
+			os.Exit(0)
+		})
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		shutdown()
-		os.Exit(0)
+		quitApp()
 	}()
 
 	initApp := func() {
@@ -90,6 +106,7 @@ func main() {
 		if err != nil {
 			log.Fatal("Failed to create backend:", err)
 		}
+		mainBackend = b
 
 		// Initialize EventBus
 		bus := events.NewEventBus()
@@ -99,6 +116,7 @@ func main() {
 		if err != nil {
 			log.Fatal("Failed to create app UI:", err)
 		}
+		app.OnClose = quitApp
 		mainApp = app
 
 		// Initialize Bridge
@@ -106,7 +124,7 @@ func main() {
 		mainBridge = br
 		br.Start(ctx)
 
-		setupTray(app, application, shutdown)
+		setupTray(app, application, quitApp)
 
 		app.Show()
 	}
@@ -139,11 +157,11 @@ func main() {
 	})
 
 	code := application.Run(os.Args)
-	shutdown()
+	quitApp()
 	os.Exit(code)
 }
 
-func setupTray(app *ui.App, application *adw.Application, shutdown func()) {
+func setupTray(app *ui.App, application *adw.Application, quitApp func()) {
 	go func() {
 		systray.Run(func() {
 			systray.SetIcon(iconData)
@@ -171,13 +189,7 @@ func setupTray(app *ui.App, application *adw.Application, shutdown func()) {
 					case <-mToggle.ClickedCh:
 						toggleFunc()
 					case <-mQuit.ClickedCh:
-						shutdown()
-						glib.IdleAdd(func() {
-							application.Release()
-							application.Quit()
-						})
-						systray.Quit()
-						os.Exit(0)
+						quitApp()
 					}
 				}
 			}()

@@ -417,6 +417,8 @@ func NewChatView() (*ChatView, error) {
 	// 1. Static Empty View Container (with HeaderBar for close button & window controls)
 	emptyBox := gtk.NewBox(gtk.OrientationVertical, 0)
 	emptyHeaderBar := adw.NewHeaderBar()
+	emptyHeaderBar.SetDecorationLayout(WindowDecorationLayout())
+	emptyHeaderBar.SetShowEndTitleButtons(true)
 
 	statusPage := adw.NewStatusPage()
 	statusPage.SetTitle("No Conversation")
