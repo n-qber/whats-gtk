@@ -18,6 +18,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/appstate"
 	meowEvents "go.mau.fi/whatsmeow/types/events"
 	"go.mau.fi/whatsmeow/types"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -459,7 +460,80 @@ func (c *ChatController) HandleDetach() {
 	if c.selectedJID == nil {
 		return
 	}
-	targetJID := *c.selectedJID
+	c.HandleDetachJID(*c.selectedJID)
+}
+
+func (cc *ChatController) HandlePinChat(jidStr string, pin bool) {
+	parsed, err := types.ParseJID(jidStr)
+	if err != nil {
+		return
+	}
+	_ = cc.DB.SetContactPinned(jidStr, pin)
+	cc.RefreshSidebarUI()
+	if cc.Backend != nil && cc.Backend.Client != nil {
+		go func() {
+			patch := appstate.BuildPin(parsed, pin)
+			_ = cc.Backend.Client.SendAppState(context.Background(), patch)
+		}()
+	}
+}
+
+func (cc *ChatController) HandleArchiveChat(jidStr string, archive bool) {
+	parsed, err := types.ParseJID(jidStr)
+	if err != nil {
+		return
+	}
+	_ = cc.DB.SetContactArchived(jidStr, archive)
+	cc.RefreshSidebarUI()
+	if cc.Backend != nil && cc.Backend.Client != nil {
+		go func() {
+			patch := appstate.BuildArchive(parsed, archive, time.Now(), nil)
+			_ = cc.Backend.Client.SendAppState(context.Background(), patch)
+		}()
+	}
+}
+
+func (cc *ChatController) HandleMuteChat(jidStr string, duration time.Duration) {
+	parsed, err := types.ParseJID(jidStr)
+	if err != nil {
+		return
+	}
+	if cc.Backend != nil && cc.Backend.Client != nil {
+		go func() {
+			mute := duration > 0
+			patch := appstate.BuildMute(parsed, mute, duration)
+			_ = cc.Backend.Client.SendAppState(context.Background(), patch)
+		}()
+	}
+}
+
+func (cc *ChatController) HandleMarkUnread(jidStr string, unread bool) {
+	parsed, err := types.ParseJID(jidStr)
+	if err != nil {
+		return
+	}
+	_ = cc.DB.SetContactUnread(jidStr, unread)
+	cc.RefreshSidebarUI()
+	if cc.Backend != nil && cc.Backend.Client != nil {
+		go func() {
+			read := !unread
+			patch := appstate.BuildMarkChatAsRead(parsed, read, time.Now(), nil)
+			_ = cc.Backend.Client.SendAppState(context.Background(), patch)
+		}()
+	}
+}
+
+func (cc *ChatController) HandleClearChat(jidStr string) {
+	_ = cc.DB.DeleteChatMessages(jidStr)
+	glib.IdleAdd(func() {
+		if cv := cc.App.GetChatViewForJID(jidStr); cv != nil {
+			cv.Clear()
+		}
+	})
+	cc.RefreshSidebarUI()
+}
+
+func (c *ChatController) HandleDetachJID(targetJID types.JID) {
 	jidStr := targetJID.ToNonAD().String()
 
 	if c.App != nil && c.App.DetachedWindows != nil {

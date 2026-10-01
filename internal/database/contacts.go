@@ -268,6 +268,22 @@ func (a *AppDB) SetContactArchived(jid string, isArchived bool) error {
 	return err
 }
 
+func (a *AppDB) SetContactPinned(jid string, isPinned bool) error {
+	query := `UPDATE contacts SET is_pinned = ? WHERE jid = ? OR lid = ?`
+	_, err := a.db.Exec(query, isPinned, jid, jid)
+	return err
+}
+
+func (a *AppDB) SetContactUnread(jid string, unread bool) error {
+	var count int
+	if unread {
+		count = 1
+	}
+	query := `UPDATE contacts SET unread_count = ? WHERE jid = ? OR lid = ?`
+	_, err := a.db.Exec(query, count, jid, jid)
+	return err
+}
+
 func (a *AppDB) GetAllContacts(profileID int64, limit int) ([]Contact, error) {
 	var query string
 	var rows *sql.Rows

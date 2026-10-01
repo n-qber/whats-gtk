@@ -3,6 +3,7 @@ package sidebar
 import (
 	"fmt"
 	"strings"
+	"time"
 	"whats-gtk/internal/database"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -30,11 +31,19 @@ type Sidebar struct {
 	OnProfileSelected func(profileID int64)
 	OnManageProfiles  func()
 	OnNewChat         func()
+	OnPinChat         func(jid string, pin bool)
+	OnArchiveChat     func(jid string, archive bool)
+	OnMuteChat        func(jid string, duration time.Duration)
+	OnMarkUnread      func(jid string, unread bool)
+	OnDetachChat      func(jid string)
+	OnClearChat       func(jid string)
 
 	profileItems []ProfileItem
 	chatRows     map[string]*adw.ActionRow
 	chatAvatars  map[string]*adw.Avatar
 	chatIndices  map[string]*gtk.Label
+	chatPinned   map[string]bool
+	chatUnread   map[string]bool
 	isRefreshing bool
 	isCycling    bool
 	originalJID  string
@@ -100,6 +109,8 @@ func NewSidebar() (*Sidebar, error) {
 		chatRows:          make(map[string]*adw.ActionRow),
 		chatAvatars:       make(map[string]*adw.Avatar),
 		chatIndices:       make(map[string]*gtk.Label),
+		chatPinned:        make(map[string]bool),
+		chatUnread:        make(map[string]bool),
 	}
 
 	profileCombo.ConnectChanged(func() {
@@ -416,6 +427,12 @@ func formatChatTitle(name string, isGroup bool, unreadCount int, isPinned bool) 
 }
 
 func (s *Sidebar) UpdateChatRow(jid, name string, isGroup bool, unreadCount int, isPinned bool) {
+	if s.chatPinned != nil {
+		s.chatPinned[jid] = isPinned
+	}
+	if s.chatUnread != nil {
+		s.chatUnread[jid] = unreadCount > 0
+	}
 	if row, exists := s.chatRows[jid]; exists {
 		title := formatChatTitle(name, isGroup, unreadCount, isPinned)
 		row.SetTitle(glib.MarkupEscapeText(title))
@@ -434,6 +451,13 @@ func (s *Sidebar) AddChat(jid, name string, isGroup bool, unreadCount int, isPin
 	if _, exists := s.chatRows[jid]; exists {
 		s.UpdateChatRow(jid, name, isGroup, unreadCount, isPinned)
 		return
+	}
+
+	if s.chatPinned != nil {
+		s.chatPinned[jid] = isPinned
+	}
+	if s.chatUnread != nil {
+		s.chatUnread[jid] = unreadCount > 0
 	}
 
 	row := adw.NewActionRow()
@@ -464,6 +488,14 @@ func (s *Sidebar) AddChat(jid, name string, isGroup bool, unreadCount int, isPin
 	lbRow.SetChild(row)
 	lbRow.SetName(jid)
 	
+	// Right click context menu
+	rightClick := gtk.NewGestureClick()
+	rightClick.SetButton(3)
+	rightClick.ConnectPressed(func(n int, x, y float64) {
+		s.showChatContextMenu(jid, lbRow)
+	})
+	lbRow.AddController(rightClick)
+
 	s.ListBox.Append(lbRow)
 }
 
@@ -471,6 +503,8 @@ func (s *Sidebar) ClearChats() {
 	s.chatRows = make(map[string]*adw.ActionRow)
 	s.chatAvatars = make(map[string]*adw.Avatar)
 	s.chatIndices = make(map[string]*gtk.Label)
+	s.chatPinned = make(map[string]bool)
+	s.chatUnread = make(map[string]bool)
 	for {
 		child := s.ListBox.FirstChild()
 		if child == nil {
@@ -478,6 +512,127 @@ func (s *Sidebar) ClearChats() {
 		}
 		s.ListBox.Remove(child)
 	}
+}
+
+func (s *Sidebar) showChatContextMenu(jid string, targetWidget gtk.Widgetter) {
+	popover := gtk.NewPopover()
+	box := gtk.NewBox(gtk.OrientationVertical, 0)
+
+	isPinned := false
+	if s.chatPinned != nil {
+		isPinned = s.chatPinned[jid]
+	}
+	isUnread := false
+	if s.chatUnread != nil {
+		isUnread = s.chatUnread[jid]
+	}
+
+	// 1. Pin / Unpin
+	pinLabel := "📌 Fixar conversa"
+	if isPinned {
+		pinLabel = "📌 Desafixar conversa"
+	}
+	pinBtn := gtk.NewButtonWithLabel(pinLabel)
+	pinBtn.SetHasFrame(false)
+	pinBtn.ConnectClicked(func() {
+		popover.Popdown()
+		if s.OnPinChat != nil {
+			s.OnPinChat(jid, !isPinned)
+		}
+	})
+	box.Append(pinBtn)
+
+	// 2. Mark as read / unread
+	readLabel := "Marcar como não lida"
+	if isUnread {
+		readLabel = "Marcar como lida"
+	}
+	readBtn := gtk.NewButtonWithLabel(readLabel)
+	readBtn.SetHasFrame(false)
+	readBtn.ConnectClicked(func() {
+		popover.Popdown()
+		if s.OnMarkUnread != nil {
+			s.OnMarkUnread(jid, !isUnread)
+		}
+	})
+	box.Append(readBtn)
+
+	// 3. Mute notifications
+	muteBtn := gtk.NewButtonWithLabel("Silenciar...")
+	muteBtn.SetHasFrame(false)
+	muteBtn.ConnectClicked(func() {
+		popover.Popdown()
+		mutePopover := gtk.NewPopover()
+		mBox := gtk.NewBox(gtk.OrientationVertical, 0)
+
+		durations := []struct {
+			label string
+			d     time.Duration
+		}{
+			{"8 horas", 8 * time.Hour},
+			{"1 semana", 7 * 24 * time.Hour},
+			{"Sempre", 365 * 24 * time.Hour},
+			{"Reativar notificações", 0},
+		}
+
+		for _, item := range durations {
+			d := item.d
+			btn := gtk.NewButtonWithLabel(item.label)
+			btn.SetHasFrame(false)
+			btn.ConnectClicked(func() {
+				mutePopover.Popdown()
+				if s.OnMuteChat != nil {
+					s.OnMuteChat(jid, d)
+				}
+			})
+			mBox.Append(btn)
+		}
+
+		mutePopover.SetChild(mBox)
+		mutePopover.SetParent(targetWidget)
+		mutePopover.Popup()
+	})
+	box.Append(muteBtn)
+
+	// 4. Archive chat
+	archiveBtn := gtk.NewButtonWithLabel("Arquivar conversa")
+	archiveBtn.SetHasFrame(false)
+	archiveBtn.ConnectClicked(func() {
+		popover.Popdown()
+		if s.OnArchiveChat != nil {
+			s.OnArchiveChat(jid, true)
+		}
+	})
+	box.Append(archiveBtn)
+
+	// 5. Detach into separate window
+	detachBtn := gtk.NewButtonWithLabel("Abrir em nova janela")
+	detachBtn.SetHasFrame(false)
+	detachBtn.ConnectClicked(func() {
+		popover.Popdown()
+		if s.OnDetachChat != nil {
+			s.OnDetachChat(jid)
+		}
+	})
+	box.Append(detachBtn)
+
+	box.Append(gtk.NewSeparator(gtk.OrientationHorizontal))
+
+	// 6. Clear chat messages
+	clearBtn := gtk.NewButtonWithLabel("Limpar mensagens")
+	clearBtn.SetHasFrame(false)
+	clearBtn.AddCSSClass("destructive-action")
+	clearBtn.ConnectClicked(func() {
+		popover.Popdown()
+		if s.OnClearChat != nil {
+			s.OnClearChat(jid)
+		}
+	})
+	box.Append(clearBtn)
+
+	popover.SetChild(box)
+	popover.SetParent(targetWidget)
+	popover.Popup()
 }
 
 func (s *Sidebar) MoveChatToTop(jid string) {

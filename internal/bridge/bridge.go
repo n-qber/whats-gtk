@@ -262,6 +262,16 @@ func (br *Bridge) registerDefaultHooks() {
 func (br *Bridge) setupUIHandlers() {
 	br.App.Sidebar.OnChatSelected = br.Chat.HandleChatSelected
 	br.App.Sidebar.OnSearch = br.Chat.HandleSearch
+	br.App.Sidebar.OnPinChat = br.Chat.HandlePinChat
+	br.App.Sidebar.OnArchiveChat = br.Chat.HandleArchiveChat
+	br.App.Sidebar.OnMuteChat = br.Chat.HandleMuteChat
+	br.App.Sidebar.OnMarkUnread = br.Chat.HandleMarkUnread
+	br.App.Sidebar.OnDetachChat = func(jidStr string) {
+		if parsed, err := types.ParseJID(jidStr); err == nil {
+			br.Chat.HandleDetachJID(parsed)
+		}
+	}
+	br.App.Sidebar.OnClearChat = br.Chat.HandleClearChat
 
 	br.App.Sidebar.OnProfileSelected = func(profileID int64) {
 		br.Chat.SetActiveProfileID(profileID)

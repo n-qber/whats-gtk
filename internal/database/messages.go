@@ -175,6 +175,12 @@ func (a *AppDB) DeleteMessage(msgID string) error {
 	return err
 }
 
+func (a *AppDB) DeleteChatMessages(chatJID string) error {
+	query := `DELETE FROM messages WHERE chat_jid = ?`
+	_, err := a.db.Exec(query, chatJID)
+	return err
+}
+
 func (a *AppDB) GetMessage(msgID string) (*Message, error) {
 	query := `SELECT msg_id, chat_jid, sender_jid, content, caption, type, timestamp, status, is_from_me, thumbnail,
 				media_url, media_direct_path, media_key, media_mimetype, media_enc_sha256, media_sha256, media_length,
