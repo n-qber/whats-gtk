@@ -42,6 +42,8 @@ type ChatView struct {
 	OnOpenImage             func(path string)
 	OnSendReaction          func(id, emoji string)
 	OnPinMessage            func(id string, pin bool, duration uint32)
+	OnRevokeMessage         func(id string)
+	OnDeleteLocalMessage    func(id string)
 	OnDetach                func()
 	OnLoadOlder             func()
 	OnLoadMessageRequest    func(id string)
@@ -147,6 +149,16 @@ func NewChatView() (*ChatView, error) {
 	cv.MessageList.OnPinMessage = func(id string, pin bool, duration uint32) {
 		if cv.OnPinMessage != nil {
 			cv.OnPinMessage(id, pin, duration)
+		}
+	}
+	cv.MessageList.OnRevokeMessage = func(id string) {
+		if cv.OnRevokeMessage != nil {
+			cv.OnRevokeMessage(id)
+		}
+	}
+	cv.MessageList.OnDeleteLocalMessage = func(id string) {
+		if cv.OnDeleteLocalMessage != nil {
+			cv.OnDeleteLocalMessage(id)
 		}
 	}
 	cv.MessageList.OnMentionClick = func(jid string) {
@@ -746,4 +758,8 @@ func (cv *ChatView) setupDropTarget() {
 	})
 
 	cv.Box.AddController(dropTarget)
+}
+
+func (cv *ChatView) RemoveMessage(id string) {
+	cv.MessageList.RemoveMessage(id)
 }

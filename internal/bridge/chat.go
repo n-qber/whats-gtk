@@ -402,6 +402,43 @@ func (cc *ChatController) HandlePinMessage(targetJID types.JID, id string, pin b
 	}()
 }
 
+func (cc *ChatController) HandleRevokeMessage(targetJID types.JID, id string) {
+	msg, err := cc.DB.GetMessage(id)
+	if err != nil {
+		return
+	}
+
+	senderJID := types.JID{}
+	if cc.Backend != nil && cc.Backend.Device != nil && cc.Backend.Device.ID != nil {
+		senderJID = *cc.Backend.Device.ID
+	} else if msg.IsFromMe && cc.selectedJID != nil {
+		senderJID = *cc.selectedJID
+	}
+
+	go func() {
+		_, err := cc.Backend.RevokeMessage(cc.ctx, targetJID, senderJID, types.MessageID(id))
+		if err == nil {
+			_ = cc.DB.MarkMessageRevoked(id, targetJID.ToNonAD().String())
+			glib.IdleAdd(func() {
+				if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
+					cv.UpdateMessageContent(id, "🚫 Esta mensagem foi apagada", false)
+				}
+			})
+		} else {
+			fmt.Printf("Bridge: RevokeMessage failed: %v\n", err)
+		}
+	}()
+}
+
+func (cc *ChatController) HandleDeleteLocalMessage(targetJID types.JID, id string) {
+	_ = cc.DB.DeleteMessage(id)
+	glib.IdleAdd(func() {
+		if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
+			cv.RemoveMessage(id)
+		}
+	})
+}
+
 func (c *ChatController) HandleDetach() {
 	if c.selectedJID == nil {
 		return
@@ -533,6 +570,8 @@ func (c *ChatController) HandleDetach() {
 			c.Backend.SendPollVote(context.Background(), targetJID, msgID, sender, isFromMe, selectedOptions)
 		}
 		cv.OnPinMessage = func(id string, pin bool, duration uint32) { c.HandlePinMessage(targetJID, id, pin, duration) }
+		cv.OnRevokeMessage = func(id string) { c.HandleRevokeMessage(targetJID, id) }
+		cv.OnDeleteLocalMessage = func(id string) { c.HandleDeleteLocalMessage(targetJID, id) }
 		cv.OnDownloadMedia = c.HandleDownloadMedia
 		cv.OnOpenImage = c.HandleOpenImage
 		cv.OnForwardMessages = func(msgIDs []string) {

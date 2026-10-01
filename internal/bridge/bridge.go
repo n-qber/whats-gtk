@@ -793,6 +793,16 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 			br.Chat.HandlePinMessage(*jid, id, pin, duration)
 		}
 	}
+	cv.OnRevokeMessage = func(id string) {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Chat.HandleRevokeMessage(*jid, id)
+		}
+	}
+	cv.OnDeleteLocalMessage = func(id string) {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Chat.HandleDeleteLocalMessage(*jid, id)
+		}
+	}
 
 	cv.OnDownloadMedia = br.Chat.HandleDownloadMedia
 	cv.OnOpenImage = br.Chat.HandleOpenImage

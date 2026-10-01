@@ -1,16 +1,20 @@
 package chat
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"whats-gtk/internal/ui/chat/bubbles"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
+	"github.com/diamondburned/gotk4/pkg/gio/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/diamondburned/gotk4/pkg/pango"
@@ -63,6 +67,8 @@ type MessageList struct {
 	OnToggleFavoriteSticker  func(msgID, path string, isFav bool)
 	IsStickerFavorite        func(id, path string) bool
 	OnSendStickerFile        func(path string)
+	OnRevokeMessage          func(id string)
+	OnDeleteLocalMessage     func(id string)
 	OnContextMenuClosed      func()
 }
 
@@ -738,6 +744,28 @@ func (ml *MessageList) showContextMenu(id string, b bubbles.Bubble) {
 	})
 	box := gtk.NewBox(gtk.OrientationVertical, 0)
 	
+	// 1. Reply button
+	replyBtn := gtk.NewButtonWithLabel("Responder")
+	replyBtn.SetHasFrame(false)
+	replyBtn.ConnectClicked(func() {
+		popover.Popdown()
+		if ml.OnReplyRequest != nil {
+			ml.OnReplyRequest(id, b.Sender(), b.Content())
+		}
+	})
+	box.Append(replyBtn)
+
+	// 2. Copy text button (if message has non-empty text and is not sticker)
+	if text := b.Content(); text != "" && !strings.HasPrefix(text, "[Sticker") {
+		copyBtn := gtk.NewButtonWithLabel("Copiar Texto")
+		copyBtn.SetHasFrame(false)
+		copyBtn.ConnectClicked(func() {
+			gdk.DisplayGetDefault().Clipboard().SetText(text)
+			popover.Popdown()
+		})
+		box.Append(copyBtn)
+	}
+
 	fwdBtn := gtk.NewButtonWithLabel("Encaminhar")
 	fwdBtn.SetHasFrame(false)
 	fwdBtn.ConnectClicked(func() {
@@ -806,7 +834,7 @@ func (ml *MessageList) showContextMenu(id string, b bubbles.Bubble) {
 		}
 		box.Append(gtk.NewSeparator(gtk.OrientationHorizontal))
 
-		openBtn := gtk.NewButtonWithLabel("Open")
+		openBtn := gtk.NewButtonWithLabel("Abrir")
 		openBtn.SetHasFrame(false)
 		openBtn.ConnectClicked(func() {
 			exec.Command("xdg-open", mPath).Start()
@@ -814,7 +842,7 @@ func (ml *MessageList) showContextMenu(id string, b bubbles.Bubble) {
 		})
 		box.Append(openBtn)
 
-		folderBtn := gtk.NewButtonWithLabel("Show in Folder")
+		folderBtn := gtk.NewButtonWithLabel("Mostrar na Pasta")
 		folderBtn.SetHasFrame(false)
 		folderBtn.ConnectClicked(func() {
 			uri := "file://" + mPath
@@ -829,7 +857,32 @@ func (ml *MessageList) showContextMenu(id string, b bubbles.Bubble) {
 		})
 		box.Append(folderBtn)
 
-		copyPathBtn := gtk.NewButtonWithLabel("Copy Path")
+		saveAsBtn := gtk.NewButtonWithLabel("Salvar Como...")
+		saveAsBtn.SetHasFrame(false)
+		saveAsBtn.ConnectClicked(func() {
+			popover.Popdown()
+			dialog := gtk.NewFileDialog()
+			dialog.SetInitialName(filepath.Base(mPath))
+			var win *gtk.Window
+			if root := gtk.BaseWidget(b.Widget()).Root(); root != nil {
+				if w, ok := root.Cast().(*gtk.Window); ok {
+					win = w
+				}
+			}
+			dialog.Save(context.Background(), win, func(res gio.AsyncResulter) {
+				file, err := dialog.SaveFinish(res)
+				if err == nil && file != nil {
+					destPath := file.Path()
+					data, err := os.ReadFile(mPath)
+					if err == nil {
+						_ = os.WriteFile(destPath, data, 0644)
+					}
+				}
+			})
+		})
+		box.Append(saveAsBtn)
+
+		copyPathBtn := gtk.NewButtonWithLabel("Copiar Caminho")
 		copyPathBtn.SetHasFrame(false)
 		copyPathBtn.ConnectClicked(func() {
 			gdk.DisplayGetDefault().Clipboard().SetText(mPath)
@@ -845,9 +898,9 @@ func (ml *MessageList) showContextMenu(id string, b bubbles.Bubble) {
 		if ml.IsStickerFavorite != nil {
 			isFav = ml.IsStickerFavorite(id, b.MediaPath())
 		}
-		favLabel := "⭐ Add to Favorites"
+		favLabel := "⭐ Favoritar Figurinha"
 		if isFav {
-			favLabel = "Remove from Favorites"
+			favLabel = "Remover dos Favoritos"
 		}
 		favBtn := gtk.NewButtonWithLabel(favLabel)
 		favBtn.SetHasFrame(false)
@@ -859,7 +912,7 @@ func (ml *MessageList) showContextMenu(id string, b bubbles.Bubble) {
 		})
 		box.Append(favBtn)
 
-		sendAgainBtn := gtk.NewButtonWithLabel("Send Sticker")
+		sendAgainBtn := gtk.NewButtonWithLabel("Enviar Figurinha")
 		sendAgainBtn.SetHasFrame(false)
 		sendAgainBtn.ConnectClicked(func() {
 			popover.Popdown()
@@ -870,9 +923,58 @@ func (ml *MessageList) showContextMenu(id string, b bubbles.Bubble) {
 		box.Append(sendAgainBtn)
 	}
 
+	// Delete message options
+	box.Append(gtk.NewSeparator(gtk.OrientationHorizontal))
+	delBtn := gtk.NewButtonWithLabel("Apagar...")
+	delBtn.SetHasFrame(false)
+	delBtn.AddCSSClass("destructive-action")
+	delBtn.ConnectClicked(func() {
+		popover.Popdown()
+		delPopover := gtk.NewPopover()
+		dBox := gtk.NewBox(gtk.OrientationVertical, 0)
+
+		if b.IsSelf() {
+			delAllBtn := gtk.NewButtonWithLabel("Apagar para todos")
+			delAllBtn.SetHasFrame(false)
+			delAllBtn.AddCSSClass("destructive-action")
+			delAllBtn.ConnectClicked(func() {
+				delPopover.Popdown()
+				if ml.OnRevokeMessage != nil {
+					ml.OnRevokeMessage(id)
+				}
+			})
+			dBox.Append(delAllBtn)
+		}
+
+		delMeBtn := gtk.NewButtonWithLabel("Apagar para mim")
+		delMeBtn.SetHasFrame(false)
+		delMeBtn.ConnectClicked(func() {
+			delPopover.Popdown()
+			if ml.OnDeleteLocalMessage != nil {
+				ml.OnDeleteLocalMessage(id)
+			}
+		})
+		dBox.Append(delMeBtn)
+
+		delPopover.SetChild(dBox)
+		delPopover.SetParent(b.Widget().(gtk.Widgetter))
+		delPopover.Popup()
+	})
+	box.Append(delBtn)
+
 	popover.SetChild(box)
 	popover.SetParent(b.Widget().(gtk.Widgetter))
 	popover.Popup()
+}
+
+func (ml *MessageList) RemoveMessage(id string) {
+	if row, exists := ml.MessageListRows[id]; exists && row != nil {
+		ml.ListBox.Remove(row)
+		delete(ml.MessageListRows, id)
+		delete(ml.RowToMessageID, row)
+		delete(ml.MessageRows, id)
+		delete(ml.SelectedIDs, id)
+	}
 }
 
 func (ml *MessageList) addBubble(id string, b bubbles.Bubble, isCont bool) {
