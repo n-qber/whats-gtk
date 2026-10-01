@@ -285,6 +285,24 @@ func (br *Bridge) setupUIHandlers() {
 		})
 	}
 
+	openPreferences := func() {
+		ui.ShowPreferencesDialog(&br.App.Window.Window, br.Notifier, func() {
+			go func() {
+				if br.Backend != nil {
+					_ = br.Backend.Logout(context.Background())
+				}
+				glib.IdleAdd(func() {
+					if br.App != nil {
+						br.App.ShowQRCode(nil)
+					}
+				})
+			}()
+		})
+	}
+	br.App.Sidebar.OnOpenPreferences = openPreferences
+	br.Input.Register("Control+comma", openPreferences)
+	br.Input.Register("Control+,", openPreferences)
+
 	br.RefreshProfilesUI()
 
 	if br.App.InfoView != nil {

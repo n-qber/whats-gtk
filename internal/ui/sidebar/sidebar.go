@@ -26,10 +26,12 @@ type Sidebar struct {
 	ProfileCombo      *gtk.ComboBoxText
 	NewChatBtn        *gtk.Button
 	ManageProfilesBtn *gtk.Button
+	PreferencesBtn    *gtk.Button
 	OnChatSelected    func(jid string)
 	OnSearch          func(text string)
 	OnProfileSelected func(profileID int64)
 	OnManageProfiles  func()
+	OnOpenPreferences func()
 	OnNewChat         func()
 	OnPinChat         func(jid string, pin bool)
 	OnArchiveChat     func(jid string, archive bool)
@@ -72,6 +74,10 @@ func NewSidebar() (*Sidebar, error) {
 	manageBtn.SetTooltipText("Manage Profiles")
 	profileBar.Append(manageBtn)
 
+	prefBtn := gtk.NewButtonFromIconName("emblem-system-symbolic")
+	prefBtn.SetTooltipText("Preferências (Ctrl+,)")
+	profileBar.Append(prefBtn)
+
 	box.Append(profileBar)
 
 	searchEntry := gtk.NewSearchEntry()
@@ -106,6 +112,7 @@ func NewSidebar() (*Sidebar, error) {
 		ProfileCombo:      profileCombo,
 		NewChatBtn:        newChatBtn,
 		ManageProfilesBtn: manageBtn,
+		PreferencesBtn:    prefBtn,
 		chatRows:          make(map[string]*adw.ActionRow),
 		chatAvatars:       make(map[string]*adw.Avatar),
 		chatIndices:       make(map[string]*gtk.Label),
@@ -137,6 +144,12 @@ func NewSidebar() (*Sidebar, error) {
 	manageBtn.ConnectClicked(func() {
 		if s.OnManageProfiles != nil {
 			s.OnManageProfiles()
+		}
+	})
+
+	prefBtn.ConnectClicked(func() {
+		if s.OnOpenPreferences != nil {
+			s.OnOpenPreferences()
 		}
 	})
 

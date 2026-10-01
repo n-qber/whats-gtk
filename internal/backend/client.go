@@ -56,3 +56,17 @@ func (b *Backend) Disconnect() {
 func (b *Backend) SetEventHandler(handler func(AppEvent)) {
 	b.eventHandler = handler
 }
+
+func (b *Backend) Logout(ctx context.Context) error {
+	if b.Client == nil {
+		return nil
+	}
+	err := b.Client.Logout(ctx)
+	if err != nil {
+		b.Client.Disconnect()
+		if b.Device != nil {
+			_ = b.Device.Delete(ctx)
+		}
+	}
+	return err
+}
