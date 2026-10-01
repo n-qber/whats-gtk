@@ -510,6 +510,43 @@ func loadCSS() {
 		.image-download-button:hover {
 			background-color: rgba(0, 0, 0, 0.75);
 		}
+		.video-container {
+			border-radius: 8px;
+			overflow: hidden;
+		}
+		.video-placeholder {
+			background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.9) 100%);
+			color: #94a3b8;
+			border-radius: 8px;
+		}
+		.video-action-button {
+			background-color: rgba(11, 20, 26, 0.65);
+			color: #ffffff;
+			border-radius: 50%;
+			min-width: 52px;
+			min-height: 52px;
+			box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+			transition: all 180ms ease;
+		}
+		.video-action-button:hover {
+			background-color: rgba(11, 20, 26, 0.85);
+		}
+		.video-loading-bar {
+			min-height: 4px;
+			margin: 0;
+			border-radius: 0 0 8px 8px;
+		}
+		progressbar.video-loading-bar trough {
+			min-height: 4px;
+			background-color: rgba(0, 0, 0, 0.5);
+			border-radius: 0 0 8px 8px;
+			border: none;
+		}
+		progressbar.video-loading-bar progress {
+			background-color: #00a884;
+			min-height: 4px;
+			border-radius: 0 0 8px 8px;
+		}
 		.message-sticker { margin: 4px; }
 		.sticker-picker-popover {
 			padding: 4px;

@@ -264,9 +264,15 @@ func (eh *EventHandler) handleMessage(v *backend.MessageEvent) {
 		eh.Messages.HandleReaction(msg.Info.Chat, msg.Info.Sender, react.GetText(), react.GetKey().GetID(), msg.Info.Timestamp)
 		return
 	}
-	if protoMsg := msg.Message.GetProtocolMessage(); protoMsg != nil && protoMsg.GetType() == waProto.ProtocolMessage_MESSAGE_EDIT {
-		eh.Messages.HandleEdit(protoMsg, msg.Info.Chat)
-		return
+	if protoMsg := msg.Message.GetProtocolMessage(); protoMsg != nil {
+		if protoMsg.GetType() == waProto.ProtocolMessage_MESSAGE_EDIT {
+			eh.Messages.HandleEdit(protoMsg, msg.Info.Chat)
+			return
+		}
+		if protoMsg.GetType() == waProto.ProtocolMessage_REVOKE {
+			eh.Messages.HandleRevoke(protoMsg, msg.Info.Chat)
+			return
+		}
 	}
 
 	if pollUpdate := msg.Message.GetPollUpdateMessage(); pollUpdate != nil {

@@ -126,6 +126,24 @@ func (b *Backend) PinMessage(ctx context.Context, chat types.JID, msgID types.Me
 	return b.Client.SendMessage(ctx, chat, msg)
 }
 
+func (b *Backend) RevokeMessage(ctx context.Context, chat types.JID, sender types.JID, msgID types.MessageID) (whatsmeow.SendResponse, error) {
+	if b.Client == nil {
+		return whatsmeow.SendResponse{}, fmt.Errorf("client not connected")
+	}
+	revokeMsg := b.Client.BuildRevoke(chat, sender, msgID)
+	return b.Client.SendMessage(ctx, chat, revokeMsg)
+}
+
+func (b *Backend) EditMessage(ctx context.Context, chat types.JID, msgID types.MessageID, newText string) (whatsmeow.SendResponse, error) {
+	if b.Client == nil {
+		return whatsmeow.SendResponse{}, fmt.Errorf("client not connected")
+	}
+	newMsg := &waProto.Message{
+		Conversation: proto.String(newText),
+	}
+	editMsg := b.Client.BuildEdit(chat, msgID, newMsg)
+	return b.Client.SendMessage(ctx, chat, editMsg)
+}
 
 type progressFile struct {
 	file        *os.File

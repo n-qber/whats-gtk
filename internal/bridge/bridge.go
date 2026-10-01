@@ -578,14 +578,17 @@ func (br *Bridge) setupServiceHandlers() {
 
 	br.Media.SetOnMediaDownloaded(func(task DownloadTask, data []byte, path string) {
 		glib.IdleAdd(func() {
-			selectedJID := br.Chat.SelectedJID()
-			if selectedJID != nil && selectedJID.ToNonAD().String() == task.ChatJID {
+			if cv := br.App.GetChatViewForJID(task.ChatJID); cv != nil {
+				if task.MsgType == "video" {
+					cv.UpdateMessageVideo(task.ID, path)
+					return
+				}
 				if task.MsgType == "audio" {
-					br.App.ChatView.UpdateMessageAudio(task.ID, path)
+					cv.UpdateMessageAudio(task.ID, path)
 					return
 				}
 				if task.MsgType == "document" {
-					br.App.ChatView.UpdateMessageDocument(task.ID, path)
+					cv.UpdateMessageDocument(task.ID, path)
 					return
 				}
 				if task.MsgType == "sticker" {
@@ -597,7 +600,7 @@ func (br *Bridge) setupServiceHandlers() {
 						tex = gdk.NewTextureForPixbuf(anim.StaticImage())
 						anim = nil
 					}
-					br.App.ChatView.UpdateMessageSticker(task.ID, anim, tex, path)
+					cv.UpdateMessageSticker(task.ID, anim, tex, path)
 					return
 				}
 
@@ -605,7 +608,7 @@ func (br *Bridge) setupServiceHandlers() {
 				if pixbuf == nil { return }
 				tex := gdk.NewTextureForPixbuf(pixbuf)
 
-				br.App.ChatView.UpdateMessageImage(task.ID, tex, path)
+				cv.UpdateMessageImage(task.ID, tex, path)
 			}
 		})
 	})

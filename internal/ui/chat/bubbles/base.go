@@ -15,6 +15,7 @@ type Bubble interface {
 	Widget() gtk.Widgetter
 	UpdateAvatar(tex *gdk.Texture)
 	UpdateImage(tex *gdk.Texture, path string)
+	UpdateVideo(path string)
 	UpdateDocument(path string)
 	SetStatus(status string)
 	SetProgress(fraction float64)
@@ -457,6 +458,7 @@ func (b *baseBubble) UpdateAvatar(tex *gdk.Texture) {
 }
 
 func (b *baseBubble) UpdateImage(tex *gdk.Texture, path string) {}
+func (b *baseBubble) UpdateVideo(path string) {}
 func (b *baseBubble) UpdateDocument(path string) {}
 
 func (b *baseBubble) SetStatus(status string) {

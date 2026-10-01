@@ -572,6 +572,10 @@ func (cv *ChatView) UpdateMessageImage(id string, tex *gdk.Texture, path string)
 	cv.MessageList.UpdateMessageImage(id, tex, path)
 }
 
+func (cv *ChatView) UpdateMessageVideo(id string, path string) {
+	cv.MessageList.UpdateMessageVideo(id, path)
+}
+
 func (cv *ChatView) UpdateMessageAudio(id string, path string) {
 	cv.MessageList.UpdateMessageAudio(id, path)
 }

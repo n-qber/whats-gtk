@@ -1059,9 +1059,8 @@ func (ml *MessageList) AddAudio(id, jid, name string, isSelf, isCont bool, statu
 }
 
 func (ml *MessageList) AddVideo(id, jid, name, text string, thumb *gdk.Texture, path string, isSelf, isCont bool, status, tStr string, av *gdk.Texture, qID, qSender, qContent string, w, h int) {
-	bubble, err := bubbles.NewImageBubble(name, text, nil, thumb, isSelf, status, tStr, av, w, h)
+	bubble, err := bubbles.NewVideoBubble(name, text, thumb, path, isSelf, status, tStr, av, w, h)
 	if err == nil {
-		bubble.SetFilePath(path)
 		bubble.OnDownloadRequest = func() {
 			if ml.OnDownloadMedia != nil {
 				ml.OnDownloadMedia(id)
@@ -1164,6 +1163,12 @@ func (ml *MessageList) UpdateMessageSticker(id string, anim *gdkpixbuf.PixbufAni
 func (ml *MessageList) UpdateMessageImage(id string, tex *gdk.Texture, path string) {
 	if bubble, exists := ml.MessageRows[id]; exists {
 		glib.IdleAdd(func() { bubble.UpdateImage(tex, path) })
+	}
+}
+
+func (ml *MessageList) UpdateMessageVideo(id string, path string) {
+	if bubble, exists := ml.MessageRows[id]; exists {
+		glib.IdleAdd(func() { bubble.UpdateVideo(path) })
 	}
 }
 

@@ -636,3 +636,17 @@ func (ms *MessageService) HandleEdit(protoMsg *waProto.ProtocolMessage, chat typ
 		chatView.UpdateMessageContent(targetID, newContent, true)
 	}
 }
+
+func (ms *MessageService) HandleRevoke(protoMsg *waProto.ProtocolMessage, chat types.JID) {
+	if protoMsg.GetKey() == nil {
+		return
+	}
+	targetID := protoMsg.GetKey().GetID()
+	chatJID := chat.ToNonAD().String()
+	_ = ms.DB.MarkMessageRevoked(targetID, chatJID)
+
+	chatView := ms.App.GetChatViewForJID(chatJID)
+	if chatView != nil {
+		chatView.UpdateMessageContent(targetID, "🚫 Esta mensagem foi apagada", false)
+	}
+}
