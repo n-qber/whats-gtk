@@ -601,8 +601,8 @@ func (c *ChatController) HandleDetachJID(targetJID types.JID) {
 		cv.OnTyping = func() { c.StartTyping(targetJID) }
 		cv.OnStopTyping = func() { c.StopTyping(targetJID) }
 		cv.OnSendMessage = func(text, replyToID string) { c.HandleSendMessage(targetJID, text, replyToID) }
-		cv.OnPasteImage = func(tex *gdk.Texture) { c.HandlePasteImage(targetJID, tex) }
-		cv.OnSendFile = func(path string) { c.HandleSendFile(targetJID, path) }
+		cv.OnPasteImage = func(tex *gdk.Texture, caption ...string) { c.HandlePasteImage(targetJID, tex, caption...) }
+		cv.OnSendFile = func(path string, caption ...string) { c.HandleSendFile(targetJID, path, caption...) }
 		cv.OnSendSticker = func(item database.StickerItem) { c.HandleSendSticker(targetJID, item) }
 		cv.OnSendStickerFile = func(path string) { c.HandleSendStickerFile(targetJID, path) }
 		cv.OnToggleFavoriteSticker = func(item database.StickerItem, isFav bool) { c.HandleToggleFavoriteSticker(item, isFav) }

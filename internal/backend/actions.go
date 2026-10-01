@@ -212,7 +212,7 @@ func (b *Backend) UploadWithProgress(ctx context.Context, data []byte, appInfo w
 	return b.Client.UploadReader(ctx, bytes.NewReader(data), pf, appInfo)
 }
 
-func (b *Backend) SendImage(ctx context.Context, to types.JID, data []byte, mimetype string, onProgress ...func(float64)) (whatsmeow.SendResponse, error) {
+func (b *Backend) SendImage(ctx context.Context, to types.JID, data []byte, mimetype string, caption string, onProgress ...func(float64)) (whatsmeow.SendResponse, error) {
 	var prog func(float64)
 	if len(onProgress) > 0 {
 		prog = onProgress[0]
@@ -222,20 +222,25 @@ func (b *Backend) SendImage(ctx context.Context, to types.JID, data []byte, mime
 		return whatsmeow.SendResponse{}, err
 	}
 
+	imgMsg := &waProto.ImageMessage{
+		URL:           proto.String(resp.URL),
+		DirectPath:    proto.String(resp.DirectPath),
+		MediaKey:      resp.MediaKey,
+		Mimetype:      proto.String(mimetype),
+		FileEncSHA256: resp.FileEncSHA256,
+		FileSHA256:    resp.FileSHA256,
+		FileLength:    proto.Uint64(uint64(len(data))),
+	}
+	if caption != "" {
+		imgMsg.Caption = proto.String(caption)
+	}
+
 	return b.Client.SendMessage(ctx, to, &waProto.Message{
-		ImageMessage: &waProto.ImageMessage{
-			URL:           proto.String(resp.URL),
-			DirectPath:    proto.String(resp.DirectPath),
-			MediaKey:      resp.MediaKey,
-			Mimetype:      proto.String(mimetype),
-			FileEncSHA256: resp.FileEncSHA256,
-			FileSHA256:    resp.FileSHA256,
-			FileLength:    proto.Uint64(uint64(len(data))),
-		},
+		ImageMessage: imgMsg,
 	})
 }
 
-func (b *Backend) SendVideo(ctx context.Context, to types.JID, data []byte, mimetype string, onProgress ...func(float64)) (whatsmeow.SendResponse, error) {
+func (b *Backend) SendVideo(ctx context.Context, to types.JID, data []byte, mimetype string, caption string, onProgress ...func(float64)) (whatsmeow.SendResponse, error) {
 	var prog func(float64)
 	if len(onProgress) > 0 {
 		prog = onProgress[0]
@@ -245,16 +250,21 @@ func (b *Backend) SendVideo(ctx context.Context, to types.JID, data []byte, mime
 		return whatsmeow.SendResponse{}, err
 	}
 
+	vidMsg := &waProto.VideoMessage{
+		URL:           proto.String(resp.URL),
+		DirectPath:    proto.String(resp.DirectPath),
+		MediaKey:      resp.MediaKey,
+		Mimetype:      proto.String(mimetype),
+		FileEncSHA256: resp.FileEncSHA256,
+		FileSHA256:    resp.FileSHA256,
+		FileLength:    proto.Uint64(uint64(len(data))),
+	}
+	if caption != "" {
+		vidMsg.Caption = proto.String(caption)
+	}
+
 	return b.Client.SendMessage(ctx, to, &waProto.Message{
-		VideoMessage: &waProto.VideoMessage{
-			URL:           proto.String(resp.URL),
-			DirectPath:    proto.String(resp.DirectPath),
-			MediaKey:      resp.MediaKey,
-			Mimetype:      proto.String(mimetype),
-			FileEncSHA256: resp.FileEncSHA256,
-			FileSHA256:    resp.FileSHA256,
-			FileLength:    proto.Uint64(uint64(len(data))),
-		},
+		VideoMessage: vidMsg,
 	})
 }
 
@@ -281,7 +291,7 @@ func (b *Backend) SendAudio(ctx context.Context, to types.JID, data []byte, mime
 	})
 }
 
-func (b *Backend) SendDocument(ctx context.Context, to types.JID, data []byte, mimetype, filename string, onProgress ...func(float64)) (whatsmeow.SendResponse, error) {
+func (b *Backend) SendDocument(ctx context.Context, to types.JID, data []byte, mimetype, filename string, caption string, onProgress ...func(float64)) (whatsmeow.SendResponse, error) {
 	var prog func(float64)
 	if len(onProgress) > 0 {
 		prog = onProgress[0]
@@ -291,17 +301,22 @@ func (b *Backend) SendDocument(ctx context.Context, to types.JID, data []byte, m
 		return whatsmeow.SendResponse{}, err
 	}
 
+	docMsg := &waProto.DocumentMessage{
+		URL:           proto.String(resp.URL),
+		DirectPath:    proto.String(resp.DirectPath),
+		MediaKey:      resp.MediaKey,
+		Mimetype:      proto.String(mimetype),
+		FileEncSHA256: resp.FileEncSHA256,
+		FileSHA256:    resp.FileSHA256,
+		FileLength:    proto.Uint64(uint64(len(data))),
+		FileName:      proto.String(filename),
+	}
+	if caption != "" {
+		docMsg.Caption = proto.String(caption)
+	}
+
 	return b.Client.SendMessage(ctx, to, &waProto.Message{
-		DocumentMessage: &waProto.DocumentMessage{
-			URL:           proto.String(resp.URL),
-			DirectPath:    proto.String(resp.DirectPath),
-			MediaKey:      resp.MediaKey,
-			Mimetype:      proto.String(mimetype),
-			FileEncSHA256: resp.FileEncSHA256,
-			FileSHA256:    resp.FileSHA256,
-			FileLength:    proto.Uint64(uint64(len(data))),
-			FileName:      proto.String(filename),
-		},
+		DocumentMessage: docMsg,
 	})
 }
 

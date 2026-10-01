@@ -22,13 +22,17 @@ import (
 )
 
 // HandlePasteImage sends a pasted image with optimistic UI.
-func (cc *ChatController) HandlePasteImage(targetJID types.JID, tex *gdk.Texture) {
+func (cc *ChatController) HandlePasteImage(targetJID types.JID, tex *gdk.Texture, captions ...string) {
+	caption := ""
+	if len(captions) > 0 {
+		caption = captions[0]
+	}
 	now := time.Now().Format("15:04")
 	tempID := fmt.Sprintf("temp_%d", time.Now().UnixNano())
 
 	glib.IdleAdd(func() {
 		if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
-			cv.AddImage(tempID, "", "", "", tex, nil, "", true, false, "pending", now, nil, "", "", "", int(tex.Width()), int(tex.Height()))
+			cv.AddImage(tempID, "", "", caption, tex, nil, "", true, false, "pending", now, nil, "", "", "", int(tex.Width()), int(tex.Height()))
 			cv.ScrollToBottom()
 		}
 	})
@@ -66,7 +70,7 @@ func (cc *ChatController) HandlePasteImage(targetJID types.JID, tex *gdk.Texture
 			}
 		}
 
-		resp, err := cc.Backend.SendImage(cc.ctx, targetJID, data, "image/png", onProgress)
+		resp, err := cc.Backend.SendImage(cc.ctx, targetJID, data, "image/png", caption, onProgress)
 		if err != nil {
 			fmt.Printf("Bridge: SendImage failed: %v\n", err)
 			glib.IdleAdd(func() {
@@ -83,7 +87,7 @@ func (cc *ChatController) HandlePasteImage(targetJID types.JID, tex *gdk.Texture
 		os.WriteFile(path, data, 0644)
 		cc.DB.SaveMessage(database.Message{
 			ID: resp.ID, ChatJID: targetJID.ToNonAD().String(), SenderJID: cc.Backend.Device.ID.ToNonAD().String(),
-			Content: path, Type: "image", Timestamp: resp.Timestamp, Status: "sent", IsFromMe: true,
+			Content: path, Caption: sql.NullString{String: caption, Valid: caption != ""}, Type: "image", Timestamp: resp.Timestamp, Status: "sent", IsFromMe: true,
 			MediaWidth:  sql.NullInt64{Int64: int64(tex.Width()), Valid: true},
 			MediaHeight: sql.NullInt64{Int64: int64(tex.Height()), Valid: true},
 		})
@@ -92,7 +96,11 @@ func (cc *ChatController) HandlePasteImage(targetJID types.JID, tex *gdk.Texture
 }
 
 // HandleSendFile sends a file (image, video, audio, or document) with optimistic UI.
-func (cc *ChatController) HandleSendFile(targetJID types.JID, path string) {
+func (cc *ChatController) HandleSendFile(targetJID types.JID, path string, captions ...string) {
+	caption := ""
+	if len(captions) > 0 {
+		caption = captions[0]
+	}
 	now := time.Now().Format("15:04")
 	filename := filepath.Base(path)
 
@@ -127,13 +135,13 @@ func (cc *ChatController) HandleSendFile(targetJID types.JID, path string) {
 				if pixbuf != nil {
 					tex = gdk.NewTextureForPixbuf(pixbuf)
 				}
-				cv.AddImage(tempID, jidStr, "", "", tex, nil, path, true, false, "pending", now, nil, "", "", "", 0, 0)
+				cv.AddImage(tempID, jidStr, "", caption, tex, nil, path, true, false, "pending", now, nil, "", "", "", 0, 0)
 			case "document":
 				cv.AddDocument(tempID, jidStr, "", filename, nil, true, false, "pending", now, nil, "", "", "")
 			case "audio":
 				cv.AddAudio(tempID, jidStr, "", true, false, "pending", now, nil, "", "", "")
 			case "video":
-				cv.AddVideo(tempID, jidStr, "", "", nil, path, true, false, "pending", now, nil, "", "", "", 0, 0)
+				cv.AddVideo(tempID, jidStr, "", caption, nil, path, true, false, "pending", now, nil, "", "", "", 0, 0)
 			}
 			cv.ScrollToBottom()
 		}
@@ -158,13 +166,13 @@ func (cc *ChatController) HandleSendFile(targetJID types.JID, path string) {
 
 		switch msgType {
 		case "image":
-			resp, err = cc.Backend.SendImage(cc.ctx, targetJID, data, mimetype, onProgress)
+			resp, err = cc.Backend.SendImage(cc.ctx, targetJID, data, mimetype, caption, onProgress)
 		case "video":
-			resp, err = cc.Backend.SendVideo(cc.ctx, targetJID, data, mimetype, onProgress)
+			resp, err = cc.Backend.SendVideo(cc.ctx, targetJID, data, mimetype, caption, onProgress)
 		case "audio":
 			resp, err = cc.Backend.SendAudio(cc.ctx, targetJID, data, mimetype, onProgress)
 		case "document":
-			resp, err = cc.Backend.SendDocument(cc.ctx, targetJID, data, mimetype, filename, onProgress)
+			resp, err = cc.Backend.SendDocument(cc.ctx, targetJID, data, mimetype, filename, caption, onProgress)
 		}
 
 		if err != nil {
@@ -197,7 +205,7 @@ func (cc *ChatController) HandleSendFile(targetJID types.JID, path string) {
 
 		cc.DB.SaveMessage(database.Message{
 			ID: resp.ID, ChatJID: targetJID.ToNonAD().String(), SenderJID: cc.Backend.Device.ID.ToNonAD().String(),
-			Content: dbPath, Type: msgType, Timestamp: resp.Timestamp, Status: "sent", IsFromMe: true,
+			Content: dbPath, Caption: sql.NullString{String: caption, Valid: caption != ""}, Type: msgType, Timestamp: resp.Timestamp, Status: "sent", IsFromMe: true,
 		})
 		cc.DB.UpdateContactTimestamp(targetJID.ToNonAD().String(), resp.Timestamp)
 	}()

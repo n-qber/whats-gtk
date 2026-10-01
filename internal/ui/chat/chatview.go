@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"whats-gtk/internal/database"
 
@@ -28,8 +29,8 @@ type ChatView struct {
 	// High-level Callbacks (consumed by bridge)
 	OnReconnect             func()
 	OnSendMessage           func(text string, replyToID string)
-	OnPasteImage            func(tex *gdk.Texture)
-	OnSendFile              func(path string)
+	OnPasteImage            func(tex *gdk.Texture, caption ...string)
+	OnSendFile              func(path string, caption ...string)
 	OnSendSticker           func(item database.StickerItem)
 	OnSendStickerFile       func(path string)
 	OnToggleFavoriteSticker func(item database.StickerItem, isFav bool)
@@ -210,20 +211,33 @@ func NewChatView() (*ChatView, error) {
 			cv.OnStopTyping()
 		}
 	}
+
 	cv.InputBar.OnSendMessage = func(text, replyToID string) {
 		if cv.OnSendMessage != nil {
 			cv.OnSendMessage(text, replyToID)
 		}
 	}
 	cv.InputBar.OnSendFile = func(path string) {
-		if cv.OnSendFile != nil {
-			cv.OnSendFile(path)
+		ext := strings.ToLower(filepath.Ext(path))
+		isMedia := ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp" || ext == ".gif" || ext == ".mp4" || ext == ".mov" || ext == ".mkv" || ext == ".webm"
+		if isMedia {
+			ShowMediaCaptionDialog(cv.getParentWindow(), path, nil, func(caption string) {
+				if cv.OnSendFile != nil {
+					cv.OnSendFile(path, caption)
+				}
+			})
+		} else {
+			if cv.OnSendFile != nil {
+				cv.OnSendFile(path)
+			}
 		}
 	}
 	cv.InputBar.OnPasteImage = func(tex *gdk.Texture) {
-		if cv.OnPasteImage != nil {
-			cv.OnPasteImage(tex)
-		}
+		ShowMediaCaptionDialog(cv.getParentWindow(), "", tex, func(caption string) {
+			if cv.OnPasteImage != nil {
+				cv.OnPasteImage(tex, caption)
+			}
+		})
 	}
 	cv.InputBar.OnSendSticker = func(item database.StickerItem) {
 		if cv.OnSendSticker != nil {
@@ -673,19 +687,34 @@ func (cv *ChatView) setupDropTarget() {
 			return false
 		}
 
+		sendDroppedPath := func(p string) bool {
+			if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+				ext := strings.ToLower(filepath.Ext(p))
+				isMedia := ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp" || ext == ".gif" || ext == ".mp4" || ext == ".mov" || ext == ".mkv" || ext == ".webm"
+				if isMedia {
+					ShowMediaCaptionDialog(cv.getParentWindow(), p, nil, func(caption string) {
+						if cv.OnSendFile != nil {
+							cv.OnSendFile(p, caption)
+						}
+					})
+				} else {
+					if cv.OnSendFile != nil {
+						cv.OnSendFile(p)
+					}
+				}
+				return true
+			}
+			return false
+		}
+
 		// 1. gdk.FileList
 		if fl, ok := goVal.(*gdk.FileList); ok && fl != nil {
 			handled := false
 			for _, file := range fl.Files() {
 				if file != nil {
 					p := file.Path()
-					if p != "" {
-						if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-							if cv.OnSendFile != nil {
-								cv.OnSendFile(p)
-								handled = true
-							}
-						}
+					if p != "" && sendDroppedPath(p) {
+						handled = true
 					}
 				}
 			}
@@ -696,12 +725,7 @@ func (cv *ChatView) setupDropTarget() {
 		if file, ok := goVal.(*gio.File); ok && file != nil {
 			p := file.Path()
 			if p != "" {
-				if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-					if cv.OnSendFile != nil {
-						cv.OnSendFile(p)
-						return true
-					}
-				}
+				return sendDroppedPath(p)
 			}
 		}
 
@@ -709,21 +733,18 @@ func (cv *ChatView) setupDropTarget() {
 		if filer, ok := goVal.(gio.Filer); ok && filer != nil {
 			p := filer.Path()
 			if p != "" {
-				if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-					if cv.OnSendFile != nil {
-						cv.OnSendFile(p)
-						return true
-					}
-				}
+				return sendDroppedPath(p)
 			}
 		}
 
 		// 4. gdk.Texture
 		if tex, ok := goVal.(*gdk.Texture); ok && tex != nil {
-			if cv.OnPasteImage != nil {
-				cv.OnPasteImage(tex)
-				return true
-			}
+			ShowMediaCaptionDialog(cv.getParentWindow(), "", tex, func(caption string) {
+				if cv.OnPasteImage != nil {
+					cv.OnPasteImage(tex, caption)
+				}
+			})
+			return true
 		}
 
 		// 5. String (URI list or file path)
@@ -748,13 +769,8 @@ func (cv *ChatView) setupDropTarget() {
 				} else if strings.HasPrefix(line, "/") {
 					p = line
 				}
-				if p != "" {
-					if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-						if cv.OnSendFile != nil {
-							cv.OnSendFile(p)
-							handled = true
-						}
-					}
+				if p != "" && sendDroppedPath(p) {
+					handled = true
 				}
 			}
 			return handled
@@ -768,4 +784,13 @@ func (cv *ChatView) setupDropTarget() {
 
 func (cv *ChatView) RemoveMessage(id string) {
 	cv.MessageList.RemoveMessage(id)
+}
+
+func (cv *ChatView) getParentWindow() *gtk.Window {
+	if root := gtk.BaseWidget(cv.Box).Root(); root != nil {
+		if w, ok := root.Cast().(*gtk.Window); ok {
+			return w
+		}
+	}
+	return nil
 }

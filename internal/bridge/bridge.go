@@ -703,14 +703,14 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 			br.Chat.HandleSendMessage(*jid, text, replyToID)
 		}
 	}
-	cv.OnPasteImage = func(tex *gdk.Texture) {
+	cv.OnPasteImage = func(tex *gdk.Texture, caption ...string) {
 		if jid := br.Chat.SelectedJID(); jid != nil {
-			br.Chat.HandlePasteImage(*jid, tex)
+			br.Chat.HandlePasteImage(*jid, tex, caption...)
 		}
 	}
-	cv.OnSendFile = func(path string) {
+	cv.OnSendFile = func(path string, caption ...string) {
 		if jid := br.Chat.SelectedJID(); jid != nil {
-			br.Chat.HandleSendFile(*jid, path)
+			br.Chat.HandleSendFile(*jid, path, caption...)
 		}
 	}
 	cv.OnSendSticker = func(item database.StickerItem) {
