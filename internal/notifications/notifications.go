@@ -1,6 +1,8 @@
 package notifications
 
 import (
+	"os"
+	"os/exec"
 	"sync"
 
 	"github.com/godbus/dbus/v5"
@@ -8,9 +10,10 @@ import (
 
 // Notifier sends desktop notifications via D-Bus org.freedesktop.Notifications and handles click actions.
 type Notifier struct {
-	conn     *dbus.Conn
-	obj      dbus.BusObject
-	onAction func(chatJID string)
+	conn         *dbus.Conn
+	obj          dbus.BusObject
+	onAction     func(chatJID string)
+	soundEnabled bool
 
 	mu      sync.Mutex
 	chatMap map[uint32]string
@@ -24,10 +27,11 @@ func NewNotifier(onAction func(chatJID string)) *Notifier {
 	}
 	obj := conn.Object("org.freedesktop.Notifications", "/org/freedesktop/Notifications")
 	n := &Notifier{
-		conn:     conn,
-		obj:      obj,
-		onAction: onAction,
-		chatMap:  make(map[uint32]string),
+		conn:         conn,
+		obj:          obj,
+		onAction:     onAction,
+		soundEnabled: true,
+		chatMap:      make(map[uint32]string),
 	}
 
 	if onAction != nil {
@@ -35,6 +39,18 @@ func NewNotifier(onAction func(chatJID string)) *Notifier {
 	}
 
 	return n
+}
+
+func (n *Notifier) SetSoundEnabled(enabled bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.soundEnabled = enabled
+}
+
+func (n *Notifier) IsSoundEnabled() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.soundEnabled
 }
 
 func (n *Notifier) listenForActions() {
@@ -87,6 +103,7 @@ func (n *Notifier) Notify(chatJID, title, body, icon string) error {
 
 	hints := map[string]dbus.Variant{
 		"desktop-entry": dbus.MakeVariant("com.github.user.whats-gtk"),
+		"sound-name":    dbus.MakeVariant("message-new-instant"),
 	}
 
 	var notifID uint32
@@ -115,8 +132,45 @@ func (n *Notifier) Notify(chatJID, title, body, icon string) error {
 			}
 		}
 		n.chatMap[notifID] = chatJID
+		sound := n.soundEnabled
 		n.mu.Unlock()
+
+		if sound {
+			PlayNotificationSound()
+		}
 	}
 
 	return nil
+}
+
+// PlayNotificationSound plays a system message alert sound in a separate goroutine.
+func PlayNotificationSound() {
+	soundPaths := []string{
+		"/run/current-system/sw/share/sounds/freedesktop/stereo/message-new-instant.oga",
+		"/usr/share/sounds/freedesktop/stereo/message-new-instant.oga",
+		"/run/current-system/sw/share/sounds/gnome/default/alerts/glass.ogg",
+		"/usr/share/sounds/gnome/default/alerts/glass.ogg",
+	}
+
+	var foundPath string
+	for _, p := range soundPaths {
+		if _, err := os.Stat(p); err == nil {
+			foundPath = p
+			break
+		}
+	}
+
+	go func() {
+		if err := exec.Command("canberra-gtk-play", "-i", "message-new-instant").Run(); err == nil {
+			return
+		}
+		if foundPath != "" {
+			for _, cmdName := range []string{"pw-play", "paplay", "aplay"} {
+				if path, err := exec.LookPath(cmdName); err == nil {
+					_ = exec.Command(path, foundPath).Run()
+					return
+				}
+			}
+		}
+	}()
 }
