@@ -121,6 +121,7 @@ func (cc *ChatController) HandleSearch(t string) {
 				IsGroup:     contact.IsGroup.Valid && contact.IsGroup.Bool,
 				UnreadCount: contact.UnreadCount,
 				IsPinned:    contact.IsPinned,
+				IsMuted:     contact.IsMuted(),
 				Avatar:      tex,
 			})
 		}

@@ -4,6 +4,8 @@ import (
 	"context"
 	_ "embed"
 	"log"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"sync"
@@ -26,6 +28,18 @@ import (
 var iconData []byte
 
 func main() {
+	if addr := os.Getenv("WHATS_GTK_PPROF"); addr != "" {
+		if addr == "1" || addr == "true" {
+			addr = "localhost:6060"
+		}
+		go func() {
+			log.Printf("Starting pprof profiling server on http://%s/debug/pprof/\n", addr)
+			if err := http.ListenAndServe(addr, nil); err != nil {
+				log.Printf("pprof server error: %v\n", err)
+			}
+		}()
+	}
+
 	const appID = "com.github.user.whats-gtk"
 	application := adw.NewApplication(appID, gio.ApplicationHandlesOpen)
 

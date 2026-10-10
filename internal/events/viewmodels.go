@@ -73,5 +73,6 @@ type SidebarItem struct {
 	IsGroup     bool
 	UnreadCount int
 	IsPinned    bool
+	IsMuted     bool
 	Avatar      *gdk.Texture
 }

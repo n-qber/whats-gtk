@@ -185,6 +185,11 @@ func (br *Bridge) registerDefaultHooks() {
 			}
 		}
 
+		// Muted chats must NOT send notifications
+		if br.IsChatMuted(chatJID) || (rawChatJID != chatJID && br.IsChatMuted(rawChatJID)) {
+			return nil
+		}
+
 		senderJID := br.Messages.ResolveJID(msg.Info.Sender).ToNonAD().String()
 		isGroup := msg.Info.Chat.Server == types.GroupServer
 
@@ -248,6 +253,8 @@ func (br *Bridge) registerDefaultHooks() {
 			msgText = "🏷️ Figurinha"
 		} else if pm := br.Messages.GetPollCreationMessage(msg.Message); pm != nil {
 			msgText = "📊 Enquete: " + pm.GetName()
+		} else if content := br.Messages.ExtractContent(msg); content != "" {
+			msgText = content
 		} else {
 			msgText = "Nova mensagem"
 		}
@@ -256,6 +263,25 @@ func (br *Bridge) registerDefaultHooks() {
 		_ = br.Notifier.Notify(chatJID, title, body, "dialog-information")
 		return nil
 	})
+}
+
+// IsChatMuted checks if a chat is currently muted in the local DB or backend store.
+func (br *Bridge) IsChatMuted(chatJID string) bool {
+	if contact, err := br.DB.GetContact(chatJID); err == nil && contact != nil {
+		if contact.IsMuted() {
+			return true
+		}
+	}
+	if br.Backend != nil && br.Backend.Client != nil && br.Backend.Client.Store != nil && br.Backend.Client.Store.ChatSettings != nil {
+		if parsed, err := types.ParseJID(chatJID); err == nil {
+			if settings, err := br.Backend.Client.Store.ChatSettings.GetChatSettings(context.Background(), parsed); err == nil && settings.Found {
+				if !settings.MutedUntil.IsZero() && settings.MutedUntil.After(time.Now()) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // setupUIHandlers wires all UI callbacks to the ChatController and InputManager.
@@ -324,6 +350,18 @@ func (br *Bridge) setupUIHandlers() {
 					}
 				})
 			}()
+		}
+		br.App.InfoView.OnMuteToggled = func(muted bool) {
+			selJID := br.Chat.SelectedJID()
+			if selJID == nil {
+				return
+			}
+			jidStr := selJID.ToNonAD().String()
+			if muted {
+				br.Chat.HandleMuteChat(jidStr, -1)
+			} else {
+				br.Chat.HandleMuteChat(jidStr, 0)
+			}
 		}
 	}
 

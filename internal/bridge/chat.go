@@ -19,6 +19,7 @@ import (
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
+	"go.mau.fi/whatsmeow/store"
 	meowEvents "go.mau.fi/whatsmeow/types/events"
 	"go.mau.fi/whatsmeow/types"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -263,14 +264,16 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 		cc.App.ChatView.SetHeader(headerName, cc.Contacts.GetAvatar(jid.String()))
 		cc.App.InfoView.SetInfo(headerName, jid.String(), cc.Contacts.GetAvatar(jid.String()))
 		cc.App.InfoView.SetArchived(contact.IsArchived)
+		cc.App.InfoView.SetMuted(contact.IsMuted())
 	} else {
 		cc.App.ChatView.SetHeader(jid.String(), cc.Contacts.GetAvatar(jid.String()))
 		cc.App.InfoView.SetInfo(jid.String(), jid.String(), cc.Contacts.GetAvatar(jid.String()))
 		cc.App.InfoView.SetArchived(false)
+		cc.App.InfoView.SetMuted(false)
 	}
 	cc.DB.ClearUnreadCount(jid.String())
 	if contact, err := cc.DB.GetContact(jid.String()); err == nil {
-		cc.App.Sidebar.UpdateChatRow(jid.String(), contact.DisplayName(), contact.IsGroup.Valid && contact.IsGroup.Bool, 0, contact.IsPinned)
+		cc.App.Sidebar.UpdateChatRow(jid.String(), contact.DisplayName(), contact.IsGroup.Valid && contact.IsGroup.Bool, 0, contact.IsPinned, contact.IsMuted())
 	}
 
 	if cc.App.ChatView != nil {
@@ -498,10 +501,36 @@ func (cc *ChatController) HandleMuteChat(jidStr string, duration time.Duration) 
 	if err != nil {
 		return
 	}
+	cleanJID := parsed.ToNonAD().String()
+	mute := duration != 0
+	var mutedUntil time.Time
+	if mute {
+		if duration < 0 || duration >= 365*24*time.Hour {
+			mutedUntil = store.MutedForever
+		} else {
+			mutedUntil = time.Now().Add(duration)
+		}
+	}
+	_ = cc.DB.SetContactMuted(cleanJID, mutedUntil)
+	cc.RefreshSidebarUI()
+	glib.IdleAdd(func() {
+		if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == cleanJID {
+			if cc.App != nil && cc.App.InfoView != nil {
+				cc.App.InfoView.SetMuted(mute)
+			}
+		}
+	})
+
 	if cc.Backend != nil && cc.Backend.Client != nil {
 		go func() {
-			mute := duration > 0
-			patch := appstate.BuildMute(parsed, mute, duration)
+			var patch appstate.PatchInfo
+			if !mute {
+				patch = appstate.BuildMute(parsed, false, 0)
+			} else if mutedUntil == store.MutedForever {
+				patch = appstate.BuildMute(parsed, true, 0)
+			} else {
+				patch = appstate.BuildMute(parsed, true, duration)
+			}
 			_ = cc.Backend.Client.SendAppState(context.Background(), patch)
 		}()
 	}

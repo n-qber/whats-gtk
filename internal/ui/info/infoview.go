@@ -29,11 +29,15 @@ type InfoView struct {
 	ParticipantsList  *gtk.ListBox
 
 	OptionsGroup *adw.PreferencesGroup
+	MuteRow      *adw.ActionRow
+	MuteSwitch   *gtk.Switch
 	ArchiveRow   *adw.ActionRow
 	ArchiveSwitch *gtk.Switch
 	ExitRow      *adw.ActionRow
 
+	OnMuteToggled    func(muted bool)
 	OnArchiveToggled func(archived bool)
+	isMuting         bool
 	isArchiving      bool
 }
 
@@ -83,12 +87,22 @@ func NewInfoView() *InfoView {
 	iv.OptionsGroup = adw.NewPreferencesGroup()
 	iv.OptionsGroup.SetTitle("Options")
 	
-	muteRow := adw.NewActionRow()
-	muteRow.SetTitle("Mute Notifications")
-	muteSwitch := gtk.NewSwitch()
-	muteSwitch.SetVAlign(gtk.AlignCenter)
-	muteRow.AddSuffix(muteSwitch)
-	iv.OptionsGroup.Add(muteRow)
+	iv.MuteRow = adw.NewActionRow()
+	iv.MuteRow.SetTitle("Mute Notifications")
+	iv.MuteSwitch = gtk.NewSwitch()
+	iv.MuteSwitch.SetVAlign(gtk.AlignCenter)
+	iv.MuteRow.AddSuffix(iv.MuteSwitch)
+	iv.OptionsGroup.Add(iv.MuteRow)
+
+	iv.MuteSwitch.ConnectStateSet(func(state bool) bool {
+		if iv.isMuting {
+			return false
+		}
+		if iv.OnMuteToggled != nil {
+			iv.OnMuteToggled(state)
+		}
+		return false
+	})
 
 	iv.ArchiveRow = adw.NewActionRow()
 	iv.ArchiveRow.SetTitle("Archive Chat")
@@ -154,6 +168,17 @@ func (iv *InfoView) SetArchived(archived bool) {
 		iv.ArchiveRow.SetTitle("Archive Chat")
 	}
 	iv.isArchiving = false
+}
+
+func (iv *InfoView) SetMuted(muted bool) {
+	iv.isMuting = true
+	iv.MuteSwitch.SetActive(muted)
+	if muted {
+		iv.MuteRow.SetTitle("Muted Notifications")
+	} else {
+		iv.MuteRow.SetTitle("Mute Notifications")
+	}
+	iv.isMuting = false
 }
 
 func (iv *InfoView) SetGroupDetails(desc string, participants []ParticipantModel) {

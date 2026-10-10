@@ -11,10 +11,11 @@ all: dev
 
 # Detect available CPU cores for parallel compilation
 NPROCS := $(shell nproc 2>/dev/null || echo 4)
+MAKEFLAGS += -j$(NPROCS)
 
 # Fast development build (minimal CGO optimizations -O1, -pipe in-memory compilation, parallel packages)
 dev:
-	CGO_CFLAGS="-O1 -pipe" CGO_CXXFLAGS="-O1 -pipe" $(if $(MOLD_FLAG),CGO_LDFLAGS="$(MOLD_FLAG)") go build -p $(NPROCS) -o $(BINARY_NAME) $(MAIN_PACKAGE)
+	CGO_CFLAGS="-O1 -pipe" CGO_CXXFLAGS="-O1 -pipe" $(if $(MOLD_FLAG),CGO_LDFLAGS="$(MOLD_FLAG)") go build -o $(BINARY_NAME) $(MAIN_PACKAGE)
 
 # Build dev binary and run immediately
 run: dev
@@ -22,11 +23,11 @@ run: dev
 
 # Fast unit tests (matches CGO flags to reuse build cache and parallelizes execution)
 test:
-	CGO_CFLAGS="-O1 -pipe" CGO_CXXFLAGS="-O1 -pipe" $(if $(MOLD_FLAG),CGO_LDFLAGS="$(MOLD_FLAG)") go test -p $(NPROCS) -v ./internal/database/... ./internal/events/...
+	CGO_CFLAGS="-O1 -pipe" CGO_CXXFLAGS="-O1 -pipe" $(if $(MOLD_FLAG),CGO_LDFLAGS="$(MOLD_FLAG)") go test -v ./internal/database/... ./internal/events/...
 
 # Release build (full C optimizations, stripped debug symbols, parallel)
 build:
-	go build -p $(NPROCS) -ldflags="-s -w $(if $(MOLD_FLAG),-extldflags=$(MOLD_FLAG))" -o $(BINARY_NAME) $(MAIN_PACKAGE)
+	go build -ldflags="-s -w $(if $(MOLD_FLAG),-extldflags=$(MOLD_FLAG))" -o $(BINARY_NAME) $(MAIN_PACKAGE)
 
 # Clean compiled binary
 clean:

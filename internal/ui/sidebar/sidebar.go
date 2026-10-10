@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 	"whats-gtk/internal/database"
+	"whats-gtk/internal/events"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
@@ -41,11 +42,13 @@ type Sidebar struct {
 	OnClearChat       func(jid string)
 
 	profileItems []ProfileItem
-	chatRows     map[string]*adw.ActionRow
-	chatAvatars  map[string]*adw.Avatar
+	chatRows        map[string]*adw.ActionRow
+	chatListBoxRows map[string]*gtk.ListBoxRow
+	chatAvatars     map[string]*adw.Avatar
 	chatIndices  map[string]*gtk.Label
 	chatPinned   map[string]bool
 	chatUnread   map[string]bool
+	chatMuted    map[string]bool
 	isRefreshing bool
 	isCycling    bool
 	originalJID  string
@@ -114,10 +117,12 @@ func NewSidebar() (*Sidebar, error) {
 		ManageProfilesBtn: manageBtn,
 		PreferencesBtn:    prefBtn,
 		chatRows:          make(map[string]*adw.ActionRow),
+		chatListBoxRows:   make(map[string]*gtk.ListBoxRow),
 		chatAvatars:       make(map[string]*adw.Avatar),
 		chatIndices:       make(map[string]*gtk.Label),
 		chatPinned:        make(map[string]bool),
 		chatUnread:        make(map[string]bool),
+		chatMuted:         make(map[string]bool),
 	}
 
 	profileCombo.ConnectChanged(func() {
@@ -425,7 +430,7 @@ func (s *Sidebar) ShowIndices(show bool) {
 	}
 }
 
-func formatChatTitle(name string, isGroup bool, unreadCount int, isPinned bool) string {
+func formatChatTitle(name string, isGroup bool, unreadCount int, isPinned bool, isMuted ...bool) string {
 	title := name
 	if isGroup {
 		title = "[G] " + title
@@ -433,25 +438,37 @@ func formatChatTitle(name string, isGroup bool, unreadCount int, isPinned bool) 
 	if unreadCount > 0 {
 		title = fmt.Sprintf("(%d) %s", unreadCount, title)
 	}
+	if len(isMuted) > 0 && isMuted[0] {
+		title = "🔕 " + title
+	}
 	if isPinned {
 		title = "📌 " + title
 	}
 	return title
 }
 
-func (s *Sidebar) UpdateChatRow(jid, name string, isGroup bool, unreadCount int, isPinned bool) {
+func (s *Sidebar) UpdateChatRow(jid, name string, isGroup bool, unreadCount int, isPinned bool, isMuted ...bool) {
+	muted := false
+	if len(isMuted) > 0 {
+		muted = isMuted[0]
+	} else if s.chatMuted != nil {
+		muted = s.chatMuted[jid]
+	}
 	if s.chatPinned != nil {
 		s.chatPinned[jid] = isPinned
 	}
 	if s.chatUnread != nil {
 		s.chatUnread[jid] = unreadCount > 0
 	}
+	if s.chatMuted != nil {
+		s.chatMuted[jid] = muted
+	}
 	if row, exists := s.chatRows[jid]; exists {
-		title := formatChatTitle(name, isGroup, unreadCount, isPinned)
+		title := formatChatTitle(name, isGroup, unreadCount, isPinned, muted)
 		row.SetTitle(glib.MarkupEscapeText(title))
 		return
 	}
-	s.AddChat(jid, name, isGroup, unreadCount, isPinned)
+	s.AddChat(jid, name, isGroup, unreadCount, isPinned, muted)
 }
 
 func (s *Sidebar) SetChatSubtitle(jid, subtitle string) {
@@ -460,9 +477,15 @@ func (s *Sidebar) SetChatSubtitle(jid, subtitle string) {
 	}
 }
 
-func (s *Sidebar) AddChat(jid, name string, isGroup bool, unreadCount int, isPinned bool) {
+func (s *Sidebar) AddChat(jid, name string, isGroup bool, unreadCount int, isPinned bool, isMuted ...bool) {
+	muted := false
+	if len(isMuted) > 0 {
+		muted = isMuted[0]
+	} else if s.chatMuted != nil {
+		muted = s.chatMuted[jid]
+	}
 	if _, exists := s.chatRows[jid]; exists {
-		s.UpdateChatRow(jid, name, isGroup, unreadCount, isPinned)
+		s.UpdateChatRow(jid, name, isGroup, unreadCount, isPinned, muted)
 		return
 	}
 
@@ -472,9 +495,12 @@ func (s *Sidebar) AddChat(jid, name string, isGroup bool, unreadCount int, isPin
 	if s.chatUnread != nil {
 		s.chatUnread[jid] = unreadCount > 0
 	}
+	if s.chatMuted != nil {
+		s.chatMuted[jid] = muted
+	}
 
 	row := adw.NewActionRow()
-	title := formatChatTitle(name, isGroup, unreadCount, isPinned)
+	title := formatChatTitle(name, isGroup, unreadCount, isPinned, muted)
 	row.SetTitle(glib.MarkupEscapeText(title))
 	row.SetName(jid)
 	
@@ -510,14 +536,71 @@ func (s *Sidebar) AddChat(jid, name string, isGroup bool, unreadCount int, isPin
 	lbRow.AddController(rightClick)
 
 	s.ListBox.Append(lbRow)
+	if s.chatListBoxRows != nil {
+		s.chatListBoxRows[jid] = lbRow
+	}
+}
+
+func (s *Sidebar) RemoveChat(jid string) {
+	if s.chatListBoxRows != nil {
+		if lbRow, ok := s.chatListBoxRows[jid]; ok {
+			s.ListBox.Remove(lbRow)
+			delete(s.chatListBoxRows, jid)
+		}
+	}
+	delete(s.chatRows, jid)
+	delete(s.chatAvatars, jid)
+	delete(s.chatIndices, jid)
+	delete(s.chatPinned, jid)
+	delete(s.chatUnread, jid)
+	delete(s.chatMuted, jid)
+}
+
+func (s *Sidebar) SyncChats(items []events.SidebarItem) {
+	if len(s.chatRows) == 0 {
+		for _, item := range items {
+			s.AddChat(item.JID, item.Name, item.IsGroup, item.UnreadCount, item.IsPinned, item.IsMuted)
+			if item.Avatar != nil {
+				s.SetAvatar(item.JID, item.Avatar)
+			}
+		}
+		return
+	}
+
+	validJIDs := make(map[string]bool, len(items))
+	for _, item := range items {
+		validJIDs[item.JID] = true
+	}
+
+	for jid := range s.chatRows {
+		if !validJIDs[jid] {
+			s.RemoveChat(jid)
+		}
+	}
+
+	for _, item := range items {
+		if _, exists := s.chatRows[item.JID]; exists {
+			s.UpdateChatRow(item.JID, item.Name, item.IsGroup, item.UnreadCount, item.IsPinned, item.IsMuted)
+			if item.Avatar != nil {
+				s.SetAvatar(item.JID, item.Avatar)
+			}
+		} else {
+			s.AddChat(item.JID, item.Name, item.IsGroup, item.UnreadCount, item.IsPinned, item.IsMuted)
+			if item.Avatar != nil {
+				s.SetAvatar(item.JID, item.Avatar)
+			}
+		}
+	}
 }
 
 func (s *Sidebar) ClearChats() {
 	s.chatRows = make(map[string]*adw.ActionRow)
+	s.chatListBoxRows = make(map[string]*gtk.ListBoxRow)
 	s.chatAvatars = make(map[string]*adw.Avatar)
 	s.chatIndices = make(map[string]*gtk.Label)
 	s.chatPinned = make(map[string]bool)
 	s.chatUnread = make(map[string]bool)
+	s.chatMuted = make(map[string]bool)
 	for {
 		child := s.ListBox.FirstChild()
 		if child == nil {
@@ -538,6 +621,10 @@ func (s *Sidebar) showChatContextMenu(jid string, targetWidget gtk.Widgetter) {
 	isUnread := false
 	if s.chatUnread != nil {
 		isUnread = s.chatUnread[jid]
+	}
+	isMuted := false
+	if s.chatMuted != nil {
+		isMuted = s.chatMuted[jid]
 	}
 
 	// 1. Pin / Unpin
@@ -571,7 +658,11 @@ func (s *Sidebar) showChatContextMenu(jid string, targetWidget gtk.Widgetter) {
 	box.Append(readBtn)
 
 	// 3. Mute notifications
-	muteBtn := gtk.NewButtonWithLabel("Silenciar...")
+	muteLabel := "Silenciar..."
+	if isMuted {
+		muteLabel = "🔕 Silenciado (configurar...)"
+	}
+	muteBtn := gtk.NewButtonWithLabel(muteLabel)
 	muteBtn.SetHasFrame(false)
 	muteBtn.ConnectClicked(func() {
 		popover.Popdown()
@@ -584,7 +675,7 @@ func (s *Sidebar) showChatContextMenu(jid string, targetWidget gtk.Widgetter) {
 		}{
 			{"8 horas", 8 * time.Hour},
 			{"1 semana", 7 * 24 * time.Hour},
-			{"Sempre", 365 * 24 * time.Hour},
+			{"Sempre", -1},
 			{"Reativar notificações", 0},
 		}
 

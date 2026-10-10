@@ -58,7 +58,11 @@ func (a *AppDB) createTables() error {
 			push_name TEXT,
 			avatar_path TEXT,
 			is_group BOOLEAN,
-			last_message_at DATETIME
+			last_message_at DATETIME,
+			unread_count INTEGER DEFAULT 0,
+			is_pinned BOOLEAN DEFAULT 0,
+			is_archived BOOLEAN DEFAULT 0,
+			muted_until DATETIME
 		)`,
 		`CREATE TABLE IF NOT EXISTS messages (
 			msg_id TEXT PRIMARY KEY,
@@ -69,7 +73,24 @@ func (a *AppDB) createTables() error {
 			type TEXT,
 			timestamp DATETIME,
 			status TEXT,
-			is_from_me BOOLEAN
+			is_from_me BOOLEAN,
+			thumbnail BLOB,
+			media_url TEXT,
+			media_direct_path TEXT,
+			media_key BLOB,
+			media_mimetype TEXT,
+			media_enc_sha256 BLOB,
+			media_sha256 BLOB,
+			media_length INTEGER,
+			media_width INTEGER,
+			media_height INTEGER,
+			quoted_msg_id TEXT,
+			quoted_msg_content TEXT,
+			quoted_msg_sender TEXT,
+			is_pinned BOOLEAN DEFAULT 0,
+			is_edited BOOLEAN DEFAULT 0,
+			is_view_once BOOLEAN DEFAULT 0,
+			is_forwarded BOOLEAN DEFAULT 0
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_jid, timestamp)`,
 		`CREATE TABLE IF NOT EXISTS reactions (
@@ -171,6 +192,7 @@ func (a *AppDB) createTables() error {
 	a.ensureColumn("contacts", "unread_count", "INTEGER DEFAULT 0")
 	a.ensureColumn("contacts", "is_pinned", "BOOLEAN DEFAULT 0")
 	a.ensureColumn("contacts", "is_archived", "BOOLEAN DEFAULT 0")
+	a.ensureColumn("contacts", "muted_until", "DATETIME")
 	a.ensureColumn("messages", "thumbnail", "BLOB")
 	a.ensureColumn("messages", "media_url", "TEXT")
 	a.ensureColumn("messages", "media_direct_path", "TEXT")

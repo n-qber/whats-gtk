@@ -218,6 +218,27 @@ func (a *App) setupSubscriptions() {
 	go func() {
 		for ev := range ch {
 			if payload, ok := ev.Data.(events.ChatMessagesPayload); ok {
+				// Preload pixbufs in background goroutine so GTK main loop stays responsive
+				preloadedPixbufs := make(map[string]*gdkpixbuf.Pixbuf)
+				preloadedStickerAnims := make(map[string]*gdkpixbuf.PixbufAnimation)
+				preloadedStickerPixbufs := make(map[string]*gdkpixbuf.Pixbuf)
+
+				for _, m := range payload.Messages {
+					if (m.Type == "image" || m.Type == "video") && m.DocumentPath != "" {
+						if pb, _ := gdkpixbuf.NewPixbufFromFileAtSize(m.DocumentPath, 400, 400); pb != nil {
+							preloadedPixbufs[m.ID] = pb
+						}
+					} else if m.Type == "sticker" {
+						anim, pb := preloadStickerData(m)
+						if anim != nil {
+							preloadedStickerAnims[m.ID] = anim
+						}
+						if pb != nil {
+							preloadedStickerPixbufs[m.ID] = pb
+						}
+					}
+				}
+
 				glib.IdleAdd(func() {
 					cv := a.GetChatViewForJID(payload.JID)
 					if cv == nil {
@@ -255,9 +276,10 @@ func (a *App) setupSubscriptions() {
 							var texImg, texThumb *gdk.Texture
 							texThumb = bytesToTexture(m.Thumbnail)
 
-							if m.DocumentPath != "" && m.Type != "sticker" {
-								pixbuf, _ := gdkpixbuf.NewPixbufFromFileAtSize(m.DocumentPath, 400, 400)
-								if pixbuf != nil {
+							if pb, ok := preloadedPixbufs[m.ID]; ok && pb != nil {
+								texImg = gdk.NewTextureForPixbuf(pb)
+							} else if m.DocumentPath != "" && m.Type != "sticker" {
+								if pixbuf, _ := gdkpixbuf.NewPixbufFromFileAtSize(m.DocumentPath, 400, 400); pixbuf != nil {
 									texImg = gdk.NewTextureForPixbuf(pixbuf)
 								}
 							}
@@ -265,7 +287,17 @@ func (a *App) setupSubscriptions() {
 							if m.Type == "image" {
 								cv.AddImage(m.ID, m.JID, m.SenderName, m.Content, texImg, texThumb, m.DocumentPath, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
 							} else if m.Type == "sticker" {
-								stkrAnim, stkrTex := loadSticker(m)
+								var stkrAnim *gdkpixbuf.PixbufAnimation
+								var stkrTex *gdk.Texture
+								if anim, ok := preloadedStickerAnims[m.ID]; ok {
+									stkrAnim = anim
+								}
+								if pb, ok := preloadedStickerPixbufs[m.ID]; ok && pb != nil {
+									stkrTex = gdk.NewTextureForPixbuf(pb)
+								}
+								if stkrAnim == nil && stkrTex == nil {
+									stkrAnim, stkrTex = loadSticker(m)
+								}
 								cv.AddSticker(m.ID, m.JID, m.SenderName, stkrAnim, stkrTex, texThumb, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
 							} else if m.Type == "video" {
 								cv.AddVideo(m.ID, m.JID, m.SenderName, m.Content, texThumb, m.DocumentPath, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
@@ -433,21 +465,16 @@ func (a *App) setupSubscriptions() {
 			if items, ok := ev.Data.([]events.SidebarItem); ok {
 				glib.IdleAdd(func() {
 					a.Sidebar.SetRefreshing(true)
-					a.Sidebar.ClearChats()
+					a.Sidebar.SyncChats(items)
 					foundActive := false
 					for _, item := range items {
-						a.Sidebar.AddChat(item.JID, item.Name, item.IsGroup, item.UnreadCount, item.IsPinned)
-						if item.Avatar != nil {
-							a.Sidebar.SetAvatar(item.JID, item.Avatar)
-						}
 						if item.JID == a.ActiveMainJID {
 							foundActive = true
+							break
 						}
 					}
 					if foundActive && a.ActiveMainJID != "" {
 						a.Sidebar.SelectChat(a.ActiveMainJID)
-					} else {
-						a.Sidebar.ClearSelection()
 					}
 					a.Sidebar.SetRefreshing(false)
 				})
@@ -859,4 +886,31 @@ func loadSticker(m events.UIMessage) (*gdkpixbuf.PixbufAnimation, *gdk.Texture) 
 		return nil, gdk.NewTextureForPixbuf(pixbuf)
 	}
 	return nil, nil
+}
+
+func preloadStickerData(m events.UIMessage) (*gdkpixbuf.PixbufAnimation, *gdkpixbuf.Pixbuf) {
+	stkrPath := m.DocumentPath
+	if stkrPath == "" && m.Content != "" {
+		if _, err := os.Stat(m.Content); err == nil {
+			stkrPath = m.Content
+		}
+	}
+	if stkrPath == "" {
+		conv := paths.MediaPath(m.ID + ".webp")
+		if _, err := os.Stat(conv); err == nil {
+			stkrPath = conv
+		}
+	}
+	if stkrPath == "" {
+		return nil, nil
+	}
+	if m.StickerAnim != nil && !m.StickerAnim.IsStaticImage() {
+		return m.StickerAnim, nil
+	}
+	anim, _ := gdkpixbuf.NewPixbufAnimationFromFile(stkrPath)
+	if anim != nil && !anim.IsStaticImage() {
+		return anim, nil
+	}
+	pixbuf, _ := gdkpixbuf.NewPixbufFromFileAtSize(stkrPath, 160, 160)
+	return nil, pixbuf
 }

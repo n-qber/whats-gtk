@@ -87,3 +87,81 @@ func TestMergeLID(t *testing.T) {
 		t.Errorf("MergeLID with duplicate message failed: %v", err)
 	}
 }
+
+func TestContactMute(t *testing.T) {
+	dbPath := "test_contact_mute.db"
+	defer os.Remove(dbPath)
+
+	db, err := InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to init DB: %v", err)
+	}
+	defer db.Close()
+
+	jid := "5519888888888@s.whatsapp.net"
+	c := Contact{
+		JID:       jid,
+		SavedName: sql.NullString{String: "Bob", Valid: true},
+	}
+	if err := db.SaveContact(c); err != nil {
+		t.Fatalf("Failed to save contact: %v", err)
+	}
+
+	contact, err := db.GetContact(jid)
+	if err != nil {
+		t.Fatalf("Failed to get contact: %v", err)
+	}
+	if contact.IsMuted() {
+		t.Errorf("Expected contact not to be muted initially")
+	}
+
+	// 1. Mute 8 hours in future
+	future := time.Now().Add(8 * time.Hour)
+	if err := db.SetContactMuted(jid, future); err != nil {
+		t.Fatalf("Failed to set contact muted: %v", err)
+	}
+	contact, err = db.GetContact(jid)
+	if err != nil {
+		t.Fatalf("Failed to get contact: %v", err)
+	}
+	if !contact.IsMuted() {
+		t.Errorf("Expected contact to be muted")
+	}
+
+	// 2. Mute in past (expired)
+	past := time.Now().Add(-1 * time.Hour)
+	if err := db.SetContactMuted(jid, past); err != nil {
+		t.Fatalf("Failed to set contact muted: %v", err)
+	}
+	contact, err = db.GetContact(jid)
+	if err != nil {
+		t.Fatalf("Failed to get contact: %v", err)
+	}
+	if contact.IsMuted() {
+		t.Errorf("Expected expired muted contact to not be muted")
+	}
+
+	// 3. Unmute (zero time)
+	if err := db.SetContactMuted(jid, time.Time{}); err != nil {
+		t.Fatalf("Failed to unmute contact: %v", err)
+	}
+	contact, err = db.GetContact(jid)
+	if err != nil {
+		t.Fatalf("Failed to get contact: %v", err)
+	}
+	if contact.IsMuted() {
+		t.Errorf("Expected unmuted contact to not be muted")
+	}
+
+	// 4. SaveSyncData with mute
+	if err := db.SaveSyncData(jid, 0, false, false, future, "Bob", "", uint64(time.Now().Unix())); err != nil {
+		t.Fatalf("Failed to SaveSyncData: %v", err)
+	}
+	contact, err = db.GetContact(jid)
+	if err != nil {
+		t.Fatalf("Failed to get contact: %v", err)
+	}
+	if !contact.IsMuted() {
+		t.Errorf("Expected contact to be muted after SaveSyncData")
+	}
+}

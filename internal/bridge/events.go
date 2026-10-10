@@ -21,6 +21,7 @@ import (
 	"github.com/skip2/go-qrcode"
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -39,6 +40,7 @@ type EventHandler struct {
 	ctx      context.Context
 
 	eventChan           chan backend.AppEvent
+	chatWorkers         [numChatWorkers]chan backend.AppEvent
 	syncMutex           sync.RWMutex
 	syncWG              sync.WaitGroup
 	isSyncing           bool
@@ -46,8 +48,48 @@ type EventHandler struct {
 	offlineSyncTotal    int
 	offlineSyncReceived int
 
+	reconnectMutex      sync.Mutex
+	isReconnecting      bool
+
 	stickerReloadTimer glib.SourceHandle
 	stickerReloadMutex sync.Mutex
+}
+
+const numChatWorkers = 8
+
+func getEventChatJID(evt backend.AppEvent) string {
+	switch v := evt.(type) {
+	case *backend.MessageEvent:
+		if v.Info != nil {
+			return v.Info.Info.Chat.ToNonAD().String()
+		}
+	case *backend.ReceiptEvent:
+		if v.Info != nil {
+			return v.Info.Chat.ToNonAD().String()
+		}
+	case *backend.UndecryptableEvent:
+		if v.Info != nil {
+			return v.Info.Info.Chat.ToNonAD().String()
+		}
+	case *backend.ArchiveEvent:
+		if v.Info != nil {
+			return v.Info.JID.ToNonAD().String()
+		}
+	case *backend.MuteEvent:
+		if v.Info != nil {
+			return v.Info.JID.ToNonAD().String()
+		}
+	}
+	return ""
+}
+
+func hashChatJID(s string) uint32 {
+	var h uint32 = 2166136261
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= 16777619
+	}
+	return h
 }
 
 // NewEventHandler creates a new EventHandler.
@@ -62,7 +104,16 @@ func NewEventHandler(b *backend.Backend, app *ui.App, db *database.AppDB, msgs *
 		Media:     media,
 		Pipeline:  pipeline,
 		ctx:       ctx,
-		eventChan: make(chan backend.AppEvent, 2000),
+		eventChan: make(chan backend.AppEvent, 1000),
+	}
+	for i := 0; i < numChatWorkers; i++ {
+		eh.chatWorkers[i] = make(chan backend.AppEvent, 1000)
+		workerCh := eh.chatWorkers[i]
+		go func(ch chan backend.AppEvent) {
+			for evt := range ch {
+				eh.processEvent(evt)
+			}
+		}(workerCh)
 	}
 	go eh.eventLoop()
 	return eh
@@ -114,16 +165,31 @@ func (eh *EventHandler) IsSyncing() bool {
 	return eh.isSyncing
 }
 
-// HandleEvent is the main event dispatcher. It enqueues events without blocking whatsmeow.
+// HandleEvent is the main event dispatcher. It dispatches ephemeral events immediately,
+// routes chat-bound timeline events to partitioned workers to guarantee order,
+// and directs global events to the main event loop.
 func (eh *EventHandler) HandleEvent(evt backend.AppEvent) {
-	select {
-	case eh.eventChan <- evt:
-	default:
+	switch evt.(type) {
+	case *backend.PresenceEvent, *backend.ChatPresenceEvent, *backend.PushNameEvent, *backend.QREvent:
 		go eh.processEvent(evt)
+		return
 	}
+
+	if chatJID := getEventChatJID(evt); chatJID != "" {
+		idx := hashChatJID(chatJID) % numChatWorkers
+		eh.chatWorkers[idx] <- evt
+		return
+	}
+
+	eh.eventChan <- evt
 }
 
 func (eh *EventHandler) processEvent(evt backend.AppEvent) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("Bridge: Recovered from panic in processEvent (%T): %v\n", evt, r)
+		}
+	}()
 	switch v := evt.(type) {
 	case *backend.HistorySyncEvent:
 		eh.handleHistorySync(v)
@@ -153,6 +219,8 @@ func (eh *EventHandler) processEvent(evt backend.AppEvent) {
 		eh.handleAppState(v)
 	case *backend.ArchiveEvent:
 		eh.handleArchive(v)
+	case *backend.MuteEvent:
+		eh.handleMute(v)
 	case *backend.PresenceEvent:
 		eh.handlePresence(v)
 	case *backend.ChatPresenceEvent:
@@ -232,7 +300,17 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 			isPinned := conv.GetPinned() > 0
 			isArchived := conv.GetArchived()
 			timestamp := conv.GetConversationTimestamp()
-			_ = eh.DB.SaveSyncDataTx(tx, chatJID.String(), unreadCount, isPinned, isArchived, conv.GetName(), "", timestamp)
+			var mutedUntil time.Time
+			if muteEnd := conv.GetMuteEndTime(); muteEnd > 0 {
+				if muteEnd > 100000000000000 || int64(muteEnd) < 0 {
+					mutedUntil = store.MutedForever
+				} else if muteEnd > 100000000000 {
+					mutedUntil = time.UnixMilli(int64(muteEnd))
+				} else {
+					mutedUntil = time.Unix(int64(muteEnd), 0)
+				}
+			}
+			_ = eh.DB.SaveSyncDataTx(tx, chatJID.String(), unreadCount, isPinned, isArchived, mutedUntil, conv.GetName(), "", timestamp)
 			
 			for _, hMsg := range conv.GetMessages() {
 				if hMsg == nil || hMsg.GetMessage() == nil {
@@ -354,10 +432,24 @@ func (eh *EventHandler) handleDisconnected() {
 }
 
 func (eh *EventHandler) startReconnectLoop() {
+	eh.reconnectMutex.Lock()
+	if eh.isReconnecting {
+		eh.reconnectMutex.Unlock()
+		return
+	}
+	eh.isReconnecting = true
+	eh.reconnectMutex.Unlock()
+
+	defer func() {
+		eh.reconnectMutex.Lock()
+		eh.isReconnecting = false
+		eh.reconnectMutex.Unlock()
+	}()
+
 	backoffs := []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second, 30 * time.Second}
 	for _, delay := range backoffs {
 		time.Sleep(delay)
-		if eh.Backend.Client.IsConnected() {
+		if eh.Backend != nil && eh.Backend.Client != nil && eh.Backend.Client.IsConnected() {
 			glib.IdleAdd(func() {
 				if eh.App.ChatView != nil {
 					eh.App.ChatView.SetConnectionStatus("", false)
@@ -370,16 +462,39 @@ func (eh *EventHandler) startReconnectLoop() {
 				eh.App.ChatView.SetConnectionStatus("Connecting to WhatsApp...", false)
 			}
 		})
-		err := eh.Backend.Connect()
-		if err == nil {
-			return
+		if eh.Backend != nil {
+			err := eh.Backend.Connect()
+			if err == nil {
+				return
+			}
 		}
 	}
-	glib.IdleAdd(func() {
-		if eh.App.ChatView != nil {
-			eh.App.ChatView.SetConnectionStatus("Offline - Could not reconnect automatically", true)
+
+	for {
+		glib.IdleAdd(func() {
+			if eh.App.ChatView != nil {
+				eh.App.ChatView.SetConnectionStatus("Offline - Retrying connection periodically...", true)
+			}
+		})
+		time.Sleep(30 * time.Second)
+		if eh.ctx.Err() != nil {
+			return
 		}
-	})
+		if eh.Backend != nil && eh.Backend.Client != nil && eh.Backend.Client.IsConnected() {
+			glib.IdleAdd(func() {
+				if eh.App.ChatView != nil {
+					eh.App.ChatView.SetConnectionStatus("", false)
+				}
+			})
+			return
+		}
+		if eh.Backend != nil {
+			err := eh.Backend.Connect()
+			if err == nil {
+				return
+			}
+		}
+	}
 }
 
 // handleQR generates a QR code and displays it in the UI.
@@ -705,6 +820,33 @@ func (eh *EventHandler) handleArchive(v *backend.ArchiveEvent) {
 	_ = eh.DB.SetContactArchived(chatJID, isArchived)
 	if eh.Chat != nil {
 		eh.Chat.RefreshSidebarUI()
+	}
+}
+
+func (eh *EventHandler) handleMute(v *backend.MuteEvent) {
+	if v == nil || v.Info == nil || v.Info.Action == nil {
+		return
+	}
+	chatJID := v.Info.JID.ToNonAD().String()
+	var mutedUntil time.Time
+	if v.Info.Action.GetMuted() {
+		if v.Info.Action.GetMuteEndTimestamp() < 0 {
+			mutedUntil = store.MutedForever
+		} else {
+			mutedUntil = time.UnixMilli(v.Info.Action.GetMuteEndTimestamp())
+		}
+	}
+	_ = eh.DB.SetContactMuted(chatJID, mutedUntil)
+	if eh.Chat != nil {
+		eh.Chat.RefreshSidebarUI()
+		glib.IdleAdd(func() {
+			if eh.Chat.SelectedJID() != nil && eh.Chat.SelectedJID().ToNonAD().String() == chatJID {
+				isMuted := !mutedUntil.IsZero() && mutedUntil.After(time.Now())
+				if eh.App != nil && eh.App.InfoView != nil {
+					eh.App.InfoView.SetMuted(isMuted)
+				}
+			}
+		})
 	}
 }
 

@@ -103,16 +103,18 @@ func (cc *ChatController) HandleSendFile(targetJID types.JID, path string, capti
 	}
 	now := time.Now().Format("15:04")
 	filename := filepath.Base(path)
+	ext := filepath.Ext(path)
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		fmt.Printf("Bridge: Failed to read file: %v\n", err)
-		return
-	}
-
-	mimetype := mime.TypeByExtension(filepath.Ext(path))
+	mimetype := mime.TypeByExtension(ext)
 	if mimetype == "" {
-		mimetype = http.DetectContentType(data)
+		if f, err := os.Open(path); err == nil {
+			header := make([]byte, 512)
+			n, _ := f.Read(header)
+			f.Close()
+			if n > 0 {
+				mimetype = http.DetectContentType(header[:n])
+			}
+		}
 	}
 
 	msgType := "document"
@@ -130,7 +132,7 @@ func (cc *ChatController) HandleSendFile(targetJID types.JID, path string, capti
 			jidStr := targetJID.ToNonAD().String()
 			switch msgType {
 			case "image":
-				pixbuf, _ := gdkpixbuf.NewPixbufFromFile(path)
+				pixbuf, _ := gdkpixbuf.NewPixbufFromFileAtSize(path, 400, 400)
 				var tex *gdk.Texture
 				if pixbuf != nil {
 					tex = gdk.NewTextureForPixbuf(pixbuf)
@@ -148,9 +150,18 @@ func (cc *ChatController) HandleSendFile(targetJID types.JID, path string, capti
 	})
 
 	go func() {
-		var resp whatsmeow.SendResponse
-		var err error
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Printf("Bridge: Failed to read file %s: %v\n", path, err)
+			glib.IdleAdd(func() {
+				if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
+					cv.UpdateMessageStatus(tempID, "failed")
+				}
+			})
+			return
+		}
 
+		var resp whatsmeow.SendResponse
 		var lastPercent int = -1
 		onProgress := func(frac float64) {
 			percent := int(frac * 100)

@@ -68,6 +68,10 @@ type ArchiveEvent struct {
 	Info *events.Archive
 }
 
+type MuteEvent struct {
+	Info *events.Mute
+}
+
 func (b *Backend) registerEventHandlers() {
 	b.Client.AddEventHandler(func(evt interface{}) {
 		var appEvt AppEvent
@@ -107,6 +111,8 @@ func (b *Backend) registerEventHandlers() {
 			appEvt = &AppStateEvent{Info: v}
 		case *events.Archive:
 			appEvt = &ArchiveEvent{Info: v}
+		case *events.Mute:
+			appEvt = &MuteEvent{Info: v}
 		default:
 			if v != nil {
 				// Log the type for debugging

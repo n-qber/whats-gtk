@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -179,37 +180,63 @@ func (ms *MessageService) ExtractContentFromProto(protoMsg *waProto.Message) str
 		return "[Live Location]"
 	}
 	if im := protoMsg.GetInteractiveMessage(); im != nil {
-		if im.GetBody() != nil && im.GetBody().GetText() != "" {
-			return im.GetBody().GetText()
-		}
-		return "[Interactive Message]"
+		return formatInteractiveMessage(im)
 	}
 	if tm := protoMsg.GetTemplateMessage(); tm != nil {
-		if tm.GetHydratedTemplate() != nil && tm.GetHydratedTemplate().GetHydratedContentText() != "" {
-			return tm.GetHydratedTemplate().GetHydratedContentText()
-		}
-		if tm.GetHydratedFourRowTemplate() != nil && tm.GetHydratedFourRowTemplate().GetHydratedContentText() != "" {
-			return tm.GetHydratedFourRowTemplate().GetHydratedContentText()
-		}
-		return "[Template Message]"
+		return formatTemplateMessage(tm)
 	}
 	if hsm := protoMsg.GetHighlyStructuredMessage(); hsm != nil {
-		if hsm.GetHydratedHsm() != nil && hsm.GetHydratedHsm().GetHydratedTemplate() != nil {
-			return hsm.GetHydratedHsm().GetHydratedTemplate().GetHydratedContentText()
+		text := extractHighlyStructuredMessageText(hsm)
+		if text != "" {
+			return text
 		}
 		return "[Template Message]"
 	}
 	if bm := protoMsg.GetButtonsMessage(); bm != nil {
-		if bm.GetContentText() != "" {
-			return bm.GetContentText()
-		}
-		return "[Buttons Message]"
+		return formatButtonsMessage(bm)
 	}
 	if lm := protoMsg.GetListMessage(); lm != nil {
-		if lm.GetDescription() != "" {
-			return lm.GetDescription()
+		return formatListMessage(lm)
+	}
+	if tbrm := protoMsg.GetTemplateButtonReplyMessage(); tbrm != nil {
+		if tbrm.GetSelectedDisplayText() != "" {
+			return tbrm.GetSelectedDisplayText()
 		}
-		return "[List Message]"
+		if tbrm.GetSelectedID() != "" {
+			return tbrm.GetSelectedID()
+		}
+	}
+	if brm := protoMsg.GetButtonsResponseMessage(); brm != nil {
+		if brm.GetSelectedDisplayText() != "" {
+			return brm.GetSelectedDisplayText()
+		}
+		if brm.GetSelectedButtonID() != "" {
+			return brm.GetSelectedButtonID()
+		}
+	}
+	if irm := protoMsg.GetInteractiveResponseMessage(); irm != nil {
+		if irm.GetBody() != nil && irm.GetBody().GetText() != "" {
+			return irm.GetBody().GetText()
+		}
+		if nf := irm.GetNativeFlowResponseMessage(); nf != nil {
+			var params struct {
+				DisplayText string `json:"display_text"`
+			}
+			if err := json.Unmarshal([]byte(nf.GetParamsJSON()), &params); err == nil && params.DisplayText != "" {
+				return params.DisplayText
+			}
+			if nf.GetName() != "" {
+				return nf.GetName()
+			}
+		}
+	}
+	if lrm := protoMsg.GetListResponseMessage(); lrm != nil {
+		if lrm.GetTitle() != "" {
+			return lrm.GetTitle()
+		}
+		if lrm.GetSingleSelectReply() != nil && lrm.GetSingleSelectReply().GetSelectedRowID() != "" {
+			return lrm.GetSingleSelectReply().GetSelectedRowID()
+		}
 	}
 	if gi := protoMsg.GetGroupInviteMessage(); gi != nil {
 		return fmt.Sprintf("[Group Invite: %s]", gi.GetGroupName())
@@ -219,6 +246,430 @@ func (ms *MessageService) ExtractContentFromProto(protoMsg *waProto.Message) str
 	}
 
 	return ""
+}
+
+type nativeFlowButtonParams struct {
+	DisplayText string `json:"display_text"`
+	Title       string `json:"title"`
+	CopyCode    string `json:"copy_code"`
+	URL         string `json:"url"`
+	PhoneNumber string `json:"phone_number"`
+	ID          string `json:"id"`
+}
+
+func formatNativeFlowButton(btn *waProto.InteractiveMessage_NativeFlowMessage_NativeFlowButton) string {
+	if btn == nil {
+		return ""
+	}
+	var params nativeFlowButtonParams
+	if btn.GetButtonParamsJSON() != "" {
+		_ = json.Unmarshal([]byte(btn.GetButtonParamsJSON()), &params)
+	}
+
+	label := strings.TrimSpace(params.DisplayText)
+	if label == "" {
+		label = strings.TrimSpace(params.Title)
+	}
+	if label == "" && params.CopyCode != "" {
+		label = "Copiar: " + strings.TrimSpace(params.CopyCode)
+	}
+	if label == "" && params.URL != "" {
+		label = strings.TrimSpace(params.URL)
+	}
+	if label == "" && params.PhoneNumber != "" {
+		label = strings.TrimSpace(params.PhoneNumber)
+	}
+	if label == "" {
+		label = strings.TrimSpace(btn.GetName())
+	}
+
+	rawURL := strings.TrimSpace(params.URL)
+	rawPhone := strings.TrimSpace(params.PhoneNumber)
+	rawCopy := strings.TrimSpace(params.CopyCode)
+
+	if rawURL != "" {
+		if label != "" && label != rawURL {
+			return fmt.Sprintf("[🔗 %s: %s]", label, rawURL)
+		}
+		return fmt.Sprintf("[🔗 %s]", rawURL)
+	}
+	if rawPhone != "" {
+		if label != "" && label != rawPhone {
+			return fmt.Sprintf("[📞 %s: %s]", label, rawPhone)
+		}
+		return fmt.Sprintf("[📞 %s]", rawPhone)
+	}
+	if rawCopy != "" {
+		if label != "" && label != rawCopy && label != "Copiar: "+rawCopy {
+			return fmt.Sprintf("[📋 %s: %s]", label, rawCopy)
+		}
+		return fmt.Sprintf("[📋 %s]", rawCopy)
+	}
+	if label != "" {
+		return fmt.Sprintf("[🔘 %s]", label)
+	}
+	return ""
+}
+
+func formatInteractiveMessage(im *waProto.InteractiveMessage) string {
+	if im == nil {
+		return ""
+	}
+	var parts []string
+	if h := im.GetHeader(); h != nil {
+		title := strings.TrimSpace(h.GetTitle())
+		subtitle := strings.TrimSpace(h.GetSubtitle())
+		if title != "" && subtitle != "" {
+			parts = append(parts, fmt.Sprintf("%s\n%s", title, subtitle))
+		} else if title != "" {
+			parts = append(parts, title)
+		} else if subtitle != "" {
+			parts = append(parts, subtitle)
+		}
+	}
+	if b := im.GetBody(); b != nil && strings.TrimSpace(b.GetText()) != "" {
+		parts = append(parts, strings.TrimSpace(b.GetText()))
+	}
+	if f := im.GetFooter(); f != nil && strings.TrimSpace(f.GetText()) != "" {
+		parts = append(parts, strings.TrimSpace(f.GetText()))
+	}
+	if nf := im.GetNativeFlowMessage(); nf != nil {
+		var btns []string
+		for _, b := range nf.GetButtons() {
+			if s := formatNativeFlowButton(b); s != "" {
+				btns = append(btns, s)
+			}
+		}
+		if len(btns) > 0 {
+			parts = append(parts, strings.Join(btns, "\n"))
+		}
+	}
+	if c := im.GetCarouselMessage(); c != nil {
+		for i, card := range c.GetCards() {
+			cardText := formatInteractiveMessage(card)
+			if cardText != "" && cardText != "[Interactive Message]" {
+				parts = append(parts, fmt.Sprintf("Card %d:\n%s", i+1, cardText))
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return "[Interactive Message]"
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func formatHydratedFourRowTemplate(h *waProto.TemplateMessage_HydratedFourRowTemplate) string {
+	if h == nil {
+		return ""
+	}
+	var parts []string
+	if title := strings.TrimSpace(h.GetHydratedTitleText()); title != "" {
+		parts = append(parts, title)
+	}
+	if body := strings.TrimSpace(h.GetHydratedContentText()); body != "" {
+		parts = append(parts, body)
+	}
+	if footer := strings.TrimSpace(h.GetHydratedFooterText()); footer != "" {
+		parts = append(parts, footer)
+	}
+	var btns []string
+	for _, b := range h.GetHydratedButtons() {
+		if quick := b.GetQuickReplyButton(); quick != nil {
+			if text := strings.TrimSpace(quick.GetDisplayText()); text != "" {
+				btns = append(btns, fmt.Sprintf("[🔘 %s]", text))
+			}
+		} else if urlBtn := b.GetUrlButton(); urlBtn != nil {
+			text := strings.TrimSpace(urlBtn.GetDisplayText())
+			u := strings.TrimSpace(urlBtn.GetURL())
+			if text != "" && u != "" && text != u {
+				btns = append(btns, fmt.Sprintf("[🔗 %s: %s]", text, u))
+			} else if u != "" {
+				btns = append(btns, fmt.Sprintf("[🔗 %s]", u))
+			} else if text != "" {
+				btns = append(btns, fmt.Sprintf("[🔗 %s]", text))
+			}
+		} else if callBtn := b.GetCallButton(); callBtn != nil {
+			text := strings.TrimSpace(callBtn.GetDisplayText())
+			phone := strings.TrimSpace(callBtn.GetPhoneNumber())
+			if text != "" && phone != "" {
+				btns = append(btns, fmt.Sprintf("[📞 %s: %s]", text, phone))
+			} else if phone != "" {
+				btns = append(btns, fmt.Sprintf("[📞 %s]", phone))
+			} else if text != "" {
+				btns = append(btns, fmt.Sprintf("[📞 %s]", text))
+			}
+		}
+	}
+	if len(btns) > 0 {
+		parts = append(parts, strings.Join(btns, "\n"))
+	}
+	if len(parts) == 0 {
+		return "[Template Message]"
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func formatFourRowTemplate(f *waProto.TemplateMessage_FourRowTemplate) string {
+	if f == nil {
+		return ""
+	}
+	var parts []string
+	if content := extractHighlyStructuredMessageText(f.GetContent()); content != "" {
+		parts = append(parts, content)
+	}
+	if footer := extractHighlyStructuredMessageText(f.GetFooter()); footer != "" {
+		parts = append(parts, footer)
+	}
+	var btns []string
+	for _, b := range f.GetButtons() {
+		if quick := b.GetQuickReplyButton(); quick != nil {
+			if text := extractHighlyStructuredMessageText(quick.GetDisplayText()); text != "" {
+				btns = append(btns, fmt.Sprintf("[🔘 %s]", text))
+			}
+		} else if urlBtn := b.GetUrlButton(); urlBtn != nil {
+			text := extractHighlyStructuredMessageText(urlBtn.GetDisplayText())
+			u := extractHighlyStructuredMessageText(urlBtn.GetURL())
+			if text != "" && u != "" && text != u {
+				btns = append(btns, fmt.Sprintf("[🔗 %s: %s]", text, u))
+			} else if u != "" {
+				btns = append(btns, fmt.Sprintf("[🔗 %s]", u))
+			} else if text != "" {
+				btns = append(btns, fmt.Sprintf("[🔗 %s]", text))
+			}
+		} else if callBtn := b.GetCallButton(); callBtn != nil {
+			text := extractHighlyStructuredMessageText(callBtn.GetDisplayText())
+			phone := extractHighlyStructuredMessageText(callBtn.GetPhoneNumber())
+			if text != "" && phone != "" {
+				btns = append(btns, fmt.Sprintf("[📞 %s: %s]", text, phone))
+			} else if phone != "" {
+				btns = append(btns, fmt.Sprintf("[📞 %s]", phone))
+			} else if text != "" {
+				btns = append(btns, fmt.Sprintf("[📞 %s]", text))
+			}
+		}
+	}
+	if len(btns) > 0 {
+		parts = append(parts, strings.Join(btns, "\n"))
+	}
+	if len(parts) == 0 {
+		return "[Template Message]"
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func formatTemplateMessage(tm *waProto.TemplateMessage) string {
+	if tm == nil {
+		return ""
+	}
+	if im := tm.GetInteractiveMessageTemplate(); im != nil {
+		return formatInteractiveMessage(im)
+	}
+	if h := tm.GetHydratedTemplate(); h != nil {
+		return formatHydratedFourRowTemplate(h)
+	}
+	if h := tm.GetHydratedFourRowTemplate(); h != nil {
+		return formatHydratedFourRowTemplate(h)
+	}
+	if f := tm.GetFourRowTemplate(); f != nil {
+		return formatFourRowTemplate(f)
+	}
+	return "[Template Message]"
+}
+
+func extractHighlyStructuredMessageText(hsm *waProto.HighlyStructuredMessage) string {
+	if hsm == nil {
+		return ""
+	}
+	if tm := hsm.GetHydratedHsm(); tm != nil {
+		return formatTemplateMessage(tm)
+	}
+	if len(hsm.GetParams()) > 0 {
+		return strings.Join(hsm.GetParams(), " ")
+	}
+	if len(hsm.GetLocalizableParams()) > 0 {
+		var lParams []string
+		for _, lp := range hsm.GetLocalizableParams() {
+			if lp.GetDefault() != "" {
+				lParams = append(lParams, lp.GetDefault())
+			}
+		}
+		if len(lParams) > 0 {
+			return strings.Join(lParams, " ")
+		}
+	}
+	if hsm.GetFallbackLg() != "" {
+		return hsm.GetFallbackLg()
+	}
+	if hsm.GetFallbackLc() != "" {
+		return hsm.GetFallbackLc()
+	}
+	return ""
+}
+
+func formatButtonsMessage(bm *waProto.ButtonsMessage) string {
+	if bm == nil {
+		return ""
+	}
+	var parts []string
+	if bm.GetText() != "" {
+		parts = append(parts, strings.TrimSpace(bm.GetText()))
+	}
+	if bm.GetContentText() != "" {
+		parts = append(parts, strings.TrimSpace(bm.GetContentText()))
+	}
+	if bm.GetFooterText() != "" {
+		parts = append(parts, strings.TrimSpace(bm.GetFooterText()))
+	}
+	var buttons []string
+	for _, btn := range bm.GetButtons() {
+		label := ""
+		if btn.GetButtonText() != nil && btn.GetButtonText().GetDisplayText() != "" {
+			label = strings.TrimSpace(btn.GetButtonText().GetDisplayText())
+		} else if btn.GetNativeFlowInfo() != nil {
+			label = strings.TrimSpace(btn.GetNativeFlowInfo().GetName())
+		}
+		if label != "" {
+			buttons = append(buttons, fmt.Sprintf("[🔘 %s]", label))
+		}
+	}
+	if len(buttons) > 0 {
+		parts = append(parts, strings.Join(buttons, "\n"))
+	}
+	if len(parts) == 0 {
+		return "[Buttons Message]"
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func formatListMessage(lm *waProto.ListMessage) string {
+	if lm == nil {
+		return ""
+	}
+	var parts []string
+	if lm.GetTitle() != "" {
+		parts = append(parts, strings.TrimSpace(lm.GetTitle()))
+	}
+	if lm.GetDescription() != "" {
+		parts = append(parts, strings.TrimSpace(lm.GetDescription()))
+	}
+	if lm.GetFooterText() != "" {
+		parts = append(parts, strings.TrimSpace(lm.GetFooterText()))
+	}
+	if lm.GetButtonText() != "" {
+		parts = append(parts, fmt.Sprintf("[📋 %s]", strings.TrimSpace(lm.GetButtonText())))
+	}
+	for _, sec := range lm.GetSections() {
+		var secLines []string
+		if sec.GetTitle() != "" {
+			secLines = append(secLines, fmt.Sprintf("• %s:", sec.GetTitle()))
+		}
+		for _, row := range sec.GetRows() {
+			rowTitle := strings.TrimSpace(row.GetTitle())
+			rowDesc := strings.TrimSpace(row.GetDescription())
+			if rowTitle != "" && rowDesc != "" {
+				secLines = append(secLines, fmt.Sprintf("  - %s: %s", rowTitle, rowDesc))
+			} else if rowTitle != "" {
+				secLines = append(secLines, fmt.Sprintf("  - %s", rowTitle))
+			}
+		}
+		if len(secLines) > 0 {
+			parts = append(parts, strings.Join(secLines, "\n"))
+		}
+	}
+	if len(parts) == 0 {
+		return "[List Message]"
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func extractImageMessage(protoMsg *waProto.Message) *waProto.ImageMessage {
+	if protoMsg == nil {
+		return nil
+	}
+	if img := protoMsg.GetImageMessage(); img != nil {
+		return img
+	}
+	if tm := protoMsg.GetTemplateMessage(); tm != nil {
+		if h := tm.GetHydratedTemplate(); h != nil && h.GetImageMessage() != nil {
+			return h.GetImageMessage()
+		}
+		if h := tm.GetHydratedFourRowTemplate(); h != nil && h.GetImageMessage() != nil {
+			return h.GetImageMessage()
+		}
+		if f := tm.GetFourRowTemplate(); f != nil && f.GetImageMessage() != nil {
+			return f.GetImageMessage()
+		}
+		if im := tm.GetInteractiveMessageTemplate(); im != nil && im.GetHeader() != nil && im.GetHeader().GetImageMessage() != nil {
+			return im.GetHeader().GetImageMessage()
+		}
+	}
+	if im := protoMsg.GetInteractiveMessage(); im != nil && im.GetHeader() != nil && im.GetHeader().GetImageMessage() != nil {
+		return im.GetHeader().GetImageMessage()
+	}
+	if bm := protoMsg.GetButtonsMessage(); bm != nil && bm.GetImageMessage() != nil {
+		return bm.GetImageMessage()
+	}
+	return nil
+}
+
+func extractDocumentMessage(protoMsg *waProto.Message) *waProto.DocumentMessage {
+	if protoMsg == nil {
+		return nil
+	}
+	if doc := protoMsg.GetDocumentMessage(); doc != nil {
+		return doc
+	}
+	if tm := protoMsg.GetTemplateMessage(); tm != nil {
+		if h := tm.GetHydratedTemplate(); h != nil && h.GetDocumentMessage() != nil {
+			return h.GetDocumentMessage()
+		}
+		if h := tm.GetHydratedFourRowTemplate(); h != nil && h.GetDocumentMessage() != nil {
+			return h.GetDocumentMessage()
+		}
+		if f := tm.GetFourRowTemplate(); f != nil && f.GetDocumentMessage() != nil {
+			return f.GetDocumentMessage()
+		}
+		if im := tm.GetInteractiveMessageTemplate(); im != nil && im.GetHeader() != nil && im.GetHeader().GetDocumentMessage() != nil {
+			return im.GetHeader().GetDocumentMessage()
+		}
+	}
+	if im := protoMsg.GetInteractiveMessage(); im != nil && im.GetHeader() != nil && im.GetHeader().GetDocumentMessage() != nil {
+		return im.GetHeader().GetDocumentMessage()
+	}
+	if bm := protoMsg.GetButtonsMessage(); bm != nil && bm.GetDocumentMessage() != nil {
+		return bm.GetDocumentMessage()
+	}
+	return nil
+}
+
+func extractVideoMessage(protoMsg *waProto.Message) *waProto.VideoMessage {
+	if protoMsg == nil {
+		return nil
+	}
+	if vid := protoMsg.GetVideoMessage(); vid != nil {
+		return vid
+	}
+	if tm := protoMsg.GetTemplateMessage(); tm != nil {
+		if h := tm.GetHydratedTemplate(); h != nil && h.GetVideoMessage() != nil {
+			return h.GetVideoMessage()
+		}
+		if h := tm.GetHydratedFourRowTemplate(); h != nil && h.GetVideoMessage() != nil {
+			return h.GetVideoMessage()
+		}
+		if f := tm.GetFourRowTemplate(); f != nil && f.GetVideoMessage() != nil {
+			return f.GetVideoMessage()
+		}
+		if im := tm.GetInteractiveMessageTemplate(); im != nil && im.GetHeader() != nil && im.GetHeader().GetVideoMessage() != nil {
+			return im.GetHeader().GetVideoMessage()
+		}
+	}
+	if im := protoMsg.GetInteractiveMessage(); im != nil && im.GetHeader() != nil && im.GetHeader().GetVideoMessage() != nil {
+		return im.GetHeader().GetVideoMessage()
+	}
+	if bm := protoMsg.GetButtonsMessage(); bm != nil && bm.GetVideoMessage() != nil {
+		return bm.GetVideoMessage()
+	}
+	return nil
 }
 
 // GetPollCreationMessage extracts a PollCreationMessage regardless of its version.
@@ -301,7 +752,13 @@ func (ms *MessageService) ExtractContextInfo(msg *events.Message) *waProto.Conte
 		return lrm.GetContextInfo()
 	}
 	if tm := protoMsg.GetTemplateMessage(); tm != nil {
-		return tm.GetContextInfo()
+		if tm.GetContextInfo() != nil {
+			return tm.GetContextInfo()
+		}
+		if im := tm.GetInteractiveMessageTemplate(); im != nil {
+			return im.GetContextInfo()
+		}
+		return nil
 	}
 	if tbrm := protoMsg.GetTemplateButtonReplyMessage(); tbrm != nil {
 		return tbrm.GetContextInfo()
@@ -351,10 +808,12 @@ func (ms *MessageService) PersistMessageTx(tx *sql.Tx, msg *events.Message) {
 	var metadata database.Message
 	metadata.IsViewOnce = isViewOnce
 
-	if img := protoMsg.GetImageMessage(); img != nil {
+	if img := extractImageMessage(protoMsg); img != nil {
 		msgType = "image"; thumb = img.GetJPEGThumbnail()
 		if img.GetCaption() != "" {
 			metadata.Caption = sql.NullString{String: img.GetCaption(), Valid: true}
+		} else if content != "" && content != "[Image]" {
+			metadata.Caption = sql.NullString{String: content, Valid: true}
 		}
 		metadata.MediaURL = sql.NullString{String: img.GetURL(), Valid: img.GetURL() != ""}
 		metadata.MediaDirectPath = sql.NullString{String: img.GetDirectPath(), Valid: img.GetDirectPath() != ""}
@@ -390,10 +849,12 @@ func (ms *MessageService) PersistMessageTx(tx *sql.Tx, msg *events.Message) {
 		metadata.MediaLength = sql.NullInt64{Int64: int64(ptv.GetFileLength()), Valid: true}
 		metadata.MediaWidth = sql.NullInt64{Int64: int64(ptv.GetWidth()), Valid: true}
 		metadata.MediaHeight = sql.NullInt64{Int64: int64(ptv.GetHeight()), Valid: true}
-	} else if vid := protoMsg.GetVideoMessage(); vid != nil {
+	} else if vid := extractVideoMessage(protoMsg); vid != nil {
 		msgType = "video"; thumb = vid.GetJPEGThumbnail()
 		if vid.GetCaption() != "" {
 			metadata.Caption = sql.NullString{String: vid.GetCaption(), Valid: true}
+		} else if content != "" && content != "[Video]" {
+			metadata.Caption = sql.NullString{String: content, Valid: true}
 		}
 		metadata.MediaURL = sql.NullString{String: vid.GetURL(), Valid: vid.GetURL() != ""}
 		metadata.MediaDirectPath = sql.NullString{String: vid.GetDirectPath(), Valid: vid.GetDirectPath() != ""}
@@ -404,10 +865,12 @@ func (ms *MessageService) PersistMessageTx(tx *sql.Tx, msg *events.Message) {
 		metadata.MediaLength = sql.NullInt64{Int64: int64(vid.GetFileLength()), Valid: true}
 		metadata.MediaWidth = sql.NullInt64{Int64: int64(vid.GetWidth()), Valid: true}
 		metadata.MediaHeight = sql.NullInt64{Int64: int64(vid.GetHeight()), Valid: true}
-	} else if doc := protoMsg.GetDocumentMessage(); doc != nil {
+	} else if doc := extractDocumentMessage(protoMsg); doc != nil {
 		msgType = "document"; thumb = doc.GetJPEGThumbnail()
 		if doc.GetCaption() != "" {
 			metadata.Caption = sql.NullString{String: doc.GetCaption(), Valid: true}
+		} else if content != "" && !strings.HasPrefix(content, "[Document") {
+			metadata.Caption = sql.NullString{String: content, Valid: true}
 		}
 		metadata.MediaURL = sql.NullString{String: doc.GetURL(), Valid: doc.GetURL() != ""}
 		metadata.MediaDirectPath = sql.NullString{String: doc.GetDirectPath(), Valid: doc.GetDirectPath() != ""}
@@ -477,27 +940,10 @@ func (ms *MessageService) PersistMessageTx(tx *sql.Tx, msg *events.Message) {
 			metadata.QuotedMsgID = sql.NullString{String: ci.GetStanzaID(), Valid: true}
 			metadata.QuotedMsgSender = sql.NullString{String: ci.GetParticipant(), Valid: ci.GetParticipant() != ""}
 			
-			// Extract quoted content (this is simplified, might need more types)
+			// Extract quoted content
 			quotedContent := ""
 			if qm := ci.GetQuotedMessage(); qm != nil {
-				if qm.GetConversation() != "" {
-					quotedContent = qm.GetConversation()
-				} else if qm.GetExtendedTextMessage() != nil {
-					quotedContent = qm.GetExtendedTextMessage().GetText()
-				} else if qm.GetImageMessage() != nil {
-					quotedContent = "[Image]"
-					if qm.GetImageMessage().GetCaption() != "" { quotedContent += ": " + qm.GetImageMessage().GetCaption() }
-				} else if qm.GetVideoMessage() != nil {
-					quotedContent = "[Video]"
-					if qm.GetVideoMessage().GetCaption() != "" { quotedContent += ": " + qm.GetVideoMessage().GetCaption() }
-				} else if qm.GetAudioMessage() != nil {
-					quotedContent = "[Audio]"
-				} else if qm.GetStickerMessage() != nil {
-					quotedContent = "[Sticker]"
-				} else if qm.GetDocumentMessage() != nil {
-					quotedContent = "[Document]"
-					if qm.GetDocumentMessage().GetFileName() != "" { quotedContent += ": " + qm.GetDocumentMessage().GetFileName() }
-				}
+				quotedContent = ms.ExtractContentFromProto(qm)
 			}
 			metadata.QuotedMsgContent = sql.NullString{String: quotedContent, Valid: quotedContent != ""}
 		}

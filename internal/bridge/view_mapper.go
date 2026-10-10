@@ -19,6 +19,22 @@ import (
 )
 
 var mentionRegex = regexp.MustCompile(`(?:\s|^)@(\d{8,15})`)
+var urlRegex = regexp.MustCompile(`https?://[^\s<>"]+`)
+
+func linkifyURLs(escaped string) string {
+	return urlRegex.ReplaceAllStringFunc(escaped, func(match string) string {
+		suffix := ""
+		for strings.HasSuffix(match, "]") || strings.HasSuffix(match, ")") || strings.HasSuffix(match, ".") || strings.HasSuffix(match, ",") {
+			last := match[len(match)-1:]
+			suffix = last + suffix
+			match = match[:len(match)-1]
+		}
+		if match == "" {
+			return suffix
+		}
+		return fmt.Sprintf(`<a href="%s">%s</a>%s`, match, match, suffix)
+	})
+}
 
 // ViewMapper formats database messages into UI-agnostic events.UIMessage structs.
 type ViewMapper struct {
@@ -48,9 +64,10 @@ func (vm *ViewMapper) FormatMessageDate(t time.Time) string {
 	}
 }
 
-// formatMentions escapes text for Pango markup and converts @phonenumber to a styled clickable link.
+// formatMentions escapes text for Pango markup and converts @phonenumber and URLs to styled clickable links.
 func (vm *ViewMapper) formatMentions(text string) string {
 	escaped := html.EscapeString(text)
+	escaped = linkifyURLs(escaped)
 	return mentionRegex.ReplaceAllStringFunc(escaped, func(match string) string {
 		space := ""
 		if strings.HasPrefix(match, " ") || strings.HasPrefix(match, "\n") || strings.HasPrefix(match, "\t") {
@@ -228,6 +245,7 @@ func (vm *ViewMapper) MapSidebarItems(contacts []database.Contact) []events.Side
 			IsGroup:     isGroup,
 			UnreadCount: c.UnreadCount,
 			IsPinned:    c.IsPinned,
+			IsMuted:     c.IsMuted(),
 			Avatar:      avatar,
 		})
 	}
