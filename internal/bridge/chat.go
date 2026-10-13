@@ -259,7 +259,11 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 	if contact, err := cc.DB.GetContact(jid.String()); err == nil {
 		headerName := contact.DisplayName()
 		if jid.Server == types.GroupServer {
-			headerName = "[G] " + headerName
+			if cc.DB.IsCommunity(jid.String()) {
+				headerName = "[C] " + headerName
+			} else {
+				headerName = "[G] " + headerName
+			}
 		}
 		cc.App.ChatView.SetHeader(headerName, cc.Contacts.GetAvatar(jid.String()))
 		cc.App.InfoView.SetInfo(headerName, jid.String(), cc.Contacts.GetAvatar(jid.String()))

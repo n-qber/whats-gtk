@@ -15,6 +15,7 @@ import (
 	"whats-gtk/internal/bridge"
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/events"
+	"whats-gtk/internal/notifications"
 	"whats-gtk/internal/paths"
 	"whats-gtk/internal/ui"
 
@@ -138,7 +139,7 @@ func main() {
 		mainBridge = br
 		br.Start(ctx)
 
-		setupTray(app, application, quitApp)
+		setupTray(app, application, quitApp, br.Notifier)
 
 		app.Show()
 	}
@@ -175,7 +176,7 @@ func main() {
 	os.Exit(code)
 }
 
-func setupTray(app *ui.App, application *adw.Application, quitApp func()) {
+func setupTray(app *ui.App, application *adw.Application, quitApp func(), notifier *notifications.Notifier) {
 	go func() {
 		systray.Run(func() {
 			systray.SetIcon(iconData)
@@ -195,6 +196,26 @@ func setupTray(app *ui.App, application *adw.Application, quitApp func()) {
 			systray.SetOnTapped(toggleFunc)
 
 			mToggle := systray.AddMenuItem("Show/Hide", "Toggle WhatsApp GTK Window")
+
+			var mDND *systray.MenuItem
+			var dndCh chan struct{}
+			if notifier != nil {
+				systray.AddSeparator()
+				mDND = systray.AddMenuItemCheckbox("Não Perturbe", "Desativar notificações e sons", notifier.IsDNDEnabled())
+				if notifier.IsDNDEnabled() {
+					mDND.Check()
+				}
+				notifier.OnDNDChange(func(enabled bool) {
+					if enabled {
+						mDND.Check()
+					} else {
+						mDND.Uncheck()
+					}
+				})
+				dndCh = mDND.ClickedCh
+			}
+
+			systray.AddSeparator()
 			mQuit := systray.AddMenuItem("Quit", "Quit WhatsApp GTK")
 
 			go func() {
@@ -202,6 +223,10 @@ func setupTray(app *ui.App, application *adw.Application, quitApp func()) {
 					select {
 					case <-mToggle.ClickedCh:
 						toggleFunc()
+					case <-dndCh:
+						if notifier != nil {
+							notifier.SetDNDEnabled(!notifier.IsDNDEnabled())
+						}
 					case <-mQuit.ClickedCh:
 						quitApp()
 					}

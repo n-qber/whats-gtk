@@ -6,6 +6,7 @@ import (
 	"whats-gtk/internal/paths"
 
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
+	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
@@ -29,6 +30,19 @@ func ShowPreferencesDialog(parent *gtk.Window, notifier *notifications.Notifier,
 	notifGroup.SetTitle("Notificações")
 	notifGroup.SetDescription("Configurações de alertas na área de trabalho")
 
+	dndRow := adw.NewSwitchRow()
+	dndRow.SetTitle("Modo Não Perturbe")
+	dndRow.SetSubtitle("Pausar todas as notificações e sons")
+	if notifier != nil {
+		dndRow.SetActive(notifier.IsDNDEnabled())
+	}
+	dndRow.Connect("notify::active", func() {
+		if notifier != nil && notifier.IsDNDEnabled() != dndRow.Active() {
+			notifier.SetDNDEnabled(dndRow.Active())
+		}
+	})
+	notifGroup.Add(dndRow)
+
 	soundRow := adw.NewSwitchRow()
 	soundRow.SetTitle("Sons de notificação")
 	soundRow.SetSubtitle("Tocar um som ao receber novas mensagens")
@@ -36,12 +50,33 @@ func ShowPreferencesDialog(parent *gtk.Window, notifier *notifications.Notifier,
 		soundRow.SetActive(notifier.IsSoundEnabled())
 	}
 	soundRow.Connect("notify::active", func() {
-		if notifier != nil {
+		if notifier != nil && notifier.IsSoundEnabled() != soundRow.Active() {
 			notifier.SetSoundEnabled(soundRow.Active())
 		}
 	})
 	notifGroup.Add(soundRow)
 	page.Add(notifGroup)
+
+	if notifier != nil {
+		unsubDND := notifier.OnDNDChange(func(enabled bool) {
+			glib.IdleAdd(func() {
+				if dndRow.Active() != enabled {
+					dndRow.SetActive(enabled)
+				}
+			})
+		})
+		unsubSound := notifier.OnSoundChange(func(enabled bool) {
+			glib.IdleAdd(func() {
+				if soundRow.Active() != enabled {
+					soundRow.SetActive(enabled)
+				}
+			})
+		})
+		win.Connect("destroy", func() {
+			unsubDND()
+			unsubSound()
+		})
+	}
 
 	// 2. Storage & Media Group
 	storageGroup := adw.NewPreferencesGroup()

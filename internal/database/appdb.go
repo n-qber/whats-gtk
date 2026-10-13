@@ -176,6 +176,14 @@ func (a *AppDB) createTables() error {
 			reason TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_media_failures_failed_at ON media_failures(failed_at)`,
+		`CREATE TABLE IF NOT EXISTS community_subgroups (
+			community_jid TEXT,
+			group_jid TEXT,
+			group_name TEXT,
+			is_default_sub BOOLEAN DEFAULT 0,
+			PRIMARY KEY(community_jid, group_jid)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_community_subgroups_comm ON community_subgroups(community_jid)`,
 	}
 
 	for _, q := range queries {
@@ -188,6 +196,8 @@ func (a *AppDB) createTables() error {
 	a.ensureColumn("contacts", "lid", "TEXT")
 	a.ensureColumn("contacts", "saved_name", "TEXT")
 	a.ensureColumn("contacts", "push_name", "TEXT")
+	a.ensureColumn("contacts", "is_community", "BOOLEAN DEFAULT 0")
+	a.ensureColumn("contacts", "parent_group_jid", "TEXT")
 	a.ensureColumn("contacts", "last_message_at", "DATETIME")
 	a.ensureColumn("contacts", "unread_count", "INTEGER DEFAULT 0")
 	a.ensureColumn("contacts", "is_pinned", "BOOLEAN DEFAULT 0")
@@ -297,6 +307,23 @@ func (a *AppDB) Begin() (*sql.Tx, error) {
 	return a.db.Begin()
 }
 
+// GetSetting retrieves a configuration value from app_settings by key.
+func (a *AppDB) GetSetting(key string) (string, error) {
+	var val string
+	err := a.db.QueryRow("SELECT value FROM app_settings WHERE key = ?", key).Scan(&val)
+	if err != nil {
+		return "", err
+	}
+	return val, nil
+}
+
+// SetSetting sets or updates a configuration value in app_settings.
+func (a *AppDB) SetSetting(key, val string) error {
+	_, err := a.db.Exec("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?", key, val, val)
+	return err
+}
+
 func (a *AppDB) Close() error {
 	return a.db.Close()
 }
+

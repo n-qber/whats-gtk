@@ -14,9 +14,14 @@ type Notifier struct {
 	obj          dbus.BusObject
 	onAction     func(chatJID string)
 	soundEnabled bool
+	dndEnabled   bool
 
-	mu      sync.Mutex
-	chatMap map[uint32]string
+	mu           sync.Mutex
+	chatMap      map[uint32]string
+	dndSubs      map[int]func(bool)
+	nextDNDSub   int
+	soundSubs    map[int]func(bool)
+	nextSoundSub int
 }
 
 // NewNotifier creates and connects a D-Bus desktop notification client.
@@ -31,7 +36,10 @@ func NewNotifier(onAction func(chatJID string)) *Notifier {
 		obj:          obj,
 		onAction:     onAction,
 		soundEnabled: true,
+		dndEnabled:   false,
 		chatMap:      make(map[uint32]string),
+		dndSubs:      make(map[int]func(bool)),
+		soundSubs:    make(map[int]func(bool)),
 	}
 
 	if onAction != nil {
@@ -43,8 +51,20 @@ func NewNotifier(onAction func(chatJID string)) *Notifier {
 
 func (n *Notifier) SetSoundEnabled(enabled bool) {
 	n.mu.Lock()
-	defer n.mu.Unlock()
+	if n.soundEnabled == enabled {
+		n.mu.Unlock()
+		return
+	}
 	n.soundEnabled = enabled
+	subs := make([]func(bool), 0, len(n.soundSubs))
+	for _, fn := range n.soundSubs {
+		subs = append(subs, fn)
+	}
+	n.mu.Unlock()
+
+	for _, fn := range subs {
+		fn(enabled)
+	}
 }
 
 func (n *Notifier) IsSoundEnabled() bool {
@@ -52,6 +72,69 @@ func (n *Notifier) IsSoundEnabled() bool {
 	defer n.mu.Unlock()
 	return n.soundEnabled
 }
+
+// OnSoundChange registers a callback invoked when sound setting is toggled.
+// Returns an unsubscribe function.
+func (n *Notifier) OnSoundChange(fn func(bool)) func() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.soundSubs == nil {
+		n.soundSubs = make(map[int]func(bool))
+	}
+	id := n.nextSoundSub
+	n.nextSoundSub++
+	n.soundSubs[id] = fn
+
+	return func() {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		delete(n.soundSubs, id)
+	}
+}
+
+func (n *Notifier) SetDNDEnabled(enabled bool) {
+	n.mu.Lock()
+	if n.dndEnabled == enabled {
+		n.mu.Unlock()
+		return
+	}
+	n.dndEnabled = enabled
+	subs := make([]func(bool), 0, len(n.dndSubs))
+	for _, fn := range n.dndSubs {
+		subs = append(subs, fn)
+	}
+	n.mu.Unlock()
+
+	for _, fn := range subs {
+		fn(enabled)
+	}
+}
+
+func (n *Notifier) IsDNDEnabled() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.dndEnabled
+}
+
+// OnDNDChange registers a callback invoked when DND mode is toggled.
+// Returns an unsubscribe function.
+func (n *Notifier) OnDNDChange(fn func(bool)) func() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.dndSubs == nil {
+		n.dndSubs = make(map[int]func(bool))
+	}
+	id := n.nextDNDSub
+	n.nextDNDSub++
+	n.dndSubs[id] = fn
+
+	return func() {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		delete(n.dndSubs, id)
+	}
+}
+
 
 func (n *Notifier) listenForActions() {
 	if n.conn == nil {
@@ -90,6 +173,12 @@ func (n *Notifier) listenForActions() {
 // Notify sends a desktop notification with title, body, and icon, associating it with a chatJID.
 func (n *Notifier) Notify(chatJID, title, body, icon string) error {
 	if n == nil || n.obj == nil {
+		return nil
+	}
+	n.mu.Lock()
+	dnd := n.dndEnabled
+	n.mu.Unlock()
+	if dnd {
 		return nil
 	}
 	if icon == "" {

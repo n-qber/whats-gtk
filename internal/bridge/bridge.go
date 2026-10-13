@@ -13,6 +13,7 @@ import (
 	"whats-gtk/internal/paths"
 	"whats-gtk/internal/ui"
 	"whats-gtk/internal/ui/chat"
+	"whats-gtk/internal/ui/info"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
@@ -70,6 +71,29 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 			}
 		})
 	})
+
+	if db != nil && notifier != nil {
+		if dndVal, err := db.GetSetting("dnd_enabled"); err == nil && dndVal == "true" {
+			notifier.SetDNDEnabled(true)
+		}
+		if soundVal, err := db.GetSetting("sound_enabled"); err == nil && soundVal == "false" {
+			notifier.SetSoundEnabled(false)
+		}
+		notifier.OnDNDChange(func(enabled bool) {
+			val := "false"
+			if enabled {
+				val = "true"
+			}
+			_ = db.SetSetting("dnd_enabled", val)
+		})
+		notifier.OnSoundChange(func(enabled bool) {
+			val := "false"
+			if enabled {
+				val = "true"
+			}
+			_ = db.SetSetting("sound_enabled", val)
+		})
+	}
 
 	// Wire back-references (these can't be set in constructors due to circular init)
 	msgs.GetSelectedJID = chat.SelectedJID
@@ -159,7 +183,7 @@ func (br *Bridge) registerDefaultHooks() {
 
 	// Hook to send desktop notifications when app window is inactive or in background
 	br.Pipeline.AddHook(func(ctx context.Context, msg *meowEvents.Message) error {
-		if msg.Info.IsFromMe || br.Events.IsSyncing() || br.Notifier == nil {
+		if msg.Info.IsFromMe || br.Events.IsSyncing() || br.Notifier == nil || br.Notifier.IsDNDEnabled() {
 			return nil
 		}
 		chatJID := br.Messages.ResolveJID(msg.Info.Chat).ToNonAD().String()
@@ -286,6 +310,7 @@ func (br *Bridge) IsChatMuted(chatJID string) bool {
 
 // setupUIHandlers wires all UI callbacks to the ChatController and InputManager.
 func (br *Bridge) setupUIHandlers() {
+	br.Chat.WireInfoViewCallbacks()
 	br.App.Sidebar.OnChatSelected = br.Chat.HandleChatSelected
 	br.App.Sidebar.OnSearch = br.Chat.HandleSearch
 	br.App.Sidebar.OnPinChat = br.Chat.HandlePinChat
@@ -514,6 +539,32 @@ func (br *Bridge) setupUIHandlers() {
 	}
 	br.App.OnNewChatRequested = newConversation
 	br.App.Sidebar.OnNewChat = newConversation
+	br.App.Sidebar.OnNewGroup = func() {
+		contacts, err := br.DB.GetAllContacts(0, 1000)
+		if err != nil {
+			return
+		}
+		var items []info.ContactItem
+		for _, c := range contacts {
+			if !c.IsGroup.Valid || !c.IsGroup.Bool {
+				items = append(items, info.ContactItem{
+					JID:    c.JID,
+					Name:   c.DisplayName(),
+					Avatar: br.Chat.Contacts.GetAvatarNoFetch(c.JID),
+				})
+			}
+		}
+		info.ShowAddParticipantsDialog(&br.App.Window.Window, items, func(selectedJIDs []string) {
+			info.ShowEditTextDialog(&br.App.Window.Window, "Novo Grupo", "Nome do grupo", "", func(name string) {
+				if len(name) > 0 {
+					br.Chat.HandleCreateGroup(name, selectedJIDs)
+				}
+			})
+		})
+	}
+	br.App.Sidebar.OnNewCommunity = func() {
+		info.ShowCreateCommunityDialog(&br.App.Window.Window, br.Chat.HandleCreateCommunity)
+	}
 	br.Input.Register("Control+n", newConversation)
 	br.Input.Register("Control+N", newConversation)
 

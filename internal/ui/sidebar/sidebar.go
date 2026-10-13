@@ -34,6 +34,8 @@ type Sidebar struct {
 	OnManageProfiles  func()
 	OnOpenPreferences func()
 	OnNewChat         func()
+	OnNewGroup        func()
+	OnNewCommunity    func()
 	OnPinChat         func(jid string, pin bool)
 	OnArchiveChat     func(jid string, archive bool)
 	OnMuteChat        func(jid string, duration time.Duration)
@@ -70,7 +72,7 @@ func NewSidebar() (*Sidebar, error) {
 	profileBar.Append(profileCombo)
 
 	newChatBtn := gtk.NewButtonFromIconName("chat-new-symbolic")
-	newChatBtn.SetTooltipText("New Conversation (Ctrl+N)")
+	newChatBtn.SetTooltipText("Nova Conversa (Ctrl+N)")
 	profileBar.Append(newChatBtn)
 
 	manageBtn := gtk.NewButtonFromIconName("preferences-system-symbolic")
@@ -141,9 +143,69 @@ func NewSidebar() (*Sidebar, error) {
 	})
 
 	newChatBtn.ConnectClicked(func() {
-		if s.OnNewChat != nil {
-			s.OnNewChat()
+		popover := gtk.NewPopover()
+		popover.ConnectClosed(func() {
+			glib.IdleAdd(func() {
+				popover.Unparent()
+			})
+		})
+
+		menuBox := gtk.NewBox(gtk.OrientationVertical, 2)
+		menuBox.SetMarginTop(4)
+		menuBox.SetMarginBottom(4)
+		menuBox.SetMarginStart(4)
+		menuBox.SetMarginEnd(4)
+
+		makeMenuItem := func(iconName, text string, onClick func()) *gtk.Button {
+			btn := gtk.NewButton()
+			btn.SetHasFrame(false)
+			btn.AddCSSClass("flat")
+
+			itemBox := gtk.NewBox(gtk.OrientationHorizontal, 8)
+			itemBox.SetMarginStart(8)
+			itemBox.SetMarginEnd(12)
+			itemBox.SetMarginTop(6)
+			itemBox.SetMarginBottom(6)
+
+			icon := gtk.NewImageFromIconName(iconName)
+			label := gtk.NewLabel(text)
+			label.SetXAlign(0)
+			label.SetHExpand(true)
+
+			itemBox.Append(icon)
+			itemBox.Append(label)
+			btn.SetChild(itemBox)
+
+			btn.ConnectClicked(func() {
+				popover.Popdown()
+				if onClick != nil {
+					onClick()
+				}
+			})
+			return btn
 		}
+
+		menuBox.Append(makeMenuItem("chat-symbolic", "Nova Conversa", func() {
+			if s.OnNewChat != nil {
+				s.OnNewChat()
+			}
+		}))
+
+		menuBox.Append(makeMenuItem("system-users-symbolic", "Novo Grupo", func() {
+			if s.OnNewGroup != nil {
+				s.OnNewGroup()
+			}
+		}))
+
+		menuBox.Append(makeMenuItem("folder-publicshare-symbolic", "Nova Comunidade", func() {
+			if s.OnNewCommunity != nil {
+				s.OnNewCommunity()
+			}
+		}))
+
+		popover.SetChild(menuBox)
+		popover.SetParent(newChatBtn)
+		popover.Popup()
 	})
 
 	manageBtn.ConnectClicked(func() {
@@ -430,9 +492,11 @@ func (s *Sidebar) ShowIndices(show bool) {
 	}
 }
 
-func formatChatTitle(name string, isGroup bool, unreadCount int, isPinned bool, isMuted ...bool) string {
+func formatChatTitle(name string, isGroup bool, isCommunity bool, unreadCount int, isPinned bool, isMuted ...bool) string {
 	title := name
-	if isGroup {
+	if isCommunity {
+		title = "[C] " + title
+	} else if isGroup {
 		title = "[G] " + title
 	}
 	if unreadCount > 0 {
@@ -448,6 +512,10 @@ func formatChatTitle(name string, isGroup bool, unreadCount int, isPinned bool, 
 }
 
 func (s *Sidebar) UpdateChatRow(jid, name string, isGroup bool, unreadCount int, isPinned bool, isMuted ...bool) {
+	s.UpdateChatRowFull(jid, name, isGroup, false, unreadCount, isPinned, isMuted...)
+}
+
+func (s *Sidebar) UpdateChatRowFull(jid, name string, isGroup bool, isCommunity bool, unreadCount int, isPinned bool, isMuted ...bool) {
 	muted := false
 	if len(isMuted) > 0 {
 		muted = isMuted[0]
@@ -464,11 +532,11 @@ func (s *Sidebar) UpdateChatRow(jid, name string, isGroup bool, unreadCount int,
 		s.chatMuted[jid] = muted
 	}
 	if row, exists := s.chatRows[jid]; exists {
-		title := formatChatTitle(name, isGroup, unreadCount, isPinned, muted)
+		title := formatChatTitle(name, isGroup, isCommunity, unreadCount, isPinned, muted)
 		row.SetTitle(glib.MarkupEscapeText(title))
 		return
 	}
-	s.AddChat(jid, name, isGroup, unreadCount, isPinned, muted)
+	s.AddChatFull(jid, name, isGroup, isCommunity, unreadCount, isPinned, muted)
 }
 
 func (s *Sidebar) SetChatSubtitle(jid, subtitle string) {
@@ -478,6 +546,10 @@ func (s *Sidebar) SetChatSubtitle(jid, subtitle string) {
 }
 
 func (s *Sidebar) AddChat(jid, name string, isGroup bool, unreadCount int, isPinned bool, isMuted ...bool) {
+	s.AddChatFull(jid, name, isGroup, false, unreadCount, isPinned, isMuted...)
+}
+
+func (s *Sidebar) AddChatFull(jid, name string, isGroup bool, isCommunity bool, unreadCount int, isPinned bool, isMuted ...bool) {
 	muted := false
 	if len(isMuted) > 0 {
 		muted = isMuted[0]
@@ -485,7 +557,7 @@ func (s *Sidebar) AddChat(jid, name string, isGroup bool, unreadCount int, isPin
 		muted = s.chatMuted[jid]
 	}
 	if _, exists := s.chatRows[jid]; exists {
-		s.UpdateChatRow(jid, name, isGroup, unreadCount, isPinned, muted)
+		s.UpdateChatRowFull(jid, name, isGroup, isCommunity, unreadCount, isPinned, muted)
 		return
 	}
 
@@ -500,7 +572,7 @@ func (s *Sidebar) AddChat(jid, name string, isGroup bool, unreadCount int, isPin
 	}
 
 	row := adw.NewActionRow()
-	title := formatChatTitle(name, isGroup, unreadCount, isPinned, muted)
+	title := formatChatTitle(name, isGroup, isCommunity, unreadCount, isPinned, muted)
 	row.SetTitle(glib.MarkupEscapeText(title))
 	row.SetName(jid)
 	
@@ -559,7 +631,7 @@ func (s *Sidebar) RemoveChat(jid string) {
 func (s *Sidebar) SyncChats(items []events.SidebarItem) {
 	if len(s.chatRows) == 0 {
 		for _, item := range items {
-			s.AddChat(item.JID, item.Name, item.IsGroup, item.UnreadCount, item.IsPinned, item.IsMuted)
+			s.AddChatFull(item.JID, item.Name, item.IsGroup, item.IsCommunity, item.UnreadCount, item.IsPinned, item.IsMuted)
 			if item.Avatar != nil {
 				s.SetAvatar(item.JID, item.Avatar)
 			}
@@ -580,12 +652,12 @@ func (s *Sidebar) SyncChats(items []events.SidebarItem) {
 
 	for _, item := range items {
 		if _, exists := s.chatRows[item.JID]; exists {
-			s.UpdateChatRow(item.JID, item.Name, item.IsGroup, item.UnreadCount, item.IsPinned, item.IsMuted)
+			s.UpdateChatRowFull(item.JID, item.Name, item.IsGroup, item.IsCommunity, item.UnreadCount, item.IsPinned, item.IsMuted)
 			if item.Avatar != nil {
 				s.SetAvatar(item.JID, item.Avatar)
 			}
 		} else {
-			s.AddChat(item.JID, item.Name, item.IsGroup, item.UnreadCount, item.IsPinned, item.IsMuted)
+			s.AddChatFull(item.JID, item.Name, item.IsGroup, item.IsCommunity, item.UnreadCount, item.IsPinned, item.IsMuted)
 			if item.Avatar != nil {
 				s.SetAvatar(item.JID, item.Avatar)
 			}

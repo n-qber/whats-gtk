@@ -24,9 +24,11 @@ func NewTopBar() *TopBar {
 
 	winTitle := adw.NewWindowTitle("Select a chat", "")
 	winTitle.AddCSSClass("chat-header-name")
+	winTitle.SetTooltipText("Ver informações do chat")
 	header.SetTitleWidget(winTitle)
 
 	headerAvatar := adw.NewAvatar(32, "", true)
+	headerAvatar.SetTooltipText("Ver informações do chat")
 	header.PackStart(headerAvatar)
 
 	detachBtn := gtk.NewButtonFromIconName("window-new-symbolic")

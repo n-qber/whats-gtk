@@ -68,11 +68,14 @@ type LiveUIMessagePayload struct {
 
 // SidebarItem represents a chat in the sidebar.
 type SidebarItem struct {
-	JID         string
-	Name        string
-	IsGroup     bool
-	UnreadCount int
-	IsPinned    bool
-	IsMuted     bool
-	Avatar      *gdk.Texture
+	JID                string
+	Name               string
+	IsGroup            bool
+	IsCommunity        bool
+	ParentCommunityJID string
+	UnreadCount        int
+	IsPinned           bool
+	IsMuted            bool
+	Avatar             *gdk.Texture
 }
+

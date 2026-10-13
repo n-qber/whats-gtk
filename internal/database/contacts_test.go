@@ -165,3 +165,46 @@ func TestContactMute(t *testing.T) {
 		t.Errorf("Expected contact to be muted after SaveSyncData")
 	}
 }
+
+func TestAppSettings(t *testing.T) {
+	dbPath := "test_app_settings.db"
+	defer os.Remove(dbPath)
+
+	db, err := InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to init DB: %v", err)
+	}
+	defer db.Close()
+
+	// Setting doesn't exist yet
+	_, err = db.GetSetting("dnd_enabled")
+	if err == nil {
+		t.Errorf("Expected error for non-existent setting")
+	}
+
+	// Set setting
+	if err := db.SetSetting("dnd_enabled", "true"); err != nil {
+		t.Fatalf("Failed to set setting: %v", err)
+	}
+
+	val, err := db.GetSetting("dnd_enabled")
+	if err != nil {
+		t.Fatalf("Failed to get setting: %v", err)
+	}
+	if val != "true" {
+		t.Errorf("Expected 'true', got %s", val)
+	}
+
+	// Update setting
+	if err := db.SetSetting("dnd_enabled", "false"); err != nil {
+		t.Fatalf("Failed to update setting: %v", err)
+	}
+	val, err = db.GetSetting("dnd_enabled")
+	if err != nil {
+		t.Fatalf("Failed to get updated setting: %v", err)
+	}
+	if val != "false" {
+		t.Errorf("Expected 'false', got %s", val)
+	}
+}
+

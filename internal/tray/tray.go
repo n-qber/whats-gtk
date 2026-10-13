@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 	"time"
+	"whats-gtk/internal/notifications"
 
 	"fyne.io/systray"
 	"github.com/godbus/dbus/v5"
@@ -14,7 +15,7 @@ import (
 
 // Setup initializes the system tray icon, menu items, and starts the background
 // D-Bus watcher that keeps the tray item registered across bar/compositor restarts.
-func Setup(ctx context.Context, iconData []byte, onToggle func(), onQuit func()) {
+func Setup(ctx context.Context, iconData []byte, onToggle func(), onQuit func(), notifier *notifications.Notifier) {
 	go func() {
 		systray.Run(func() {
 			if len(iconData) > 0 {
@@ -28,6 +29,26 @@ func Setup(ctx context.Context, iconData []byte, onToggle func(), onQuit func())
 			}
 
 			mToggle := systray.AddMenuItem("Show/Hide", "Toggle WhatsApp GTK Window")
+
+			var mDND *systray.MenuItem
+			var dndCh chan struct{}
+			if notifier != nil {
+				systray.AddSeparator()
+				mDND = systray.AddMenuItemCheckbox("Não Perturbe", "Desativar notificações e sons", notifier.IsDNDEnabled())
+				if notifier.IsDNDEnabled() {
+					mDND.Check()
+				}
+				notifier.OnDNDChange(func(enabled bool) {
+					if enabled {
+						mDND.Check()
+					} else {
+						mDND.Uncheck()
+					}
+				})
+				dndCh = mDND.ClickedCh
+			}
+
+			systray.AddSeparator()
 			mQuit := systray.AddMenuItem("Quit", "Quit WhatsApp GTK")
 
 			// Start the StatusNotifierWatcher auto-reconnection monitor
@@ -41,6 +62,10 @@ func Setup(ctx context.Context, iconData []byte, onToggle func(), onQuit func())
 					case <-mToggle.ClickedCh:
 						if onToggle != nil {
 							onToggle()
+						}
+					case <-dndCh:
+						if notifier != nil {
+							notifier.SetDNDEnabled(!notifier.IsDNDEnabled())
 						}
 					case <-mQuit.ClickedCh:
 						if onQuit != nil {

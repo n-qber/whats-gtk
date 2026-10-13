@@ -46,31 +46,59 @@ func (cc *ChatController) SyncGroupIfNeeded(jid types.JID) {
 	}
 
 	if !exists || time.Since(lastSync) > 30*time.Minute {
-		go func(groupJID types.JID) {
-			info, err := cc.Backend.GetGroupInfo(cc.ctx, groupJID)
-			if err != nil || info == nil {
-				fmt.Printf("Bridge: Failed to get group info for %s: %v\n", groupJID, err)
-				return
-			}
-
-			cc.groupMutex.Lock()
-			cc.lastGroupSync[groupJID.ToNonAD().String()] = time.Now()
-			cc.cachedGroupInfo[groupJID.ToNonAD().String()] = info
-			cc.groupMutex.Unlock()
-
-			for _, p := range info.Participants {
-				pn := p.PhoneNumber.ToNonAD().String()
-				lid := p.LID.ToNonAD().String()
-				if pn != "" && lid != "" {
-					cc.DB.MergeLID(pn, lid)
-				} else {
-					cc.DB.SaveContact(database.Contact{JID: p.JID.ToNonAD().String()})
-				}
-			}
-
-			cc.updateGroupInfoUI(info)
-		}(jid)
+		cc.SyncGroupForce(jid)
 	}
+}
+
+// SyncGroupForce forces fetching fresh group information and sub-groups from WhatsApp servers.
+func (cc *ChatController) SyncGroupForce(jid types.JID) {
+	if cc.Backend == nil || cc.Backend.Client == nil {
+		return
+	}
+
+	go func(groupJID types.JID) {
+		info, err := cc.Backend.GetGroupInfo(cc.ctx, groupJID)
+		if err != nil || info == nil {
+			fmt.Printf("Bridge: Failed to get group info for %s: %v\n", groupJID, err)
+			return
+		}
+
+		cc.groupMutex.Lock()
+		cc.lastGroupSync[groupJID.ToNonAD().String()] = time.Now()
+		cc.cachedGroupInfo[groupJID.ToNonAD().String()] = info
+		cc.groupMutex.Unlock()
+
+		isComm := info.IsParent
+		parentJIDStr := info.LinkedParentJID.ToNonAD().String()
+		_ = cc.DB.SetContactCommunity(groupJID.String(), isComm, parentJIDStr)
+
+		if isComm {
+			if targets, err := cc.Backend.GetSubGroups(cc.ctx, groupJID); err == nil {
+				var dbSubs []database.CommunitySubGroup
+				for _, t := range targets {
+					dbSubs = append(dbSubs, database.CommunitySubGroup{
+						CommunityJID: groupJID.String(),
+						GroupJID:     t.JID.String(),
+						GroupName:    t.Name,
+						IsDefaultSub: t.IsDefaultSubGroup,
+					})
+				}
+				_ = cc.DB.SaveCommunitySubGroups(groupJID.String(), dbSubs)
+			}
+		}
+
+		for _, p := range info.Participants {
+			pn := p.PhoneNumber.ToNonAD().String()
+			lid := p.LID.ToNonAD().String()
+			if pn != "" && lid != "" {
+				cc.DB.MergeLID(pn, lid)
+			} else {
+				cc.DB.SaveContact(database.Contact{JID: p.JID.ToNonAD().String()})
+			}
+		}
+
+		cc.updateGroupInfoUI(info)
+	}(jid)
 }
 
 func (cc *ChatController) updateGroupInfoUI(grpInfo *types.GroupInfo) {
@@ -78,27 +106,98 @@ func (cc *ChatController) updateGroupInfoUI(grpInfo *types.GroupInfo) {
 		return
 	}
 
+	cleanJID := grpInfo.JID.ToNonAD().String()
+
+	var myJIDs []string
+	if cc.Backend != nil && cc.Backend.Client != nil && cc.Backend.Client.Store != nil && cc.Backend.Client.Store.ID != nil {
+		myJIDs = append(myJIDs, cc.Backend.Client.Store.ID.ToNonAD().String())
+		if cc.Backend.Client.Store.LID.User != "" {
+			myJIDs = append(myJIDs, cc.Backend.Client.Store.LID.ToNonAD().String())
+		}
+	}
+
+	isAdmin := false
+	isOwner := false
 	var participants []info.ParticipantModel
+
 	for _, p := range grpInfo.Participants {
 		name := p.JID.User
 		contact, err := cc.DB.GetContact(p.JID.String())
-		if err == nil && contact.DisplayName() != "" {
+		if err == nil && contact != nil && contact.DisplayName() != "" {
 			name = contact.DisplayName()
 		} else if p.DisplayName != "" {
 			name = p.DisplayName
+		}
+
+		pClean := p.JID.ToNonAD().String()
+		pPN := p.PhoneNumber.ToNonAD().String()
+		pLID := p.LID.ToNonAD().String()
+
+		isPartOwner := p.IsSuperAdmin || (grpInfo.OwnerJID.String() != "" && grpInfo.OwnerJID.ToNonAD().String() == pClean)
+
+		for _, myJ := range myJIDs {
+			if pClean == myJ || (pPN != "" && pPN == myJ) || (pLID != "" && pLID == myJ) {
+				if p.IsAdmin || p.IsSuperAdmin {
+					isAdmin = true
+				}
+				if isPartOwner {
+					isOwner = true
+				}
+			}
 		}
 
 		participants = append(participants, info.ParticipantModel{
 			Name:    name,
 			JID:     p.JID.String(),
 			IsAdmin: p.IsAdmin || p.IsSuperAdmin,
+			IsOwner: isPartOwner,
 			Avatar:  cc.Contacts.GetAvatarNoFetch(p.JID.String()),
 		})
 	}
 
+	var subGroups []info.CommunitySubGroupModel
+	if grpInfo.IsParent {
+		dbSubs, _ := cc.DB.GetCommunitySubGroups(grpInfo.JID.String())
+		for _, s := range dbSubs {
+			subGroups = append(subGroups, info.CommunitySubGroupModel{
+				JID:          s.GroupJID,
+				Name:         s.GroupName,
+				IsDefaultSub: s.IsDefaultSub,
+			})
+		}
+	}
+
+	parentJID := grpInfo.LinkedParentJID.ToNonAD().String()
+	parentName := ""
+	if parentJID != "" {
+		if parentContact, err := cc.DB.GetContact(parentJID); err == nil && parentContact != nil {
+			parentName = parentContact.DisplayName()
+		}
+	}
+
+	myJIDStr := ""
+	if len(myJIDs) > 0 {
+		myJIDStr = myJIDs[0]
+	}
+
+	extDetails := info.ExtendedGroupDetails{
+		JID:             grpInfo.JID.String(),
+		Description:     grpInfo.Topic,
+		IsCommunity:     grpInfo.IsParent,
+		IsAdmin:         isAdmin,
+		IsOwner:         isOwner,
+		IsAnnounce:      grpInfo.IsAnnounce,
+		IsLocked:        grpInfo.IsLocked,
+		ParentCommunity: parentJID,
+		ParentName:      parentName,
+		MyJID:           myJIDStr,
+		SubGroups:       subGroups,
+		Participants:    participants,
+	}
+
 	glib.IdleAdd(func() {
-		if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == grpInfo.JID.ToNonAD().String() {
-			cc.App.InfoView.SetGroupDetails(grpInfo.Topic, participants)
+		if cc.selectedJID != nil && cc.selectedJID.ToNonAD().String() == cleanJID {
+			cc.App.InfoView.SetExtendedGroupDetails(extDetails)
 		}
 	})
 }
@@ -116,14 +215,18 @@ func (cc *ChatController) RefreshSidebarUI() {
 				continue
 			}
 			tex := cc.Contacts.GetAvatarNoFetch(contact.JID)
+			isComm := cc.DB.IsCommunity(contact.JID)
+			parentJID := cc.DB.GetParentCommunity(contact.JID)
 			items = append(items, events.SidebarItem{
-				JID:         contact.JID,
-				Name:        contact.DisplayName(),
-				IsGroup:     contact.IsGroup.Valid && contact.IsGroup.Bool,
-				UnreadCount: contact.UnreadCount,
-				IsPinned:    contact.IsPinned,
-				IsMuted:     contact.IsMuted(),
-				Avatar:      tex,
+				JID:                contact.JID,
+				Name:               contact.DisplayName(),
+				IsGroup:            contact.IsGroup.Valid && contact.IsGroup.Bool,
+				IsCommunity:        isComm,
+				ParentCommunityJID: parentJID,
+				UnreadCount:        contact.UnreadCount,
+				IsPinned:           contact.IsPinned,
+				IsMuted:            contact.IsMuted(),
+				Avatar:             tex,
 			})
 		}
 		cc.EventBus.Publish(events.Event{

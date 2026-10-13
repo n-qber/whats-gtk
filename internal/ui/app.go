@@ -71,19 +71,29 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 	infoFlap.SetFlapPosition(gtk.PackEnd)
 	infoFlap.SetFoldPolicy(adw.FlapFoldPolicyAlways)
 	infoFlap.SetTransitionType(adw.FlapTransitionTypeOver)
+	infoFlap.SetModal(true)
 	infoFlap.SetSwipeToOpen(false)
 	infoFlap.SetSwipeToClose(true)
 	infoFlap.SetRevealFlap(false)
 
+	var a *App
+
 	cv.OnHeaderClick = func() {
+		if a != nil && a.ActiveMainJID == "" {
+			return
+		}
 		infoFlap.SetRevealFlap(!infoFlap.RevealFlap())
+	}
+
+	iv.OnClose = func() {
+		infoFlap.SetRevealFlap(false)
 	}
 
 	splitView.SetSidebar(s.Box)
 	splitView.SetContent(infoFlap)
 	window.SetContent(splitView)
 
-	a := &App{
+	a = &App{
 		Window:          window,
 		Sidebar:         s,
 		ChatView:        cv,
@@ -193,6 +203,10 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 		}
 		if keyval == gdk.KEY_Escape || keyName == "Escape" {
 			if a.OnCancelCycle != nil && a.OnCancelCycle() {
+				return true
+			}
+			if a.InfoFlap != nil && a.InfoFlap.RevealFlap() {
+				a.InfoFlap.SetRevealFlap(false)
 				return true
 			}
 		}
@@ -508,7 +522,12 @@ func loadCSS() {
 		}
 		.bubble-self { background-color: #dcf8c6; }
 		.bubble-other { background-color: #ffffff; }
-		.chat-header-name { font-weight: bold; font-size: 11pt; }
+		.chat-header-name { font-weight: bold; font-size: 11pt; cursor: pointer; }
+		.info-view-box {
+			background-color: @window_bg_color;
+			border-left: 1px solid @borders;
+			box-shadow: -4px 0 16px rgba(0, 0, 0, 0.2);
+		}
 		.message-time { color: #667781; font-size: 7pt; margin-left: 2px; }
 		.status-overlay { margin-top: -10px; margin-right: -4px; margin-bottom: -2px; }
 		.message-sender-name { color: #008069; font-weight: bold; font-size: 9pt; margin-bottom: 2px; }
@@ -752,6 +771,18 @@ func loadCSS() {
 			outline: 2px dashed #3584e4;
 			outline-offset: -4px;
 			background-color: rgba(53, 132, 228, 0.08);
+		}
+		.description-editor-scroll {
+			border: 1px solid @borders;
+			border-radius: 8px;
+			background-color: @view_bg_color;
+		}
+		.description-editor-scroll:focus-within {
+			border-color: @accent_color;
+		}
+		.description-editor-view {
+			background-color: transparent;
+			color: @view_fg_color;
 		}
 	`)
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), cssProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
