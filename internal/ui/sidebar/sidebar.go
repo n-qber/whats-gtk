@@ -10,8 +10,17 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
+	"github.com/diamondburned/gotk4/pkg/pango"
 	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 )
+
+type SoftReadMessage struct {
+	SenderName string
+	IsFromMe   bool
+	Content    string
+	Type       string
+	TimeString string
+}
 
 type ProfileItem struct {
 	ID   int64
@@ -42,6 +51,7 @@ type Sidebar struct {
 	OnMarkUnread      func(jid string, unread bool)
 	OnDetachChat      func(jid string)
 	OnClearChat       func(jid string)
+	OnGetSoftReadData func(jid string) (string, []SoftReadMessage)
 
 	profileItems []ProfileItem
 	chatRows        map[string]*adw.ActionRow
@@ -56,6 +66,13 @@ type Sidebar struct {
 	showCommunityTag       bool
 	showGroupUnread        bool
 	showLastMessagePreview bool
+	showSoftRead           bool
+
+	activeSoftReadPopover *gtk.Popover
+	activeSoftReadJID     string
+	softReadTimer         glib.SourceHandle
+	softReadCloseTimer    glib.SourceHandle
+	isHoveringSoftRead    bool
 
 	chatNames          map[string]string
 	chatIsGroup        map[string]bool
@@ -135,6 +152,7 @@ func NewSidebar() (*Sidebar, error) {
 		showCommunityTag:       true,
 		showGroupUnread:        true,
 		showLastMessagePreview: true,
+		showSoftRead:           true,
 		chatRows:          make(map[string]*adw.ActionRow),
 		chatListBoxRows:   make(map[string]*gtk.ListBoxRow),
 		chatAvatars:       make(map[string]*adw.Avatar),
@@ -258,6 +276,7 @@ func NewSidebar() (*Sidebar, error) {
 	})
 
 	listBox.ConnectRowSelected(func(row *gtk.ListBoxRow) {
+		s.dismissSoftReadPopover()
 		if row == nil || s.isRefreshing { return }
 		s.isCycling = false
 		s.originalJID = ""
@@ -307,6 +326,7 @@ func (s *Sidebar) SetSyncProgress(fraction float64) {
 }
 
 func (s *Sidebar) SelectChat(jid string) {
+	s.dismissSoftReadPopover()
 	if row, ok := s.chatRows[jid]; ok {
 		if lbRow, ok := row.Parent().(*gtk.ListBoxRow); ok {
 			s.isRefreshing = true
@@ -317,6 +337,7 @@ func (s *Sidebar) SelectChat(jid string) {
 }
 
 func (s *Sidebar) SelectIndex(index int) {
+	s.dismissSoftReadPopover()
 	s.isCycling = false
 	s.originalJID = ""
 	s.pendingJID = ""
@@ -500,6 +521,7 @@ func (s *Sidebar) CancelCycle() bool {
 }
 
 func (s *Sidebar) ClearSelection() {
+	s.dismissSoftReadPopover()
 	s.isRefreshing = true
 	s.ListBox.SelectRow(nil)
 	s.isRefreshing = false
@@ -745,9 +767,62 @@ func (s *Sidebar) AddChatFull(jid, name string, isGroup bool, isCommunity bool, 
 	rightClick := gtk.NewGestureClick()
 	rightClick.SetButton(3)
 	rightClick.ConnectPressed(func(n int, x, y float64) {
+		s.dismissSoftReadPopover()
 		s.showChatContextMenu(jid, lbRow)
 	})
 	lbRow.AddController(rightClick)
+
+	// Hover motion for Soft-Read bubble preview
+	hoverMotion := gtk.NewEventControllerMotion()
+	hoverMotion.ConnectEnter(func(x, y float64) {
+		if !s.showSoftRead || s.OnGetSoftReadData == nil {
+			return
+		}
+		if s.softReadCloseTimer != 0 {
+			glib.SourceRemove(s.softReadCloseTimer)
+			s.softReadCloseTimer = 0
+		}
+		if s.activeSoftReadPopover != nil && s.activeSoftReadJID == jid {
+			return
+		}
+		if s.softReadTimer != 0 {
+			glib.SourceRemove(s.softReadTimer)
+			s.softReadTimer = 0
+		}
+		if s.activeSoftReadPopover != nil && s.activeSoftReadJID != jid {
+			s.dismissSoftReadPopover()
+		}
+
+		targetJID := jid
+		targetWidget := lbRow
+		s.softReadTimer = glib.TimeoutAdd(600, func() bool {
+			s.softReadTimer = 0
+			if !s.showSoftRead || s.OnGetSoftReadData == nil {
+				return false
+			}
+			s.showSoftReadPopover(targetJID, targetWidget)
+			return false
+		})
+	})
+	hoverMotion.ConnectLeave(func() {
+		if s.softReadTimer != 0 {
+			glib.SourceRemove(s.softReadTimer)
+			s.softReadTimer = 0
+		}
+		if s.activeSoftReadPopover != nil && s.activeSoftReadJID == jid {
+			if s.softReadCloseTimer != 0 {
+				glib.SourceRemove(s.softReadCloseTimer)
+			}
+			s.softReadCloseTimer = glib.TimeoutAdd(250, func() bool {
+				s.softReadCloseTimer = 0
+				if !s.isHoveringSoftRead {
+					s.dismissSoftReadPopover()
+				}
+				return false
+			})
+		}
+	})
+	lbRow.AddController(hoverMotion)
 
 	s.ListBox.Append(lbRow)
 	if s.chatListBoxRows != nil {
@@ -757,6 +832,9 @@ func (s *Sidebar) AddChatFull(jid, name string, isGroup bool, isCommunity bool, 
 }
 
 func (s *Sidebar) RemoveChat(jid string) {
+	if s.activeSoftReadJID == jid {
+		s.dismissSoftReadPopover()
+	}
 	if s.chatListBoxRows != nil {
 		if lbRow, ok := s.chatListBoxRows[jid]; ok {
 			s.ListBox.Remove(lbRow)
@@ -824,6 +902,7 @@ func (s *Sidebar) SyncChats(items []events.SidebarItem) {
 }
 
 func (s *Sidebar) ClearChats() {
+	s.dismissSoftReadPopover()
 	s.chatRows = make(map[string]*adw.ActionRow)
 	s.chatListBoxRows = make(map[string]*gtk.ListBoxRow)
 	s.chatAvatars = make(map[string]*adw.Avatar)
@@ -973,6 +1052,219 @@ func (s *Sidebar) showChatContextMenu(jid string, targetWidget gtk.Widgetter) {
 	popover.SetChild(box)
 	popover.SetParent(targetWidget)
 	popover.Popup()
+}
+
+func (s *Sidebar) showSoftReadPopover(jid string, targetWidget gtk.Widgetter) {
+	if s.OnGetSoftReadData == nil || targetWidget == nil {
+		return
+	}
+
+	chatName, msgs := s.OnGetSoftReadData(jid)
+	if chatName == "" {
+		if name, ok := s.chatNames[jid]; ok && name != "" {
+			chatName = name
+		} else {
+			chatName = jid
+		}
+	}
+
+	popover := gtk.NewPopover()
+	popover.SetParent(targetWidget)
+	popover.SetPosition(gtk.PosRight)
+	popover.SetHasArrow(true)
+	popover.SetAutohide(true)
+	popover.AddCSSClass("softread-popover")
+
+	container := gtk.NewBox(gtk.OrientationVertical, 0)
+	container.SetSizeRequest(320, -1)
+
+	// 1. Header
+	headerBox := gtk.NewBox(gtk.OrientationHorizontal, 8)
+	headerBox.AddCSSClass("softread-header")
+	headerBox.SetMarginTop(8)
+	headerBox.SetMarginBottom(6)
+	headerBox.SetMarginStart(10)
+	headerBox.SetMarginEnd(10)
+
+	icon := gtk.NewImageFromIconName("view-reveal-symbolic")
+	icon.SetVAlign(gtk.AlignCenter)
+	headerBox.Append(icon)
+
+	titleBox := gtk.NewBox(gtk.OrientationVertical, 2)
+	titleBox.SetHExpand(true)
+
+	titleLabel := gtk.NewLabel(chatName)
+	titleLabel.SetXAlign(0)
+	titleLabel.SetEllipsize(pango.EllipsizeEnd)
+	titleLabel.SetMaxWidthChars(20)
+	titleLabel.AddCSSClass("heading")
+	titleBox.Append(titleLabel)
+
+	subLabel := gtk.NewLabel("Leitura Silenciosa")
+	subLabel.SetXAlign(0)
+	subLabel.AddCSSClass("caption")
+	subLabel.AddCSSClass("dim-label")
+	titleBox.Append(subLabel)
+
+	headerBox.Append(titleBox)
+
+	badgeLabel := gtk.NewLabel("Sem Acks")
+	badgeLabel.AddCSSClass("softread-badge")
+	badgeLabel.SetVAlign(gtk.AlignCenter)
+	headerBox.Append(badgeLabel)
+
+	container.Append(headerBox)
+	container.Append(gtk.NewSeparator(gtk.OrientationHorizontal))
+
+	// 2. Body with messages
+	scrolled := gtk.NewScrolledWindow()
+	scrolled.SetPolicy(gtk.PolicyNever, gtk.PolicyAutomatic)
+	scrolled.SetPropagateNaturalHeight(true)
+	scrolled.SetMaxContentHeight(320)
+	scrolled.SetMinContentWidth(300)
+
+	msgsBox := gtk.NewBox(gtk.OrientationVertical, 6)
+	msgsBox.SetMarginTop(8)
+	msgsBox.SetMarginBottom(8)
+	msgsBox.SetMarginStart(10)
+	msgsBox.SetMarginEnd(10)
+
+	if len(msgs) == 0 {
+		emptyLabel := gtk.NewLabel("Nenhuma mensagem recente salva")
+		emptyLabel.AddCSSClass("dim-label")
+		emptyLabel.AddCSSClass("caption")
+		emptyLabel.SetMarginTop(24)
+		emptyLabel.SetMarginBottom(24)
+		emptyLabel.SetHAlign(gtk.AlignCenter)
+		msgsBox.Append(emptyLabel)
+	} else {
+		for _, m := range msgs {
+			rowBox := gtk.NewBox(gtk.OrientationHorizontal, 0)
+			bBox := gtk.NewBox(gtk.OrientationVertical, 2)
+
+			if m.IsFromMe {
+				rowBox.SetHAlign(gtk.AlignEnd)
+				bBox.AddCSSClass("softread-bubble-self")
+			} else {
+				rowBox.SetHAlign(gtk.AlignStart)
+				bBox.AddCSSClass("softread-bubble-other")
+				if m.SenderName != "" {
+					senderLabel := gtk.NewLabel(m.SenderName)
+					senderLabel.SetXAlign(0)
+					senderLabel.AddCSSClass("message-sender-name")
+					bBox.Append(senderLabel)
+				}
+			}
+
+			txtLabel := gtk.NewLabel(m.Content)
+			txtLabel.SetXAlign(0)
+			txtLabel.SetWrap(true)
+			txtLabel.SetWrapMode(pango.WrapWordChar)
+			txtLabel.SetMaxWidthChars(30)
+			bBox.Append(txtLabel)
+
+			if m.TimeString != "" {
+				timeLabel := gtk.NewLabel(m.TimeString)
+				timeLabel.SetXAlign(1)
+				timeLabel.AddCSSClass("message-time")
+				bBox.Append(timeLabel)
+			}
+
+			rowBox.Append(bBox)
+			msgsBox.Append(rowBox)
+		}
+	}
+
+	scrolled.SetChild(msgsBox)
+	container.Append(scrolled)
+
+	// 3. Footer
+	container.Append(gtk.NewSeparator(gtk.OrientationHorizontal))
+	footerLabel := gtk.NewLabel("👁️ Prévia somente leitura • Nenhum recibo enviado")
+	footerLabel.AddCSSClass("caption")
+	footerLabel.AddCSSClass("dim-label")
+	footerLabel.SetMarginTop(4)
+	footerLabel.SetMarginBottom(4)
+	footerLabel.SetMarginStart(8)
+	footerLabel.SetMarginEnd(8)
+	footerLabel.SetHAlign(gtk.AlignCenter)
+	container.Append(footerLabel)
+
+	popover.SetChild(container)
+
+	// Motion controller for popover hover
+	popMotion := gtk.NewEventControllerMotion()
+	popMotion.ConnectEnter(func(x, y float64) {
+		s.isHoveringSoftRead = true
+		if s.softReadCloseTimer != 0 {
+			glib.SourceRemove(s.softReadCloseTimer)
+			s.softReadCloseTimer = 0
+		}
+	})
+	popMotion.ConnectLeave(func() {
+		s.isHoveringSoftRead = false
+		if s.softReadCloseTimer != 0 {
+			glib.SourceRemove(s.softReadCloseTimer)
+		}
+		s.softReadCloseTimer = glib.TimeoutAdd(200, func() bool {
+			s.softReadCloseTimer = 0
+			s.dismissSoftReadPopover()
+			return false
+		})
+	})
+	popover.AddController(popMotion)
+
+	popover.ConnectClosed(func() {
+		if s.activeSoftReadPopover == popover {
+			s.activeSoftReadPopover = nil
+			s.activeSoftReadJID = ""
+			s.isHoveringSoftRead = false
+		}
+		glib.IdleAdd(func() {
+			popover.Unparent()
+		})
+	})
+
+	s.activeSoftReadPopover = popover
+	s.activeSoftReadJID = jid
+	popover.Popup()
+
+	// Scroll to latest message at the bottom
+	glib.IdleAdd(func() {
+		adj := scrolled.VAdjustment()
+		if adj != nil {
+			adj.SetValue(adj.Upper())
+		}
+	})
+}
+
+func (s *Sidebar) dismissSoftReadPopover() {
+	if s.softReadTimer != 0 {
+		glib.SourceRemove(s.softReadTimer)
+		s.softReadTimer = 0
+	}
+	if s.softReadCloseTimer != 0 {
+		glib.SourceRemove(s.softReadCloseTimer)
+		s.softReadCloseTimer = 0
+	}
+	if s.activeSoftReadPopover != nil {
+		pop := s.activeSoftReadPopover
+		s.activeSoftReadPopover = nil
+		s.activeSoftReadJID = ""
+		s.isHoveringSoftRead = false
+		pop.Popdown()
+	}
+}
+
+func (s *Sidebar) SetShowSoftRead(show bool) {
+	s.showSoftRead = show
+	if !show {
+		s.dismissSoftReadPopover()
+	}
+}
+
+func (s *Sidebar) IsShowSoftRead() bool {
+	return s.showSoftRead
 }
 
 func (s *Sidebar) MoveChatToTop(jid string) {

@@ -14,6 +14,7 @@ import (
 	"whats-gtk/internal/ui"
 	"whats-gtk/internal/ui/chat"
 	"whats-gtk/internal/ui/info"
+	"whats-gtk/internal/ui/sidebar"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
@@ -117,6 +118,9 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 		}
 		if val, err := db.GetSetting("show_last_message_preview"); err == nil && val == "false" {
 			a.Sidebar.SetShowLastMessagePreview(false)
+		}
+		if val, err := db.GetSetting("soft_read_enabled"); err == nil && val == "false" {
+			a.Sidebar.SetShowSoftRead(false)
 		}
 	}
 
@@ -353,6 +357,44 @@ func (br *Bridge) setupUIHandlers() {
 	}
 	br.App.Sidebar.OnClearChat = br.Chat.HandleClearChat
 
+	br.App.Sidebar.OnGetSoftReadData = func(jid string) (string, []sidebar.SoftReadMessage) {
+		name := jid
+		if contact, err := br.DB.GetContact(jid); err == nil && contact != nil && contact.DisplayName() != "" {
+			name = contact.DisplayName()
+		}
+
+		jids := br.Chat.GetChatJIDs(jid)
+		dbMsgs, err := br.DB.GetMessages(jids, 10)
+		if err != nil || len(dbMsgs) == 0 {
+			return name, nil
+		}
+
+		var msgs []sidebar.SoftReadMessage
+		for _, m := range dbMsgs {
+			sName := ""
+			if !m.IsFromMe {
+				sName = br.Contacts.ResolveSenderName(m.SenderJID)
+			}
+			tStr := m.Timestamp.Format("15:04")
+			content := m.Content
+			if m.Caption.Valid && m.Caption.String != "" {
+				content = m.Caption.String
+			}
+			if m.Type != "text" {
+				content = database.FormatMessagePreview(content, m.Caption.String, m.Type)
+			}
+
+			msgs = append(msgs, sidebar.SoftReadMessage{
+				SenderName: sName,
+				IsFromMe:   m.IsFromMe,
+				Content:    content,
+				Type:       m.Type,
+				TimeString: tStr,
+			})
+		}
+		return name, msgs
+	}
+
 	br.App.Sidebar.OnProfileSelected = func(profileID int64) {
 		br.Chat.SetActiveProfileID(profileID)
 	}
@@ -372,6 +414,7 @@ func (br *Bridge) setupUIHandlers() {
 			ShowLastMessagePreview:    br.App.Sidebar != nil && br.App.Sidebar.IsShowLastMessagePreview(),
 			ShowGroupTag:              br.App.Sidebar != nil && br.App.Sidebar.IsShowGroupTag(),
 			ShowCommunityTag:          br.App.Sidebar != nil && br.App.Sidebar.IsShowCommunityTag(),
+			SoftReadEnabled:           br.App.Sidebar != nil && br.App.Sidebar.IsShowSoftRead(),
 			OnSettingChanged: func(key string, val bool) {
 				strVal := "false"
 				if val {
@@ -398,6 +441,10 @@ func (br *Bridge) setupUIHandlers() {
 				case "show_last_message_preview":
 					if br.App.Sidebar != nil {
 						br.App.Sidebar.SetShowLastMessagePreview(val)
+					}
+				case "soft_read_enabled":
+					if br.App.Sidebar != nil {
+						br.App.Sidebar.SetShowSoftRead(val)
 					}
 				}
 			},

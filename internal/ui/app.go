@@ -538,6 +538,36 @@ func loadCSS() {
 		}
 		.bubble-self { background-color: #dcf8c6; }
 		.bubble-other { background-color: #ffffff; }
+		.softread-popover {
+			padding: 0;
+		}
+		.softread-header {
+			padding: 6px 10px;
+		}
+		.softread-badge {
+			font-size: 7.5pt;
+			padding: 2px 8px;
+			border-radius: 9999px;
+			background-color: alpha(@accent_color, 0.15);
+			color: @accent_color;
+			font-weight: bold;
+		}
+		.softread-bubble-self {
+			background-color: alpha(#25d366, 0.28);
+			color: @window_fg_color;
+			border-radius: 10px;
+			padding: 6px 10px;
+			margin: 2px 0;
+			max-width: 260px;
+		}
+		.softread-bubble-other {
+			background-color: alpha(@window_fg_color, 0.08);
+			color: @window_fg_color;
+			border-radius: 10px;
+			padding: 6px 10px;
+			margin: 2px 0;
+			max-width: 260px;
+		}
 		.chat-header-name { font-weight: bold; font-size: 11pt; cursor: pointer; }
 		.info-view-box {
 			background-color: @window_bg_color;

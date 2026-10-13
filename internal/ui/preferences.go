@@ -17,6 +17,7 @@ type PreferencesSettings struct {
 	ShowLastMessagePreview    bool
 	ShowGroupTag              bool
 	ShowCommunityTag          bool
+	SoftReadEnabled           bool
 
 	OnSettingChanged func(key string, val bool)
 }
@@ -160,6 +161,18 @@ func ShowPreferencesDialog(parent *gtk.Window, notifier *notifications.Notifier,
 		}
 	})
 	chatGroup.Add(commTagRow)
+
+	softReadRow := adw.NewSwitchRow()
+	softReadRow.SetTitle("Leitura rápida (Soft-read)")
+	softReadRow.SetSubtitle("Exibir balão flutuante de leitura silenciosa ao passar o mouse sobre a conversa")
+	softReadRow.SetActive(settings.SoftReadEnabled)
+	softReadRow.Connect("notify::active", func() {
+		if settings.OnSettingChanged != nil {
+			settings.OnSettingChanged("soft_read_enabled", softReadRow.Active())
+		}
+	})
+	chatGroup.Add(softReadRow)
+
 	page.Add(chatGroup)
 
 	// 3. Storage & Media Group
