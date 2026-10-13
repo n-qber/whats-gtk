@@ -72,4 +72,43 @@ func TestFTS5Search(t *testing.T) {
 	if len(resultsAll) != 1 || resultsAll[0].ID != "msg_2" {
 		t.Fatalf("Expected 1 result with msg_2, got %v", resultsAll)
 	}
+
+	// Test GetLastMessagesMap
+	lastMsgs := db.GetLastMessagesMap()
+	if lastMsgs["user1@s.whatsapp.net"] != "Let's review the quarterly report and budget numbers." {
+		t.Errorf("Expected latest message for user1, got %q", lastMsgs["user1@s.whatsapp.net"])
+	}
+	if lastMsgs["user2@s.whatsapp.net"] != "Unrelated chit chat about weather." {
+		t.Errorf("Expected latest message for user2, got %q", lastMsgs["user2@s.whatsapp.net"])
+	}
 }
+
+func TestFormatMessagePreview(t *testing.T) {
+	tests := []struct {
+		content  string
+		caption  string
+		mType    string
+		expected string
+	}{
+		{"Hello world", "", "text", "Hello world"},
+		{"Line 1\nLine 2", "", "text", "Line 1 Line 2"},
+		{"", "Check this out", "image", "📷 Check this out"},
+		{"", "", "image", "📷 Foto"},
+		{"", "Vacation", "video", "🎥 Vacation"},
+		{"", "", "video", "🎥 Vídeo"},
+		{"", "", "audio", "🎵 Áudio"},
+		{"", "", "sticker", "Figurinha"},
+		{"", "Contract.pdf", "document", "📄 Contract.pdf"},
+		{"", "", "document", "📄 Documento"},
+		{"", "", "revoked", "🚫 Mensagem apagada"},
+		{"This is a very long text message that is definitely going to exceed sixty unicode characters in length to test truncation", "", "text", "This is a very long text message that is definitely going to..."},
+	}
+
+	for _, tc := range tests {
+		actual := FormatMessagePreview(tc.content, tc.caption, tc.mType)
+		if actual != tc.expected {
+			t.Errorf("FormatMessagePreview(%q, %q, %q) = %q; expected %q", tc.content, tc.caption, tc.mType, actual, tc.expected)
+		}
+	}
+}
+

@@ -10,8 +10,19 @@ import (
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 )
 
+// PreferencesSettings contains configurable preferences values and callbacks.
+type PreferencesSettings struct {
+	GroupNotificationsEnabled bool
+	GroupUnreadEnabled        bool
+	ShowLastMessagePreview    bool
+	ShowGroupTag              bool
+	ShowCommunityTag          bool
+
+	OnSettingChanged func(key string, val bool)
+}
+
 // ShowPreferencesDialog presents the native GNOME Adwaita preferences window.
-func ShowPreferencesDialog(parent *gtk.Window, notifier *notifications.Notifier, onLogout func()) *adw.PreferencesWindow {
+func ShowPreferencesDialog(parent *gtk.Window, notifier *notifications.Notifier, settings PreferencesSettings, onLogout func()) *adw.PreferencesWindow {
 	win := adw.NewPreferencesWindow()
 	win.SetTitle("Preferências")
 	if parent != nil {
@@ -55,6 +66,21 @@ func ShowPreferencesDialog(parent *gtk.Window, notifier *notifications.Notifier,
 		}
 	})
 	notifGroup.Add(soundRow)
+
+	grpNotifRow := adw.NewSwitchRow()
+	grpNotifRow.SetTitle("Notificações de grupos")
+	grpNotifRow.SetSubtitle("Exibir alertas na área de trabalho para mensagens recebidas em grupos")
+	grpNotifRow.SetActive(settings.GroupNotificationsEnabled)
+	grpNotifRow.Connect("notify::active", func() {
+		active := grpNotifRow.Active()
+		if notifier != nil && notifier.IsGroupNotificationsEnabled() != active {
+			notifier.SetGroupNotificationsEnabled(active)
+		}
+		if settings.OnSettingChanged != nil {
+			settings.OnSettingChanged("group_notifications_enabled", active)
+		}
+	})
+	notifGroup.Add(grpNotifRow)
 	page.Add(notifGroup)
 
 	if notifier != nil {
@@ -72,13 +98,71 @@ func ShowPreferencesDialog(parent *gtk.Window, notifier *notifications.Notifier,
 				}
 			})
 		})
+		unsubGrp := notifier.OnGroupNotificationsChange(func(enabled bool) {
+			glib.IdleAdd(func() {
+				if grpNotifRow.Active() != enabled {
+					grpNotifRow.SetActive(enabled)
+				}
+			})
+		})
 		win.Connect("destroy", func() {
 			unsubDND()
 			unsubSound()
+			unsubGrp()
 		})
 	}
 
-	// 2. Storage & Media Group
+	// 2. Chat & Sidebar Group
+	chatGroup := adw.NewPreferencesGroup()
+	chatGroup.SetTitle("Conversas e Barra Lateral")
+	chatGroup.SetDescription("Configurações de exibição de mensagens e identificadores na lista")
+
+	previewRow := adw.NewSwitchRow()
+	previewRow.SetTitle("Prévia da última mensagem")
+	previewRow.SetSubtitle("Exibir o texto ou mídia da última mensagem na lista de conversas")
+	previewRow.SetActive(settings.ShowLastMessagePreview)
+	previewRow.Connect("notify::active", func() {
+		if settings.OnSettingChanged != nil {
+			settings.OnSettingChanged("show_last_message_preview", previewRow.Active())
+		}
+	})
+	chatGroup.Add(previewRow)
+
+	unreadRow := adw.NewSwitchRow()
+	unreadRow.SetTitle("Contador de não lidas em grupos")
+	unreadRow.SetSubtitle("Exibir contador de mensagens não lidas nos títulos dos grupos")
+	unreadRow.SetActive(settings.GroupUnreadEnabled)
+	unreadRow.Connect("notify::active", func() {
+		if settings.OnSettingChanged != nil {
+			settings.OnSettingChanged("group_unread_enabled", unreadRow.Active())
+		}
+	})
+	chatGroup.Add(unreadRow)
+
+	groupTagRow := adw.NewSwitchRow()
+	groupTagRow.SetTitle("Identificador [G] em grupos")
+	groupTagRow.SetSubtitle("Exibir o prefixo [G] nos nomes de grupos")
+	groupTagRow.SetActive(settings.ShowGroupTag)
+	groupTagRow.Connect("notify::active", func() {
+		if settings.OnSettingChanged != nil {
+			settings.OnSettingChanged("show_group_tag", groupTagRow.Active())
+		}
+	})
+	chatGroup.Add(groupTagRow)
+
+	commTagRow := adw.NewSwitchRow()
+	commTagRow.SetTitle("Identificador [C] em comunidades")
+	commTagRow.SetSubtitle("Exibir o prefixo [C] nos nomes de comunidades")
+	commTagRow.SetActive(settings.ShowCommunityTag)
+	commTagRow.Connect("notify::active", func() {
+		if settings.OnSettingChanged != nil {
+			settings.OnSettingChanged("show_community_tag", commTagRow.Active())
+		}
+	})
+	chatGroup.Add(commTagRow)
+	page.Add(chatGroup)
+
+	// 3. Storage & Media Group
 	storageGroup := adw.NewPreferencesGroup()
 	storageGroup.SetTitle("Armazenamento e Mídia")
 	storageGroup.SetDescription("Localização de mídias e arquivos baixados")
@@ -97,7 +181,7 @@ func ShowPreferencesDialog(parent *gtk.Window, notifier *notifications.Notifier,
 	storageGroup.Add(mediaRow)
 	page.Add(storageGroup)
 
-	// 3. Account Group
+	// 4. Account Group
 	accountGroup := adw.NewPreferencesGroup()
 	accountGroup.SetTitle("Conta")
 	accountGroup.SetDescription("Gerenciamento da sessão ativa do WhatsApp")

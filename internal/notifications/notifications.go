@@ -13,15 +13,18 @@ type Notifier struct {
 	conn         *dbus.Conn
 	obj          dbus.BusObject
 	onAction     func(chatJID string)
-	soundEnabled bool
-	dndEnabled   bool
+	soundEnabled              bool
+	dndEnabled                bool
+	groupNotificationsEnabled bool
 
-	mu           sync.Mutex
-	chatMap      map[uint32]string
-	dndSubs      map[int]func(bool)
-	nextDNDSub   int
-	soundSubs    map[int]func(bool)
-	nextSoundSub int
+	mu                sync.Mutex
+	chatMap           map[uint32]string
+	dndSubs           map[int]func(bool)
+	nextDNDSub        int
+	soundSubs         map[int]func(bool)
+	nextSoundSub      int
+	groupNotifSubs    map[int]func(bool)
+	nextGroupNotifSub int
 }
 
 // NewNotifier creates and connects a D-Bus desktop notification client.
@@ -35,11 +38,13 @@ func NewNotifier(onAction func(chatJID string)) *Notifier {
 		conn:         conn,
 		obj:          obj,
 		onAction:     onAction,
-		soundEnabled: true,
-		dndEnabled:   false,
-		chatMap:      make(map[uint32]string),
-		dndSubs:      make(map[int]func(bool)),
-		soundSubs:    make(map[int]func(bool)),
+		soundEnabled:              true,
+		dndEnabled:                false,
+		groupNotificationsEnabled: true,
+		chatMap:                   make(map[uint32]string),
+		dndSubs:                   make(map[int]func(bool)),
+		soundSubs:                 make(map[int]func(bool)),
+		groupNotifSubs:            make(map[int]func(bool)),
 	}
 
 	if onAction != nil {
@@ -132,6 +137,49 @@ func (n *Notifier) OnDNDChange(fn func(bool)) func() {
 		n.mu.Lock()
 		defer n.mu.Unlock()
 		delete(n.dndSubs, id)
+	}
+}
+
+func (n *Notifier) SetGroupNotificationsEnabled(enabled bool) {
+	n.mu.Lock()
+	if n.groupNotificationsEnabled == enabled {
+		n.mu.Unlock()
+		return
+	}
+	n.groupNotificationsEnabled = enabled
+	subs := make([]func(bool), 0, len(n.groupNotifSubs))
+	for _, fn := range n.groupNotifSubs {
+		subs = append(subs, fn)
+	}
+	n.mu.Unlock()
+
+	for _, fn := range subs {
+		fn(enabled)
+	}
+}
+
+func (n *Notifier) IsGroupNotificationsEnabled() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.groupNotificationsEnabled
+}
+
+// OnGroupNotificationsChange registers a callback invoked when group notifications are toggled.
+// Returns an unsubscribe function.
+func (n *Notifier) OnGroupNotificationsChange(fn func(bool)) func() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.groupNotifSubs == nil {
+		n.groupNotifSubs = make(map[int]func(bool))
+	}
+	id := n.nextGroupNotifSub
+	n.nextGroupNotifSub++
+	n.groupNotifSubs[id] = fn
+
+	return func() {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		delete(n.groupNotifSubs, id)
 	}
 }
 

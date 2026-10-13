@@ -51,6 +51,19 @@ type Sidebar struct {
 	chatPinned   map[string]bool
 	chatUnread   map[string]bool
 	chatMuted    map[string]bool
+
+	showGroupTag           bool
+	showCommunityTag       bool
+	showGroupUnread        bool
+	showLastMessagePreview bool
+
+	chatNames          map[string]string
+	chatIsGroup        map[string]bool
+	chatIsCommunity    map[string]bool
+	chatUnreadCounts   map[string]int
+	chatLastMessages   map[string]string
+	chatTypingPresence map[string]string
+
 	isRefreshing bool
 	isCycling    bool
 	originalJID  string
@@ -118,6 +131,10 @@ func NewSidebar() (*Sidebar, error) {
 		NewChatBtn:        newChatBtn,
 		ManageProfilesBtn: manageBtn,
 		PreferencesBtn:    prefBtn,
+		showGroupTag:           true,
+		showCommunityTag:       true,
+		showGroupUnread:        true,
+		showLastMessagePreview: true,
 		chatRows:          make(map[string]*adw.ActionRow),
 		chatListBoxRows:   make(map[string]*gtk.ListBoxRow),
 		chatAvatars:       make(map[string]*adw.Avatar),
@@ -125,6 +142,12 @@ func NewSidebar() (*Sidebar, error) {
 		chatPinned:        make(map[string]bool),
 		chatUnread:        make(map[string]bool),
 		chatMuted:         make(map[string]bool),
+		chatNames:          make(map[string]string),
+		chatIsGroup:        make(map[string]bool),
+		chatIsCommunity:    make(map[string]bool),
+		chatUnreadCounts:   make(map[string]int),
+		chatLastMessages:   make(map[string]string),
+		chatTypingPresence: make(map[string]string),
 	}
 
 	profileCombo.ConnectChanged(func() {
@@ -492,6 +515,31 @@ func (s *Sidebar) ShowIndices(show bool) {
 	}
 }
 
+func (s *Sidebar) formatChatTitle(name string, isGroup bool, isCommunity bool, unreadCount int, isPinned bool, isMuted ...bool) string {
+	title := name
+	if isCommunity {
+		if s.showCommunityTag {
+			title = "[C] " + title
+		}
+	} else if isGroup {
+		if s.showGroupTag {
+			title = "[G] " + title
+		}
+	}
+	if unreadCount > 0 {
+		if !isGroup || s.showGroupUnread {
+			title = fmt.Sprintf("(%d) %s", unreadCount, title)
+		}
+	}
+	if len(isMuted) > 0 && isMuted[0] {
+		title = "🔕 " + title
+	}
+	if isPinned {
+		title = "📌 " + title
+	}
+	return title
+}
+
 func formatChatTitle(name string, isGroup bool, isCommunity bool, unreadCount int, isPinned bool, isMuted ...bool) string {
 	title := name
 	if isCommunity {
@@ -511,8 +559,53 @@ func formatChatTitle(name string, isGroup bool, isCommunity bool, unreadCount in
 	return title
 }
 
+func (s *Sidebar) SetShowGroupTag(show bool) {
+	s.showGroupTag = show
+	s.RefreshAllTitles()
+}
+func (s *Sidebar) IsShowGroupTag() bool { return s.showGroupTag }
+
+func (s *Sidebar) SetShowCommunityTag(show bool) {
+	s.showCommunityTag = show
+	s.RefreshAllTitles()
+}
+func (s *Sidebar) IsShowCommunityTag() bool { return s.showCommunityTag }
+
+func (s *Sidebar) SetShowGroupUnread(show bool) {
+	s.showGroupUnread = show
+	s.RefreshAllTitles()
+}
+func (s *Sidebar) IsShowGroupUnread() bool { return s.showGroupUnread }
+
+func (s *Sidebar) SetShowLastMessagePreview(show bool) {
+	s.showLastMessagePreview = show
+	for jid := range s.chatRows {
+		s.updateRowSubtitle(jid)
+	}
+}
+func (s *Sidebar) IsShowLastMessagePreview() bool { return s.showLastMessagePreview }
+
+func (s *Sidebar) RefreshAllTitles() {
+	for jid, row := range s.chatRows {
+		if row != nil {
+			name := s.chatNames[jid]
+			isGrp := s.chatIsGroup[jid]
+			isComm := s.chatIsCommunity[jid]
+			unread := s.chatUnreadCounts[jid]
+			isPinned := s.chatPinned[jid]
+			isMuted := s.chatMuted[jid]
+			title := s.formatChatTitle(name, isGrp, isComm, unread, isPinned, isMuted)
+			row.SetTitle(glib.MarkupEscapeText(title))
+		}
+	}
+}
+
 func (s *Sidebar) UpdateChatRow(jid, name string, isGroup bool, unreadCount int, isPinned bool, isMuted ...bool) {
-	s.UpdateChatRowFull(jid, name, isGroup, false, unreadCount, isPinned, isMuted...)
+	isCommunity := false
+	if s.chatIsCommunity != nil {
+		isCommunity = s.chatIsCommunity[jid]
+	}
+	s.UpdateChatRowFull(jid, name, isGroup, isCommunity, unreadCount, isPinned, isMuted...)
 }
 
 func (s *Sidebar) UpdateChatRowFull(jid, name string, isGroup bool, isCommunity bool, unreadCount int, isPinned bool, isMuted ...bool) {
@@ -531,18 +624,55 @@ func (s *Sidebar) UpdateChatRowFull(jid, name string, isGroup bool, isCommunity 
 	if s.chatMuted != nil {
 		s.chatMuted[jid] = muted
 	}
+	if s.chatNames != nil {
+		s.chatNames[jid] = name
+	}
+	if s.chatIsGroup != nil {
+		s.chatIsGroup[jid] = isGroup
+	}
+	if s.chatIsCommunity != nil {
+		s.chatIsCommunity[jid] = isCommunity
+	}
+	if s.chatUnreadCounts != nil {
+		s.chatUnreadCounts[jid] = unreadCount
+	}
 	if row, exists := s.chatRows[jid]; exists {
-		title := formatChatTitle(name, isGroup, isCommunity, unreadCount, isPinned, muted)
+		title := s.formatChatTitle(name, isGroup, isCommunity, unreadCount, isPinned, muted)
 		row.SetTitle(glib.MarkupEscapeText(title))
+		s.updateRowSubtitle(jid)
 		return
 	}
 	s.AddChatFull(jid, name, isGroup, isCommunity, unreadCount, isPinned, muted)
 }
 
 func (s *Sidebar) SetChatSubtitle(jid, subtitle string) {
-	if row, exists := s.chatRows[jid]; exists && row != nil {
-		row.SetSubtitle(subtitle)
+	if s.chatTypingPresence != nil {
+		s.chatTypingPresence[jid] = subtitle
 	}
+	s.updateRowSubtitle(jid)
+}
+
+func (s *Sidebar) SetChatLastMessage(jid, lastMessage string) {
+	if s.chatLastMessages != nil {
+		s.chatLastMessages[jid] = lastMessage
+	}
+	s.updateRowSubtitle(jid)
+}
+
+func (s *Sidebar) updateRowSubtitle(jid string) {
+	row, exists := s.chatRows[jid]
+	if !exists || row == nil {
+		return
+	}
+	if s.chatTypingPresence != nil && s.chatTypingPresence[jid] != "" {
+		row.SetSubtitle(s.chatTypingPresence[jid])
+		return
+	}
+	if s.showLastMessagePreview && s.chatLastMessages != nil && s.chatLastMessages[jid] != "" {
+		row.SetSubtitle(glib.MarkupEscapeText(s.chatLastMessages[jid]))
+		return
+	}
+	row.SetSubtitle("")
 }
 
 func (s *Sidebar) AddChat(jid, name string, isGroup bool, unreadCount int, isPinned bool, isMuted ...bool) {
@@ -570,9 +700,21 @@ func (s *Sidebar) AddChatFull(jid, name string, isGroup bool, isCommunity bool, 
 	if s.chatMuted != nil {
 		s.chatMuted[jid] = muted
 	}
+	if s.chatNames != nil {
+		s.chatNames[jid] = name
+	}
+	if s.chatIsGroup != nil {
+		s.chatIsGroup[jid] = isGroup
+	}
+	if s.chatIsCommunity != nil {
+		s.chatIsCommunity[jid] = isCommunity
+	}
+	if s.chatUnreadCounts != nil {
+		s.chatUnreadCounts[jid] = unreadCount
+	}
 
 	row := adw.NewActionRow()
-	title := formatChatTitle(name, isGroup, isCommunity, unreadCount, isPinned, muted)
+	title := s.formatChatTitle(name, isGroup, isCommunity, unreadCount, isPinned, muted)
 	row.SetTitle(glib.MarkupEscapeText(title))
 	row.SetName(jid)
 	
@@ -611,6 +753,7 @@ func (s *Sidebar) AddChatFull(jid, name string, isGroup bool, isCommunity bool, 
 	if s.chatListBoxRows != nil {
 		s.chatListBoxRows[jid] = lbRow
 	}
+	s.updateRowSubtitle(jid)
 }
 
 func (s *Sidebar) RemoveChat(jid string) {
@@ -626,15 +769,25 @@ func (s *Sidebar) RemoveChat(jid string) {
 	delete(s.chatPinned, jid)
 	delete(s.chatUnread, jid)
 	delete(s.chatMuted, jid)
+	delete(s.chatNames, jid)
+	delete(s.chatIsGroup, jid)
+	delete(s.chatIsCommunity, jid)
+	delete(s.chatUnreadCounts, jid)
+	delete(s.chatLastMessages, jid)
+	delete(s.chatTypingPresence, jid)
 }
 
 func (s *Sidebar) SyncChats(items []events.SidebarItem) {
 	if len(s.chatRows) == 0 {
 		for _, item := range items {
+			if item.LastMessage != "" && s.chatLastMessages != nil {
+				s.chatLastMessages[item.JID] = item.LastMessage
+			}
 			s.AddChatFull(item.JID, item.Name, item.IsGroup, item.IsCommunity, item.UnreadCount, item.IsPinned, item.IsMuted)
 			if item.Avatar != nil {
 				s.SetAvatar(item.JID, item.Avatar)
 			}
+			s.updateRowSubtitle(item.JID)
 		}
 		return
 	}
@@ -651,16 +804,21 @@ func (s *Sidebar) SyncChats(items []events.SidebarItem) {
 	}
 
 	for _, item := range items {
+		if item.LastMessage != "" && s.chatLastMessages != nil {
+			s.chatLastMessages[item.JID] = item.LastMessage
+		}
 		if _, exists := s.chatRows[item.JID]; exists {
 			s.UpdateChatRowFull(item.JID, item.Name, item.IsGroup, item.IsCommunity, item.UnreadCount, item.IsPinned, item.IsMuted)
 			if item.Avatar != nil {
 				s.SetAvatar(item.JID, item.Avatar)
 			}
+			s.updateRowSubtitle(item.JID)
 		} else {
 			s.AddChatFull(item.JID, item.Name, item.IsGroup, item.IsCommunity, item.UnreadCount, item.IsPinned, item.IsMuted)
 			if item.Avatar != nil {
 				s.SetAvatar(item.JID, item.Avatar)
 			}
+			s.updateRowSubtitle(item.JID)
 		}
 	}
 }
@@ -673,6 +831,12 @@ func (s *Sidebar) ClearChats() {
 	s.chatPinned = make(map[string]bool)
 	s.chatUnread = make(map[string]bool)
 	s.chatMuted = make(map[string]bool)
+	s.chatNames = make(map[string]string)
+	s.chatIsGroup = make(map[string]bool)
+	s.chatIsCommunity = make(map[string]bool)
+	s.chatUnreadCounts = make(map[string]int)
+	s.chatLastMessages = make(map[string]string)
+	s.chatTypingPresence = make(map[string]string)
 	for {
 		child := s.ListBox.FirstChild()
 		if child == nil {

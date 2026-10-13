@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"whats-gtk/internal/database"
 	"whats-gtk/internal/events"
 	"whats-gtk/internal/paths"
 	"whats-gtk/internal/ui/chat"
@@ -402,6 +403,11 @@ func (a *App) setupSubscriptions() {
 		for ev := range chLive {
 			if payload, ok := ev.Data.(events.LiveUIMessagePayload); ok {
 				glib.IdleAdd(func() {
+					preview := database.FormatMessagePreview(payload.Message.Content, "", payload.Message.Type)
+					if a.Sidebar != nil {
+						a.Sidebar.SetChatLastMessage(payload.JID, preview)
+					}
+
 					cv := a.GetChatViewForJID(payload.JID)
 					if cv == nil { return }
 					

@@ -77,5 +77,6 @@ type SidebarItem struct {
 	IsPinned           bool
 	IsMuted            bool
 	Avatar             *gdk.Texture
+	LastMessage        string
 }
 

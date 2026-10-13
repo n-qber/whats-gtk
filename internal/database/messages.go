@@ -613,3 +613,68 @@ func (a *AppDB) SearchMessages(profileID int64, query string, limit int) ([]Mess
 	}
 	return msgs, nil
 }
+
+// FormatMessagePreview returns a formatted single-line preview for a message.
+func FormatMessagePreview(content, caption, mType string) string {
+	var preview string
+	switch mType {
+	case "image":
+		if caption != "" {
+			preview = "📷 " + caption
+		} else {
+			preview = "📷 Foto"
+		}
+	case "video":
+		if caption != "" {
+			preview = "🎥 " + caption
+		} else {
+			preview = "🎥 Vídeo"
+		}
+	case "audio":
+		preview = "🎵 Áudio"
+	case "sticker":
+		preview = "Figurinha"
+	case "document":
+		if caption != "" {
+			preview = "📄 " + caption
+		} else {
+			preview = "📄 Documento"
+		}
+	case "revoked":
+		preview = "🚫 Mensagem apagada"
+	default:
+		preview = content
+	}
+	preview = strings.ReplaceAll(preview, "\n", " ")
+	runes := []rune(preview)
+	if len(runes) > 60 {
+		preview = string(runes[:60]) + "..."
+	}
+	return preview
+}
+
+// GetLastMessagesMap retrieves the latest message preview for each conversation.
+func (a *AppDB) GetLastMessagesMap() map[string]string {
+	result := make(map[string]string)
+	query := `SELECT m.chat_jid, coalesce(m.content, ''), coalesce(m.caption, ''), coalesce(m.type, '')
+	          FROM messages m
+	          INNER JOIN (
+	              SELECT chat_jid, MAX(timestamp) AS max_ts
+	              FROM messages
+	              GROUP BY chat_jid
+	          ) latest ON m.chat_jid = latest.chat_jid AND m.timestamp = latest.max_ts`
+	rows, err := a.db.Query(query)
+	if err != nil {
+		return result
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var jid, content, caption, mType string
+		if err := rows.Scan(&jid, &content, &caption, &mType); err == nil && jid != "" {
+			result[jid] = FormatMessagePreview(content, caption, mType)
+		}
+	}
+	return result
+}
+

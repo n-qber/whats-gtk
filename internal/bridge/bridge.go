@@ -79,6 +79,9 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 		if soundVal, err := db.GetSetting("sound_enabled"); err == nil && soundVal == "false" {
 			notifier.SetSoundEnabled(false)
 		}
+		if grpNotifVal, err := db.GetSetting("group_notifications_enabled"); err == nil && grpNotifVal == "false" {
+			notifier.SetGroupNotificationsEnabled(false)
+		}
 		notifier.OnDNDChange(func(enabled bool) {
 			val := "false"
 			if enabled {
@@ -93,6 +96,28 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 			}
 			_ = db.SetSetting("sound_enabled", val)
 		})
+		notifier.OnGroupNotificationsChange(func(enabled bool) {
+			val := "false"
+			if enabled {
+				val = "true"
+			}
+			_ = db.SetSetting("group_notifications_enabled", val)
+		})
+	}
+
+	if db != nil && a != nil && a.Sidebar != nil {
+		if val, err := db.GetSetting("group_unread_enabled"); err == nil && val == "false" {
+			a.Sidebar.SetShowGroupUnread(false)
+		}
+		if val, err := db.GetSetting("show_group_tag"); err == nil && val == "false" {
+			a.Sidebar.SetShowGroupTag(false)
+		}
+		if val, err := db.GetSetting("show_community_tag"); err == nil && val == "false" {
+			a.Sidebar.SetShowCommunityTag(false)
+		}
+		if val, err := db.GetSetting("show_last_message_preview"); err == nil && val == "false" {
+			a.Sidebar.SetShowLastMessagePreview(false)
+		}
 	}
 
 	// Wire back-references (these can't be set in constructors due to circular init)
@@ -217,6 +242,10 @@ func (br *Bridge) registerDefaultHooks() {
 		senderJID := br.Messages.ResolveJID(msg.Info.Sender).ToNonAD().String()
 		isGroup := msg.Info.Chat.Server == types.GroupServer
 
+		if isGroup && br.Notifier != nil && !br.Notifier.IsGroupNotificationsEnabled() {
+			return nil
+		}
+
 		title := ""
 		bodyPrefix := ""
 
@@ -337,7 +366,44 @@ func (br *Bridge) setupUIHandlers() {
 	}
 
 	openPreferences := func() {
-		ui.ShowPreferencesDialog(&br.App.Window.Window, br.Notifier, func() {
+		settings := ui.PreferencesSettings{
+			GroupNotificationsEnabled: br.Notifier != nil && br.Notifier.IsGroupNotificationsEnabled(),
+			GroupUnreadEnabled:        br.App.Sidebar != nil && br.App.Sidebar.IsShowGroupUnread(),
+			ShowLastMessagePreview:    br.App.Sidebar != nil && br.App.Sidebar.IsShowLastMessagePreview(),
+			ShowGroupTag:              br.App.Sidebar != nil && br.App.Sidebar.IsShowGroupTag(),
+			ShowCommunityTag:          br.App.Sidebar != nil && br.App.Sidebar.IsShowCommunityTag(),
+			OnSettingChanged: func(key string, val bool) {
+				strVal := "false"
+				if val {
+					strVal = "true"
+				}
+				_ = br.DB.SetSetting(key, strVal)
+				switch key {
+				case "group_notifications_enabled":
+					if br.Notifier != nil {
+						br.Notifier.SetGroupNotificationsEnabled(val)
+					}
+				case "group_unread_enabled":
+					if br.App.Sidebar != nil {
+						br.App.Sidebar.SetShowGroupUnread(val)
+					}
+				case "show_group_tag":
+					if br.App.Sidebar != nil {
+						br.App.Sidebar.SetShowGroupTag(val)
+					}
+				case "show_community_tag":
+					if br.App.Sidebar != nil {
+						br.App.Sidebar.SetShowCommunityTag(val)
+					}
+				case "show_last_message_preview":
+					if br.App.Sidebar != nil {
+						br.App.Sidebar.SetShowLastMessagePreview(val)
+					}
+				}
+			},
+		}
+
+		ui.ShowPreferencesDialog(&br.App.Window.Window, br.Notifier, settings, func() {
 			go func() {
 				if br.Backend != nil {
 					_ = br.Backend.Logout(context.Background())

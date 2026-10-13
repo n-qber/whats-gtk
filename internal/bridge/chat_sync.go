@@ -205,6 +205,7 @@ func (cc *ChatController) updateGroupInfoUI(grpInfo *types.GroupInfo) {
 // RefreshSidebarUI fetches contacts and publishes them as SidebarItems.
 func (cc *ChatController) RefreshSidebarUI() {
 	if c, err := cc.DB.GetAllContacts(cc.activeProfileID, 200); err == nil {
+		lastMsgs := cc.DB.GetLastMessagesMap()
 		var items []events.SidebarItem
 		for _, contact := range c {
 			if cc.activeProfileID == database.ProfileArchivedID {
@@ -227,6 +228,7 @@ func (cc *ChatController) RefreshSidebarUI() {
 				IsPinned:           contact.IsPinned,
 				IsMuted:            contact.IsMuted(),
 				Avatar:             tex,
+				LastMessage:        lastMsgs[contact.JID],
 			})
 		}
 		cc.EventBus.Publish(events.Event{

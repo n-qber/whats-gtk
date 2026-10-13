@@ -75,3 +75,39 @@ func TestNotifierDNDAndSoundState(t *testing.T) {
 		t.Errorf("Expected no more sound notifications after unsubscribe, got %d", len(soundChanges))
 	}
 }
+
+func TestNotifierGroupNotificationsState(t *testing.T) {
+	n := &Notifier{
+		groupNotificationsEnabled: true,
+		groupNotifSubs:            make(map[int]func(bool)),
+	}
+
+	if !n.IsGroupNotificationsEnabled() {
+		t.Errorf("Expected Group Notifications to be enabled by default")
+	}
+
+	changes := []bool{}
+	unsub := n.OnGroupNotificationsChange(func(enabled bool) {
+		changes = append(changes, enabled)
+	})
+
+	n.SetGroupNotificationsEnabled(false)
+	if n.IsGroupNotificationsEnabled() {
+		t.Errorf("Expected Group Notifications to be disabled")
+	}
+	n.SetGroupNotificationsEnabled(false) // duplicate call
+	n.SetGroupNotificationsEnabled(true)
+	if !n.IsGroupNotificationsEnabled() {
+		t.Errorf("Expected Group Notifications to be enabled")
+	}
+
+	if len(changes) != 2 || changes[0] != false || changes[1] != true {
+		t.Errorf("Unexpected group notification changes: %v", changes)
+	}
+
+	unsub()
+	n.SetGroupNotificationsEnabled(false)
+	if len(changes) != 2 {
+		t.Errorf("Expected no more notifications after unsubscribe, got %d", len(changes))
+	}
+}
