@@ -34,7 +34,7 @@ type Sidebar struct {
 	SearchEntry       *gtk.SearchEntry
 	ProgressBar       *gtk.ProgressBar
 	ProfileCombo      *gtk.ComboBoxText
-	NewChatBtn        *gtk.Button
+	NewChatBtn        *gtk.MenuButton
 	ManageProfilesBtn *gtk.Button
 	PreferencesBtn    *gtk.Button
 	OnChatSelected    func(jid string)
@@ -101,8 +101,10 @@ func NewSidebar() (*Sidebar, error) {
 	profileCombo.SetFocusable(false)
 	profileBar.Append(profileCombo)
 
-	newChatBtn := gtk.NewButtonFromIconName("chat-new-symbolic")
+	newChatBtn := gtk.NewMenuButton()
+	newChatBtn.SetIconName("chat-message-new-symbolic")
 	newChatBtn.SetTooltipText("Nova Conversa (Ctrl+N)")
+	newChatBtn.SetAlwaysShowArrow(false)
 	profileBar.Append(newChatBtn)
 
 	manageBtn := gtk.NewButtonFromIconName("preferences-system-symbolic")
@@ -183,71 +185,62 @@ func NewSidebar() (*Sidebar, error) {
 		})
 	})
 
-	newChatBtn.ConnectClicked(func() {
-		popover := gtk.NewPopover()
-		popover.ConnectClosed(func() {
-			glib.IdleAdd(func() {
-				popover.Unparent()
-			})
+	newChatPopover := gtk.NewPopover()
+	menuBox := gtk.NewBox(gtk.OrientationVertical, 2)
+	menuBox.SetMarginTop(4)
+	menuBox.SetMarginBottom(4)
+	menuBox.SetMarginStart(4)
+	menuBox.SetMarginEnd(4)
+
+	makeMenuItem := func(iconName, text string, onClick func()) *gtk.Button {
+		btn := gtk.NewButton()
+		btn.SetHasFrame(false)
+		btn.AddCSSClass("flat")
+
+		itemBox := gtk.NewBox(gtk.OrientationHorizontal, 8)
+		itemBox.SetMarginStart(8)
+		itemBox.SetMarginEnd(12)
+		itemBox.SetMarginTop(6)
+		itemBox.SetMarginBottom(6)
+
+		icon := gtk.NewImageFromIconName(iconName)
+		label := gtk.NewLabel(text)
+		label.SetXAlign(0)
+		label.SetHExpand(true)
+
+		itemBox.Append(icon)
+		itemBox.Append(label)
+		btn.SetChild(itemBox)
+
+		btn.ConnectClicked(func() {
+			newChatPopover.Popdown()
+			if onClick != nil {
+				onClick()
+			}
 		})
+		return btn
+	}
 
-		menuBox := gtk.NewBox(gtk.OrientationVertical, 2)
-		menuBox.SetMarginTop(4)
-		menuBox.SetMarginBottom(4)
-		menuBox.SetMarginStart(4)
-		menuBox.SetMarginEnd(4)
-
-		makeMenuItem := func(iconName, text string, onClick func()) *gtk.Button {
-			btn := gtk.NewButton()
-			btn.SetHasFrame(false)
-			btn.AddCSSClass("flat")
-
-			itemBox := gtk.NewBox(gtk.OrientationHorizontal, 8)
-			itemBox.SetMarginStart(8)
-			itemBox.SetMarginEnd(12)
-			itemBox.SetMarginTop(6)
-			itemBox.SetMarginBottom(6)
-
-			icon := gtk.NewImageFromIconName(iconName)
-			label := gtk.NewLabel(text)
-			label.SetXAlign(0)
-			label.SetHExpand(true)
-
-			itemBox.Append(icon)
-			itemBox.Append(label)
-			btn.SetChild(itemBox)
-
-			btn.ConnectClicked(func() {
-				popover.Popdown()
-				if onClick != nil {
-					onClick()
-				}
-			})
-			return btn
+	menuBox.Append(makeMenuItem("chat-message-new-symbolic", "Nova Conversa", func() {
+		if s.OnNewChat != nil {
+			s.OnNewChat()
 		}
+	}))
 
-		menuBox.Append(makeMenuItem("chat-symbolic", "Nova Conversa", func() {
-			if s.OnNewChat != nil {
-				s.OnNewChat()
-			}
-		}))
+	menuBox.Append(makeMenuItem("system-users-symbolic", "Novo Grupo", func() {
+		if s.OnNewGroup != nil {
+			s.OnNewGroup()
+		}
+	}))
 
-		menuBox.Append(makeMenuItem("system-users-symbolic", "Novo Grupo", func() {
-			if s.OnNewGroup != nil {
-				s.OnNewGroup()
-			}
-		}))
+	menuBox.Append(makeMenuItem("folder-publicshare-symbolic", "Nova Comunidade", func() {
+		if s.OnNewCommunity != nil {
+			s.OnNewCommunity()
+		}
+	}))
 
-		menuBox.Append(makeMenuItem("folder-publicshare-symbolic", "Nova Comunidade", func() {
-			if s.OnNewCommunity != nil {
-				s.OnNewCommunity()
-			}
-		}))
-
-		popover.SetChild(menuBox)
-		popover.SetParent(newChatBtn)
-		popover.Popup()
-	})
+	newChatPopover.SetChild(menuBox)
+	newChatBtn.SetPopover(newChatPopover)
 
 	manageBtn.ConnectClicked(func() {
 		if s.OnManageProfiles != nil {

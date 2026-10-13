@@ -687,7 +687,7 @@ func (iv *InfoView) SetExtendedGroupDetails(details ExtendedGroupDetails) {
 		}
 
 		if !isMe {
-			msgBtn := gtk.NewButtonFromIconName("chat-symbolic")
+			msgBtn := gtk.NewButtonFromIconName("chat-message-new-symbolic")
 			msgBtn.SetTooltipText("Conversar")
 			msgBtn.AddCSSClass("flat")
 			msgBtn.ConnectClicked(func() {

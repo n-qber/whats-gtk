@@ -432,7 +432,7 @@ func NewChatView() (*ChatView, error) {
 	statusPage := adw.NewStatusPage()
 	statusPage.SetTitle("No Conversation")
 	statusPage.SetDescription("Select a chat from the sidebar to start messaging")
-	statusPage.SetIconName("chat-symbolic")
+	statusPage.SetIconName("chat-message-new-symbolic")
 	statusPage.SetVExpand(true)
 	statusPage.SetHExpand(true)
 	cv.EmptyState = statusPage
