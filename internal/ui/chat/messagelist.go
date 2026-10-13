@@ -63,6 +63,7 @@ type MessageList struct {
 	OnMentionClick           func(jid string)
 	OnSendPollVote           func(msgID string, senderJID string, isFromMe bool, selectedOptions []string)
 	OnReplyRequest           func(id, sender, content string)
+	OnEditRequest            func(id, content string)
 	OnForwardMessagesRequest func(ids []string)
 	OnToggleFavoriteSticker  func(msgID, path string, isFav bool)
 	IsStickerFavorite        func(id, path string) bool
@@ -764,6 +765,19 @@ func (ml *MessageList) showContextMenu(id string, b bubbles.Bubble) {
 			popover.Popdown()
 		})
 		box.Append(copyBtn)
+	}
+
+	// 3. Edit text button (only for user's own sent text messages)
+	if b.IsSelf() && b.MediaPath() == "" && b.Content() != "" && !strings.HasPrefix(b.Content(), "[Sticker") && !strings.HasPrefix(b.Content(), "🚫 Esta mensagem foi apagada") {
+		editBtn := gtk.NewButtonWithLabel("Editar")
+		editBtn.SetHasFrame(false)
+		editBtn.ConnectClicked(func() {
+			popover.Popdown()
+			if ml.OnEditRequest != nil {
+				ml.OnEditRequest(id, b.Content())
+			}
+		})
+		box.Append(editBtn)
 	}
 
 	fwdBtn := gtk.NewButtonWithLabel("Encaminhar")

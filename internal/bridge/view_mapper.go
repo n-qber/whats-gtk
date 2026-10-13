@@ -117,6 +117,7 @@ func (vm *ViewMapper) MapMessage(m database.Message, sName, tStr string, av *gdk
 		Content:         vm.formatMentions(m.Content),
 		IsViewOnce:      m.IsViewOnce,
 		IsForwarded:     m.IsForwarded,
+		IsEdited:        m.IsEdited,
 		Status:          m.Status,
 		Thumbnail:       m.Thumbnail,
 		Avatar:          av,

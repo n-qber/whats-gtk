@@ -23,8 +23,11 @@ type InputBar struct {
 	ReplyToID      string
 	ReplyToSender  string
 	ReplyToContent string
+	EditToID       string
+	SendButton     *gtk.Button
 
 	OnSendMessage             func(text string, replyToID string)
+	OnEditMessage             func(id string, newText string)
 	OnSendFile                func(path string)
 	OnSendSticker             func(item database.StickerItem)
 	OnSendStickerFile         func(filePath string)
@@ -171,6 +174,7 @@ func NewInputBar(ctx context.Context) *InputBar {
 
 	sendButton := gtk.NewButtonWithLabel("Send")
 	sendButton.SetVAlign(gtk.AlignEnd)
+	ib.SendButton = sendButton
 
 	inputBox.Append(stickerButton)
 	inputBox.Append(fileButton)
@@ -179,16 +183,28 @@ func NewInputBar(ctx context.Context) *InputBar {
 	ib.Box.Append(inputBox)
 
 	closeReplyBtn.ConnectClicked(func() {
-		ib.CancelReply()
+		if ib.EditToID != "" {
+			ib.CancelEdit()
+		} else {
+			ib.CancelReply()
+		}
 	})
 
 	sendMsg := func() {
 		buffer := ib.TextView.Buffer()
 		start, end := buffer.Bounds()
 		text := buffer.Text(start, end, false)
-		if text != "" && ib.OnSendMessage != nil {
-			ib.OnSendMessage(text, ib.ReplyToID)
-			ib.CancelReply()
+		if text != "" {
+			if ib.EditToID != "" {
+				editID := ib.EditToID
+				ib.CancelEdit()
+				if ib.OnEditMessage != nil {
+					ib.OnEditMessage(editID, text)
+				}
+			} else if ib.OnSendMessage != nil {
+				ib.OnSendMessage(text, ib.ReplyToID)
+				ib.CancelReply()
+			}
 			if ib.OnStopTyping != nil {
 				ib.OnStopTyping()
 			}
@@ -265,6 +281,10 @@ func NewInputBar(ctx context.Context) *InputBar {
 			if ib.OnCancelCycle != nil && ib.OnCancelCycle() {
 				return true
 			}
+			if ib.EditToID != "" {
+				ib.CancelEdit()
+				return true
+			}
 			if ib.ReplyToID != "" {
 				ib.CancelReply()
 				return true
@@ -319,6 +339,9 @@ func NewInputBar(ctx context.Context) *InputBar {
 }
 
 func (ib *InputBar) SetReplyTo(id, sender, content string) {
+	if ib.EditToID != "" {
+		ib.CancelEdit()
+	}
 	ib.ReplyToID = id
 	ib.ReplyToSender = sender
 	ib.ReplyToContent = content
@@ -340,6 +363,35 @@ func (ib *InputBar) CancelReply() {
 	ib.ReplyPreviewBox.Hide()
 }
 
+func (ib *InputBar) SetEditMessage(id, text string) {
+	ib.CancelReply()
+	ib.EditToID = id
+
+	preview := text
+	if len(preview) > 60 {
+		preview = preview[:60] + "..."
+	}
+
+	ib.ReplyPreviewLabel.SetMarkup("Editando mensagem: <i>" + glib.MarkupEscapeText(preview) + "</i>")
+	ib.ReplyPreviewBox.Show()
+	if ib.SendButton != nil {
+		ib.SendButton.SetLabel("Salvar")
+	}
+	ib.SetText(text)
+	ib.TextView.GrabFocus()
+}
+
+func (ib *InputBar) CancelEdit() {
+	if ib.EditToID != "" {
+		ib.EditToID = ""
+		ib.ReplyPreviewBox.Hide()
+		if ib.SendButton != nil {
+			ib.SendButton.SetLabel("Send")
+		}
+		ib.SetText("")
+	}
+}
+
 func (ib *InputBar) GrabFocus() {
 	ib.TextView.GrabFocus()
 }
@@ -351,6 +403,8 @@ func (ib *InputBar) SetText(text string) {
 			ib.suppressTyping = true
 			buffer.SetText(text)
 			ib.suppressTyping = false
+			endIter := buffer.EndIter()
+			buffer.PlaceCursor(endIter)
 			if strings.TrimSpace(text) == "" {
 				if ib.OnStopTyping != nil {
 					ib.OnStopTyping()

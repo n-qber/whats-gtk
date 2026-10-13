@@ -345,6 +345,11 @@ func (a *App) setupSubscriptions() {
 						if m.IsForwarded {
 							cv.UpdateMessageForwarded(m.ID, true)
 						}
+						if m.IsEdited {
+							if b, exists := cv.MessageList.MessageRows[m.ID]; exists {
+								b.SetEdited(true)
+							}
+						}
 					}
 
 					if payload.Append {
@@ -454,6 +459,11 @@ func (a *App) setupSubscriptions() {
 					}
 					if m.IsForwarded {
 						cv.UpdateMessageForwarded(m.ID, true)
+					}
+					if m.IsEdited {
+						if b, exists := cv.MessageList.MessageRows[m.ID]; exists {
+							b.SetEdited(true)
+						}
 					}
 
 					cv.ScrollToBottom()

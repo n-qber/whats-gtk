@@ -205,7 +205,7 @@ func newBaseBubble(name string, contentText string, content gtk.Widgetter, isSel
 	statusBox.SetVAlign(gtk.AlignEnd)
 	statusBox.SetMarginTop(4)
 
-	editedLabel := gtk.NewLabel("(edited)")
+	editedLabel := gtk.NewLabel("Editada")
 	editedLabel.AddCSSClass("time")
 	editedLabel.Hide()
 	statusBox.Append(editedLabel)

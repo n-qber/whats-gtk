@@ -43,6 +43,7 @@ type ChatView struct {
 	OnOpenImage             func(path string)
 	OnSendReaction          func(id, emoji string)
 	OnPinMessage            func(id string, pin bool, duration uint32)
+	OnEditMessage           func(id, newText string)
 	OnRevokeMessage         func(id string)
 	OnDeleteLocalMessage    func(id string)
 	OnDetach                func()
@@ -175,6 +176,9 @@ func NewChatView() (*ChatView, error) {
 	cv.MessageList.OnReplyRequest = func(id, sender, content string) {
 		cv.InputBar.SetReplyTo(id, sender, content)
 	}
+	cv.MessageList.OnEditRequest = func(id, content string) {
+		cv.InputBar.SetEditMessage(id, content)
+	}
 	cv.MessageList.OnForwardMessagesRequest = func(ids []string) {
 		if cv.OnForwardMessages != nil {
 			cv.OnForwardMessages(ids)
@@ -215,6 +219,11 @@ func NewChatView() (*ChatView, error) {
 	cv.InputBar.OnSendMessage = func(text, replyToID string) {
 		if cv.OnSendMessage != nil {
 			cv.OnSendMessage(text, replyToID)
+		}
+	}
+	cv.InputBar.OnEditMessage = func(id, newText string) {
+		if cv.OnEditMessage != nil {
+			cv.OnEditMessage(id, newText)
 		}
 	}
 	cv.InputBar.OnSendFile = func(path string) {

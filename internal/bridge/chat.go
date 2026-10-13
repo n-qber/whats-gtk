@@ -454,6 +454,27 @@ func (cc *ChatController) HandleRevokeMessage(targetJID types.JID, id string) {
 	}()
 }
 
+func (cc *ChatController) HandleEditMessage(targetJID types.JID, id string, newText string) {
+	trimmed := strings.TrimSpace(newText)
+	if trimmed == "" {
+		return
+	}
+
+	go func() {
+		_, err := cc.Backend.EditMessage(cc.ctx, targetJID, types.MessageID(id), trimmed)
+		if err == nil {
+			_ = cc.DB.UpdateMessageContent(id, targetJID.ToNonAD().String(), trimmed, true)
+			glib.IdleAdd(func() {
+				if cv := cc.App.GetChatViewForJID(targetJID.ToNonAD().String()); cv != nil {
+					cv.UpdateMessageContent(id, trimmed, true)
+				}
+			})
+		} else {
+			fmt.Printf("Bridge: EditMessage failed: %v\n", err)
+		}
+	}()
+}
+
 func (cc *ChatController) HandleDeleteLocalMessage(targetJID types.JID, id string) {
 	_ = cc.DB.DeleteMessage(id)
 	glib.IdleAdd(func() {
@@ -693,6 +714,7 @@ func (c *ChatController) HandleDetachJID(targetJID types.JID) {
 			c.Backend.SendPollVote(context.Background(), targetJID, msgID, sender, isFromMe, selectedOptions)
 		}
 		cv.OnPinMessage = func(id string, pin bool, duration uint32) { c.HandlePinMessage(targetJID, id, pin, duration) }
+		cv.OnEditMessage = func(id, newText string) { c.HandleEditMessage(targetJID, id, newText) }
 		cv.OnRevokeMessage = func(id string) { c.HandleRevokeMessage(targetJID, id) }
 		cv.OnDeleteLocalMessage = func(id string) { c.HandleDeleteLocalMessage(targetJID, id) }
 		cv.OnDownloadMedia = c.HandleDownloadMedia

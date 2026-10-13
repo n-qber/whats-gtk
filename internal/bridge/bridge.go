@@ -910,6 +910,11 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 			br.Chat.HandlePinMessage(*jid, id, pin, duration)
 		}
 	}
+	cv.OnEditMessage = func(id, newText string) {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			br.Chat.HandleEditMessage(*jid, id, newText)
+		}
+	}
 	cv.OnRevokeMessage = func(id string) {
 		if jid := br.Chat.SelectedJID(); jid != nil {
 			br.Chat.HandleRevokeMessage(*jid, id)
