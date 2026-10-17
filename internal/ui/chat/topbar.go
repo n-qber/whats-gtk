@@ -11,10 +11,13 @@ type TopBar struct {
 	WindowTitle *adw.WindowTitle
 	Avatar      *adw.Avatar
 
-	DetachBtn *gtk.Button
+	DetachBtn    *gtk.Button
+	AudioCallBtn *gtk.Button
+	VideoCallBtn *gtk.Button
 
 	OnHeaderClick func()
 	OnDetach      func()
+	OnCall        func(isVideo bool)
 }
 
 func NewTopBar() *TopBar {
@@ -35,12 +38,36 @@ func NewTopBar() *TopBar {
 	detachBtn.SetTooltipText("Detach chat into separate window")
 	header.PackEnd(detachBtn)
 
+	videoCallBtn := gtk.NewButtonFromIconName("camera-video-symbolic")
+	videoCallBtn.SetTooltipText("Iniciar chamada de vídeo")
+	videoCallBtn.SetVisible(false)
+	header.PackEnd(videoCallBtn)
+
+	audioCallBtn := gtk.NewButtonFromIconName("call-start-symbolic")
+	audioCallBtn.SetTooltipText("Iniciar chamada de voz")
+	audioCallBtn.SetVisible(false)
+	header.PackEnd(audioCallBtn)
+
 	tb := &TopBar{
-		Header:      header,
-		WindowTitle: winTitle,
-		Avatar:      headerAvatar,
-		DetachBtn:   detachBtn,
+		Header:       header,
+		WindowTitle:  winTitle,
+		Avatar:       headerAvatar,
+		DetachBtn:    detachBtn,
+		AudioCallBtn: audioCallBtn,
+		VideoCallBtn: videoCallBtn,
 	}
+
+	audioCallBtn.ConnectClicked(func() {
+		if tb.OnCall != nil {
+			tb.OnCall(false)
+		}
+	})
+
+	videoCallBtn.ConnectClicked(func() {
+		if tb.OnCall != nil {
+			tb.OnCall(true)
+		}
+	})
 
 	detachBtn.ConnectClicked(func() {
 		if tb.OnDetach != nil {
@@ -69,12 +96,16 @@ func NewTopBar() *TopBar {
 
 func (tb *TopBar) SetInfo(name string, tex *gdk.Texture) {
 	tb.WindowTitle.SetTitle(name)
-	if name == "WhatsApp GTK" {
+	if name == "WhatsApp GTK" || name == "Select a chat" {
 		tb.Avatar.SetVisible(false)
 		tb.WindowTitle.SetSubtitle("")
+		tb.AudioCallBtn.SetVisible(false)
+		tb.VideoCallBtn.SetVisible(false)
 	} else {
 		tb.Avatar.SetVisible(true)
 		tb.Avatar.SetText(name)
+		tb.AudioCallBtn.SetVisible(true)
+		tb.VideoCallBtn.SetVisible(true)
 		if tex != nil {
 			tb.Avatar.SetCustomImage(tex)
 		} else {

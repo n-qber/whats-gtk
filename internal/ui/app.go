@@ -7,6 +7,7 @@ import (
 	"whats-gtk/internal/events"
 	"whats-gtk/internal/logger"
 	"whats-gtk/internal/paths"
+	"whats-gtk/internal/ui/call"
 	"whats-gtk/internal/ui/chat"
 	"whats-gtk/internal/ui/info"
 	"whats-gtk/internal/ui/logview"
@@ -45,6 +46,7 @@ type App struct {
 	ResolveJIDFunc     func(jid string) string
 	OnClose            func()
 	LogWindow          *logview.LogWindow
+	CallWindow         *call.CallWindow
 }
 
 func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
@@ -840,6 +842,14 @@ func loadCSS() {
 			background-color: transparent;
 			color: @view_fg_color;
 		}
+		.call-btn-circle {
+			min-width: 56px;
+			min-height: 56px;
+			padding: 14px;
+		}
+		.call-avatar {
+			margin-bottom: 8px;
+		}
 	`)
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), cssProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 }
@@ -1011,5 +1021,25 @@ func (a *App) ShowLogWindow() {
 		})
 	}
 	a.LogWindow.Show()
+}
+
+// ShowCallWindow presents the VoIP call window.
+func (a *App) ShowCallWindow() *call.CallWindow {
+	if a.CallWindow == nil || a.CallWindow.Window == nil {
+		a.CallWindow = call.NewCallWindow(&a.Window.Window)
+		a.CallWindow.Window.ConnectDestroy(func() {
+			a.CallWindow = nil
+		})
+	}
+	a.CallWindow.Show()
+	return a.CallWindow
+}
+
+// CloseCallWindow closes and cleans up the VoIP call window.
+func (a *App) CloseCallWindow() {
+	if a.CallWindow != nil {
+		a.CallWindow.Close()
+		a.CallWindow = nil
+	}
 }
 

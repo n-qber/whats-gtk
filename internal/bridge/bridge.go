@@ -43,6 +43,7 @@ type Bridge struct {
 	Input    *core.InputManager
 	Pipeline *core.MessagePipeline
 	Notifier *notifications.Notifier
+	Calling  *CallingController
 }
 
 // NewBridge creates all sub-services and wires them together.
@@ -144,6 +145,8 @@ func NewBridge(b *backend.Backend, a *ui.App, db *database.AppDB, ctx context.Co
 		Notifier: notifier,
 	}
 
+	br.Calling = NewCallingController(br)
+
 	br.registerDefaultHooks()
 	br.setupUIHandlers()
 	br.setupServiceHandlers()
@@ -171,6 +174,9 @@ func (br *Bridge) Shutdown() {
 	}
 	if br.Events != nil {
 		br.Events.WaitSync(3 * time.Second)
+	}
+	if br.Calling != nil {
+		_ = br.Calling.Hangup()
 	}
 	if br.Backend != nil {
 		br.Backend.Disconnect()
@@ -868,6 +874,13 @@ func (br *Bridge) handleKeyPressed(key string, mods gdk.ModifierType) bool {
 }
 
 func (br *Bridge) WireChatView(cv *chat.ChatView) {
+	cv.OnCall = func(isVideo bool) {
+		if jid := br.Chat.SelectedJID(); jid != nil {
+			go func() {
+				_ = br.Calling.StartCall(jid.ToNonAD().String(), isVideo)
+			}()
+		}
+	}
 	cv.OnNextChat = func() {
 		glib.IdleAdd(func() {
 			br.App.Sidebar.CycleOffset(1)

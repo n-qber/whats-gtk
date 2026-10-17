@@ -64,6 +64,7 @@ type ChatView struct {
 	OnCtrlReleased          func()
 	OnCancelCycle           func() bool
 	OnCommitCycle           func() bool
+	OnCall                  func(isVideo bool)
 
 	// Direct Field Accessors for legacy compatibility
 	IsSearching bool
@@ -102,6 +103,11 @@ func NewChatView() (*ChatView, error) {
 	cv.TopBar.OnDetach = func() {
 		if cv.OnDetach != nil {
 			cv.OnDetach()
+		}
+	}
+	cv.TopBar.OnCall = func(isVideo bool) {
+		if cv.OnCall != nil {
+			cv.OnCall(isVideo)
 		}
 	}
 

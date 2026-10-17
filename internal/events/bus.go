@@ -17,6 +17,7 @@ const (
 	EventLiveMessageReceived  EventType = "LiveMessageReceived"
 	EventProfilesUpdated      EventType = "ProfilesUpdated"
 	EventActiveProfileChanged EventType = "ActiveProfileChanged"
+	EventCallStateChanged     EventType = "CallStateChanged"
 )
 
 type LiveMessagePayload struct {

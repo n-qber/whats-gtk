@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/purpshell/meowcaller"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -14,6 +15,7 @@ type Backend struct {
 	Client       *whatsmeow.Client
 	Store        *sqlstore.Container
 	Device       *store.Device
+	CallClient   *meowcaller.Client
 	eventHandler func(AppEvent)
 }
 
@@ -32,14 +34,15 @@ func NewBackend(ctx context.Context, container *sqlstore.Container) (*Backend, e
 
 	// Enable all other loggers to unified logger
 	client.Log = clientLog
-	// We don't have direct access to all sub-loggers easily in NewClient, 
-	// but setting client.Log usually propagates or covers the main ones.
-	// Actually, whatsmeow uses separate loggers. Let's try to set them if possible.
+
+	// Initialize VoIP meowcaller client before connection
+	callClient := meowcaller.NewClient(client)
 
 	b := &Backend{
-		Client: client,
-		Store:  container,
-		Device: device,
+		Client:     client,
+		Store:      container,
+		Device:     device,
+		CallClient: callClient,
 	}
 	b.registerEventHandlers()
 	return b, nil
