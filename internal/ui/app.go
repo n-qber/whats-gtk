@@ -5,9 +5,11 @@ import (
 	"os"
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/events"
+	"whats-gtk/internal/logger"
 	"whats-gtk/internal/paths"
 	"whats-gtk/internal/ui/chat"
 	"whats-gtk/internal/ui/info"
+	"whats-gtk/internal/ui/logview"
 	"whats-gtk/internal/ui/sidebar"
 
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
@@ -42,6 +44,7 @@ type App struct {
 	EventBus           *events.EventBus
 	ResolveJIDFunc     func(jid string) string
 	OnClose            func()
+	LogWindow          *logview.LogWindow
 }
 
 func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
@@ -130,6 +133,13 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 					return true
 				}
 			}
+			if keyName == "l" || keyName == "L" {
+				a.ShowLogWindow()
+				return true
+			}
+		} else if keyName == "F12" {
+			a.ShowLogWindow()
+			return true
 		} else if state&gdk.ControlMask != 0 {
 			switch keyName {
 			case "q", "Q":
@@ -991,3 +1001,15 @@ func preloadStickerData(m events.UIMessage) (*gdkpixbuf.PixbufAnimation, *gdkpix
 	pixbuf, _ := gdkpixbuf.NewPixbufFromFileAtSize(stkrPath, 160, 160)
 	return nil, pixbuf
 }
+
+// ShowLogWindow presents the live system log viewer window.
+func (a *App) ShowLogWindow() {
+	if a.LogWindow == nil || a.LogWindow.Window == nil {
+		a.LogWindow = logview.NewLogWindow(&a.Window.Window, logger.GetBuffer())
+		a.LogWindow.Window.ConnectDestroy(func() {
+			a.LogWindow = nil
+		})
+	}
+	a.LogWindow.Show()
+}
+

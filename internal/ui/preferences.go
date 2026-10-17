@@ -20,6 +20,7 @@ type PreferencesSettings struct {
 	SoftReadEnabled           bool
 
 	OnSettingChanged func(key string, val bool)
+	OnOpenLogs       func()
 }
 
 // ShowPreferencesDialog presents the native GNOME Adwaita preferences window.
@@ -193,6 +194,26 @@ func ShowPreferencesDialog(parent *gtk.Window, notifier *notifications.Notifier,
 	mediaRow.AddSuffix(openFolderBtn)
 	storageGroup.Add(mediaRow)
 	page.Add(storageGroup)
+
+	// 4. Diagnostics & Logs Group
+	diagGroup := adw.NewPreferencesGroup()
+	diagGroup.SetTitle("Diagnóstico")
+	diagGroup.SetDescription("Visualizar logs do sistema e consumo de memória")
+
+	logsRow := adw.NewActionRow()
+	logsRow.SetTitle("Logs do Sistema")
+	logsRow.SetSubtitle("Abrir visualizador de logs em tempo real (Ctrl+Shift+L ou F12)")
+
+	openLogsBtn := gtk.NewButtonWithLabel("Ver Logs")
+	openLogsBtn.SetVAlign(gtk.AlignCenter)
+	openLogsBtn.ConnectClicked(func() {
+		if settings.OnOpenLogs != nil {
+			settings.OnOpenLogs()
+		}
+	})
+	logsRow.AddSuffix(openLogsBtn)
+	diagGroup.Add(logsRow)
+	page.Add(diagGroup)
 
 	// 4. Account Group
 	accountGroup := adw.NewPreferencesGroup()

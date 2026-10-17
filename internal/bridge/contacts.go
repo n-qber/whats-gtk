@@ -135,23 +135,25 @@ func (cs *ContactService) avatarWorker() {
 		if info != nil && info.URL != "" {
 			resp, err := http.Get(info.URL)
 			if err == nil {
-				defer resp.Body.Close()
-				data, _ := io.ReadAll(resp.Body)
-				path := paths.MediaPath("avatar_" + jid.ToNonAD().String() + ".jpg")
-				os.WriteFile(path, data, 0644)
-				cs.DB.SaveContact(database.Contact{JID: jid.ToNonAD().String(), AvatarPath: sql.NullString{String: path, Valid: true}})
-				glib.IdleAdd(func() {
-					pixbuf, _ := gdkpixbuf.NewPixbufFromFile(path)
-					if pixbuf != nil {
-						tex := gdk.NewTextureForPixbuf(pixbuf)
-						cs.mutex.Lock()
-						cs.avatarCache.Put(jStr, tex)
-						cs.mutex.Unlock()
-						if cs.onAvatarSet != nil {
-							cs.onAvatarSet(jStr, tex)
+				data, readErr := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if readErr == nil {
+					path := paths.MediaPath("avatar_" + jid.ToNonAD().String() + ".jpg")
+					_ = os.WriteFile(path, data, 0644)
+					cs.DB.SaveContact(database.Contact{JID: jid.ToNonAD().String(), AvatarPath: sql.NullString{String: path, Valid: true}})
+					glib.IdleAdd(func() {
+						pixbuf, _ := gdkpixbuf.NewPixbufFromFile(path)
+						if pixbuf != nil {
+							tex := gdk.NewTextureForPixbuf(pixbuf)
+							cs.mutex.Lock()
+							cs.avatarCache.Put(jStr, tex)
+							cs.mutex.Unlock()
+							if cs.onAvatarSet != nil {
+								cs.onAvatarSet(jStr, tex)
+							}
 						}
-					}
-				})
+					})
+				}
 			}
 		} else {
 			cs.mutex.Lock()

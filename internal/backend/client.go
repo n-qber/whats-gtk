@@ -7,7 +7,7 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
-	waLog "go.mau.fi/whatsmeow/util/log"
+	"whats-gtk/internal/logger"
 )
 
 type Backend struct {
@@ -26,11 +26,11 @@ func NewBackend(ctx context.Context, container *sqlstore.Container) (*Backend, e
 		device = container.NewDevice()
 	}
 
-	clientLog := waLog.Stdout("Client", "DEBUG", true)
+	clientLog := logger.WALogger("Client")
 	client := whatsmeow.NewClient(device, clientLog)
 	client.EmitAppStateEventsOnFullSync = true
 
-	// Enable all other loggers to stdout
+	// Enable all other loggers to unified logger
 	client.Log = clientLog
 	// We don't have direct access to all sub-loggers easily in NewClient, 
 	// but setting client.Log usually propagates or covers the main ones.

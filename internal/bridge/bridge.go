@@ -448,6 +448,9 @@ func (br *Bridge) setupUIHandlers() {
 					}
 				}
 			},
+			OnOpenLogs: func() {
+				br.App.ShowLogWindow()
+			},
 		}
 
 		ui.ShowPreferencesDialog(&br.App.Window.Window, br.Notifier, settings, func() {

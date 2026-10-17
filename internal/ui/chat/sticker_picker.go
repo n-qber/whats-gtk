@@ -256,14 +256,26 @@ func (sp *StickerPicker) createTile(item database.StickerItem, fromFavoritesTab 
 	anim, _ := gdkpixbuf.NewPixbufAnimationFromFile(item.FilePath)
 	if anim != nil && !anim.IsStaticImage() {
 		animIter := anim.Iter(nil)
+		frameCache := make(map[*gdkpixbuf.Pixbuf]*gdk.Texture)
 		if pb := animIter.Pixbuf(); pb != nil {
-			pic.SetPaintable(gdk.NewTextureForPixbuf(pb))
+			tex := gdk.NewTextureForPixbuf(pb)
+			frameCache[pb] = tex
+			pic.SetPaintable(tex)
 		}
 		pic.AddTickCallback(func(widget gtk.Widgetter, frameClock gdk.FrameClocker) bool {
+			if !pic.Mapped() {
+				return true
+			}
 			if animIter != nil {
 				if animIter.Advance(nil) {
 					if pb := animIter.Pixbuf(); pb != nil {
-						pic.SetPaintable(gdk.NewTextureForPixbuf(pb))
+						if tex, ok := frameCache[pb]; ok {
+							pic.SetPaintable(tex)
+						} else {
+							tex := gdk.NewTextureForPixbuf(pb)
+							frameCache[pb] = tex
+							pic.SetPaintable(tex)
+						}
 					}
 				}
 				return true

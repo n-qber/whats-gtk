@@ -8,13 +8,16 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"whats-gtk/internal/backend"
 	"whats-gtk/internal/bridge"
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/events"
+	"whats-gtk/internal/logger"
 	"whats-gtk/internal/notifications"
 	"whats-gtk/internal/paths"
 	"whats-gtk/internal/ui"
@@ -29,6 +32,10 @@ import (
 var iconData []byte
 
 func main() {
+	logFilePath := filepath.Join(paths.DataDir(), "whats-gtk.log")
+	logger.InitGlobalLogger(logFilePath)
+	log.Printf("Starting whats-gtk (logging to %s)...", logFilePath)
+
 	if addr := os.Getenv("WHATS_GTK_PPROF"); addr != "" {
 		if addr == "1" || addr == "true" {
 			addr = "localhost:6060"
@@ -69,7 +76,17 @@ func main() {
 	quitApp := func() {
 		quitOnce.Do(func() {
 			log.Println("Quitting whats-gtk...")
-			shutdown()
+			done := make(chan struct{})
+			go func() {
+				shutdown()
+				close(done)
+			}()
+			select {
+			case <-done:
+				log.Println("Shutdown cleanly completed.")
+			case <-time.After(2 * time.Second):
+				log.Println("Shutdown timed out after 2s, forcing exit...")
+			}
 			systray.Quit()
 			os.Exit(0)
 		})
@@ -196,6 +213,7 @@ func setupTray(app *ui.App, application *adw.Application, quitApp func(), notifi
 			systray.SetOnTapped(toggleFunc)
 
 			mToggle := systray.AddMenuItem("Show/Hide", "Toggle WhatsApp GTK Window")
+			mLogs := systray.AddMenuItem("Ver Logs", "Abrir logs do sistema")
 
 			var mDND *systray.MenuItem
 			var dndCh chan struct{}
@@ -223,6 +241,10 @@ func setupTray(app *ui.App, application *adw.Application, quitApp func(), notifi
 					select {
 					case <-mToggle.ClickedCh:
 						toggleFunc()
+					case <-mLogs.ClickedCh:
+						glib.IdleAdd(func() {
+							app.ShowLogWindow()
+						})
 					case <-dndCh:
 						if notifier != nil {
 							notifier.SetDNDEnabled(!notifier.IsDNDEnabled())

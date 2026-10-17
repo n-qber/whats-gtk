@@ -14,6 +14,7 @@ type StickerBubble struct {
 	animIter          *gdkpixbuf.PixbufAnimationIter
 	hasTickCallback   bool
 	filePath          string
+	frameCache        map[*gdkpixbuf.Pixbuf]*gdk.Texture
 }
 
 func NewStickerBubble(name string, anim *gdkpixbuf.PixbufAnimation, pixbuf, thumb *gdk.Texture, isSelf bool, status, time string, avatar *gdk.Texture, realW, realH int) (*StickerBubble, error) {
@@ -104,16 +105,35 @@ func NewStickerBubble(name string, anim *gdkpixbuf.PixbufAnimation, pixbuf, thum
 		return nil, err
 	}
 
-	sb := &StickerBubble{baseBubble: base, picture: picture, placeholder: placeholder}
+	sb := &StickerBubble{
+		baseBubble:  base,
+		picture:     picture,
+		placeholder: placeholder,
+		frameCache:  make(map[*gdkpixbuf.Pixbuf]*gdk.Texture),
+	}
+
+	overlay.ConnectDestroy(func() {
+		sb.animIter = nil
+		sb.frameCache = nil
+	})
 
 	if anim != nil && !anim.IsStaticImage() {
 		sb.animIter = anim.Iter(nil)
 		sb.hasTickCallback = true
 		sb.picture.AddTickCallback(func(widget gtk.Widgetter, frameClock gdk.FrameClocker) bool {
+			if !sb.picture.Mapped() {
+				return true
+			}
 			if sb.animIter != nil {
 				if sb.animIter.Advance(nil) {
 					if pb := sb.animIter.Pixbuf(); pb != nil {
-						sb.picture.SetPaintable(gdk.NewTextureForPixbuf(pb))
+						if tex, ok := sb.frameCache[pb]; ok {
+							sb.picture.SetPaintable(tex)
+						} else {
+							tex := gdk.NewTextureForPixbuf(pb)
+							sb.frameCache[pb] = tex
+							sb.picture.SetPaintable(tex)
+						}
 					}
 				}
 				return true
@@ -145,16 +165,34 @@ func (sb *StickerBubble) UpdateStickerImage(anim *gdkpixbuf.PixbufAnimation, tex
 		sb.picture.Show()
 		pb := sb.animIter.Pixbuf()
 		if pb != nil {
-			sb.picture.SetPaintable(gdk.NewTextureForPixbuf(pb))
+			if sb.frameCache == nil {
+				sb.frameCache = make(map[*gdkpixbuf.Pixbuf]*gdk.Texture)
+			}
+			if cachedTex, ok := sb.frameCache[pb]; ok {
+				sb.picture.SetPaintable(cachedTex)
+			} else {
+				newTex := gdk.NewTextureForPixbuf(pb)
+				sb.frameCache[pb] = newTex
+				sb.picture.SetPaintable(newTex)
+			}
 		}
 		
 		if !sb.hasTickCallback {
 			sb.hasTickCallback = true
 			sb.picture.AddTickCallback(func(widget gtk.Widgetter, frameClock gdk.FrameClocker) bool {
+				if !sb.picture.Mapped() {
+					return true
+				}
 				if sb.animIter != nil {
 					if sb.animIter.Advance(nil) {
 						if pb := sb.animIter.Pixbuf(); pb != nil {
-							sb.picture.SetPaintable(gdk.NewTextureForPixbuf(pb))
+							if tex, ok := sb.frameCache[pb]; ok {
+								sb.picture.SetPaintable(tex)
+							} else {
+								tex := gdk.NewTextureForPixbuf(pb)
+								sb.frameCache[pb] = tex
+								sb.picture.SetPaintable(tex)
+							}
 						}
 					}
 					return true
