@@ -15,6 +15,8 @@ import (
 type CallWindow struct {
 	Window        *adw.Window
 	Avatar        *adw.Avatar
+	VideoBox      *gtk.Box
+	VideoPicture  *gtk.Picture
 	NameLabel     *gtk.Label
 	SubtitleLabel *gtk.Label
 	StatusLabel   *gtk.Label
@@ -23,15 +25,17 @@ type CallWindow struct {
 	ActiveControlsBox   *gtk.Box
 	IncomingControlsBox *gtk.Box
 
-	MuteBtn    *gtk.ToggleButton
-	HangupBtn  *gtk.Button
-	AcceptBtn  *gtk.Button
-	DeclineBtn *gtk.Button
+	MuteBtn        *gtk.ToggleButton
+	ShareScreenBtn *gtk.ToggleButton
+	HangupBtn      *gtk.Button
+	AcceptBtn      *gtk.Button
+	DeclineBtn     *gtk.Button
 
-	OnAccept     func()
-	OnDecline    func()
-	OnHangup     func()
-	OnToggleMute func()
+	OnAccept            func()
+	OnDecline           func()
+	OnHangup            func()
+	OnToggleMute        func()
+	OnToggleScreenShare func()
 
 	autoCloseTimer glib.SourceHandle
 }
@@ -40,7 +44,7 @@ type CallWindow struct {
 func NewCallWindow(parent *gtk.Window) *CallWindow {
 	win := adw.NewWindow()
 	win.SetTitle("Chamada WhatsApp")
-	win.SetDefaultSize(360, 480)
+	win.SetDefaultSize(380, 500)
 	win.SetResizable(false)
 	if parent != nil {
 		win.SetTransientFor(parent)
@@ -61,7 +65,7 @@ func NewCallWindow(parent *gtk.Window) *CallWindow {
 	contentBox.SetHAlign(gtk.AlignCenter)
 	contentBox.SetVAlign(gtk.AlignCenter)
 	contentBox.SetVExpand(true)
-	contentBox.SetMarginTop(20)
+	contentBox.SetMarginTop(16)
 	contentBox.SetMarginBottom(24)
 	contentBox.SetMarginStart(24)
 	contentBox.SetMarginEnd(24)
@@ -70,6 +74,21 @@ func NewCallWindow(parent *gtk.Window) *CallWindow {
 	avatar := adw.NewAvatar(110, "", true)
 	avatar.AddCSSClass("call-avatar")
 	contentBox.Append(avatar)
+
+	// Video Display Area (for remote video / screenshare)
+	videoBox := gtk.NewBox(gtk.OrientationVertical, 0)
+	videoBox.AddCSSClass("call-video-box")
+	videoBox.SetHExpand(true)
+	videoBox.SetVExpand(true)
+	videoBox.SetVisible(false)
+
+	videoPic := gtk.NewPicture()
+	videoPic.SetCanShrink(true)
+	videoPic.SetContentFit(gtk.ContentFitContain)
+	videoPic.SetHExpand(true)
+	videoPic.SetVExpand(true)
+	videoBox.Append(videoPic)
+	contentBox.Append(videoBox)
 
 	// Name label
 	nameLabel := gtk.NewLabel("")
@@ -95,8 +114,8 @@ func NewCallWindow(parent *gtk.Window) *CallWindow {
 	durationLabel.SetVisible(false)
 	contentBox.Append(durationLabel)
 
-	// Controls Box: Active Call (Mute + Hangup)
-	activeBox := gtk.NewBox(gtk.OrientationHorizontal, 32)
+	// Controls Box: Active Call (Mute + ShareScreen + Hangup)
+	activeBox := gtk.NewBox(gtk.OrientationHorizontal, 24)
 	activeBox.SetHAlign(gtk.AlignCenter)
 	activeBox.SetMarginTop(16)
 
@@ -106,6 +125,12 @@ func NewCallWindow(parent *gtk.Window) *CallWindow {
 	muteBtn.AddCSSClass("call-btn-circle")
 	muteBtn.SetTooltipText("Silenciar Microfone")
 
+	shareScreenBtn := gtk.NewToggleButton()
+	shareScreenBtn.SetIconName("display-symbolic")
+	shareScreenBtn.AddCSSClass("circular")
+	shareScreenBtn.AddCSSClass("call-btn-circle")
+	shareScreenBtn.SetTooltipText("Compartilhar Tela")
+
 	hangupBtn := gtk.NewButtonFromIconName("call-stop-symbolic")
 	hangupBtn.AddCSSClass("circular")
 	hangupBtn.AddCSSClass("destructive-action")
@@ -113,6 +138,7 @@ func NewCallWindow(parent *gtk.Window) *CallWindow {
 	hangupBtn.SetTooltipText("Desligar")
 
 	activeBox.Append(muteBtn)
+	activeBox.Append(shareScreenBtn)
 	activeBox.Append(hangupBtn)
 	contentBox.Append(activeBox)
 
@@ -144,6 +170,8 @@ func NewCallWindow(parent *gtk.Window) *CallWindow {
 	cw := &CallWindow{
 		Window:              win,
 		Avatar:              avatar,
+		VideoBox:            videoBox,
+		VideoPicture:        videoPic,
 		NameLabel:           nameLabel,
 		SubtitleLabel:       subLabel,
 		StatusLabel:         statusLabel,
@@ -151,6 +179,7 @@ func NewCallWindow(parent *gtk.Window) *CallWindow {
 		ActiveControlsBox:   activeBox,
 		IncomingControlsBox: incomingBox,
 		MuteBtn:             muteBtn,
+		ShareScreenBtn:      shareScreenBtn,
 		HangupBtn:           hangupBtn,
 		AcceptBtn:           acceptBtn,
 		DeclineBtn:          declineBtn,
@@ -160,6 +189,12 @@ func NewCallWindow(parent *gtk.Window) *CallWindow {
 	muteBtn.ConnectToggled(func() {
 		if cw.OnToggleMute != nil {
 			cw.OnToggleMute()
+		}
+	})
+
+	shareScreenBtn.ConnectToggled(func() {
+		if cw.OnToggleScreenShare != nil {
+			cw.OnToggleScreenShare()
 		}
 	})
 
@@ -208,12 +243,48 @@ func NewCallWindow(parent *gtk.Window) *CallWindow {
 				cw.MuteBtn.SetActive(!cw.MuteBtn.Active())
 				return true
 			}
+		} else if name == "s" || name == "S" {
+			if cw.ActiveControlsBox.Visible() {
+				cw.ShareScreenBtn.SetActive(!cw.ShareScreenBtn.Active())
+				return true
+			}
 		}
 		return false
 	})
 	win.AddController(keyCtrl)
 
 	return cw
+}
+
+// SetVideoTexture updates the video display with a newly decoded frame.
+func (cw *CallWindow) SetVideoTexture(tex *gdk.Texture) {
+	glib.IdleAdd(func() {
+		if cw.Window == nil || cw.VideoPicture == nil {
+			return
+		}
+		cw.VideoPicture.SetPaintable(tex)
+		if !cw.VideoBox.Visible() {
+			cw.SetVideoVisible(true)
+		}
+	})
+}
+
+// SetVideoVisible toggles between video/screen share mode and audio/avatar mode.
+func (cw *CallWindow) SetVideoVisible(visible bool) {
+	if cw.VideoBox != nil {
+		cw.VideoBox.SetVisible(visible)
+	}
+	if cw.Avatar != nil {
+		cw.Avatar.SetVisible(!visible)
+	}
+	if cw.Window != nil {
+		if visible {
+			cw.Window.SetResizable(true)
+			cw.Window.SetDefaultSize(640, 520)
+		} else {
+			cw.Window.SetDefaultSize(380, 500)
+		}
+	}
 }
 
 // Update updates the UI with the latest call state and remote contact info.
@@ -249,6 +320,16 @@ func (cw *CallWindow) Update(info calling.CallInfo, displayName, number string, 
 			cw.MuteBtn.SetIconName("audio-input-microphone-symbolic")
 		}
 
+		// Update screen share button status
+		cw.ShareScreenBtn.SetActive(info.IsScreenSharing)
+		if info.IsScreenSharing {
+			cw.ShareScreenBtn.AddCSSClass("suggested-action")
+			cw.ShareScreenBtn.SetTooltipText("Parar Compartilhamento de Tela")
+		} else {
+			cw.ShareScreenBtn.RemoveCSSClass("suggested-action")
+			cw.ShareScreenBtn.SetTooltipText("Compartilhar Tela")
+		}
+
 		switch info.State {
 		case calling.CallStateIncoming:
 			cw.StatusLabel.SetText("Recebendo chamada...")
@@ -269,7 +350,18 @@ func (cw *CallWindow) Update(info calling.CallInfo, displayName, number string, 
 			cw.ActiveControlsBox.SetVisible(true)
 
 		case calling.CallStateActive:
-			cw.StatusLabel.SetText("Em chamada")
+			if info.RemoteScreenSharing {
+				cw.StatusLabel.SetText("Compartilhando tela...")
+				cw.SetVideoVisible(true)
+			} else if info.RemoteVideoActive {
+				cw.StatusLabel.SetText("Vídeo ativo")
+				cw.SetVideoVisible(true)
+			} else if info.IsScreenSharing {
+				cw.StatusLabel.SetText("Você está compartilhando tela")
+			} else {
+				cw.StatusLabel.SetText("Em chamada")
+			}
+
 			cw.IncomingControlsBox.SetVisible(false)
 			cw.ActiveControlsBox.SetVisible(true)
 			cw.DurationLabel.SetVisible(true)
@@ -287,6 +379,7 @@ func (cw *CallWindow) Update(info calling.CallInfo, displayName, number string, 
 			cw.StatusLabel.SetText(msg)
 			cw.IncomingControlsBox.SetVisible(false)
 			cw.ActiveControlsBox.SetVisible(false)
+			cw.SetVideoVisible(false)
 
 			// Auto close window after 2.5 seconds
 			if cw.autoCloseTimer == 0 {

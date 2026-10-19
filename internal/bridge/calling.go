@@ -37,6 +37,13 @@ func NewCallingController(br *Bridge) *CallingController {
 	}
 
 	mgr.Subscribe(cc.handleCallStateChanged)
+	mgr.SetVideoFrameCallback(func(tex *gdk.Texture) {
+		glib.IdleAdd(func() {
+			if cc.bridge.App != nil && cc.bridge.App.CallWindow != nil {
+				cc.bridge.App.CallWindow.SetVideoTexture(tex)
+			}
+		})
+	})
 	return cc
 }
 
@@ -78,6 +85,7 @@ func (cc *CallingController) StartCall(targetJID string, isVideo bool) error {
 		win := cc.bridge.App.ShowCallWindow()
 		win.OnHangup = func() { _ = cc.Manager.Hangup() }
 		win.OnToggleMute = func() { cc.Manager.ToggleMute() }
+		win.OnToggleScreenShare = func() { _ = cc.ToggleScreenShare() }
 		initInfo := calling.CallInfo{
 			RemoteJID: cleanJID,
 			Direction: calling.DirectionOutgoing,
@@ -114,6 +122,15 @@ func (cc *CallingController) Hangup() error {
 // ToggleMute toggles microphone mute.
 func (cc *CallingController) ToggleMute() bool {
 	return cc.Manager.ToggleMute()
+}
+
+// ToggleScreenShare toggles screen sharing on the active call.
+func (cc *CallingController) ToggleScreenShare() error {
+	ctx := cc.bridge.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return cc.Manager.ToggleScreenShare(ctx)
 }
 
 func (cc *CallingController) handleCallStateChanged(info calling.CallInfo) {
@@ -166,6 +183,7 @@ func (cc *CallingController) handleCallStateChanged(info calling.CallInfo) {
 			win.OnDecline = func() { _ = cc.Manager.RejectCall() }
 			win.OnHangup = func() { _ = cc.Manager.Hangup() }
 			win.OnToggleMute = func() { cc.Manager.ToggleMute() }
+			win.OnToggleScreenShare = func() { _ = cc.ToggleScreenShare() }
 			win.Update(info, name, number, avatar)
 		})
 	} else {
@@ -174,6 +192,7 @@ func (cc *CallingController) handleCallStateChanged(info calling.CallInfo) {
 			if cc.bridge.App.CallWindow != nil {
 				cc.bridge.App.CallWindow.OnHangup = func() { _ = cc.Manager.Hangup() }
 				cc.bridge.App.CallWindow.OnToggleMute = func() { cc.Manager.ToggleMute() }
+				cc.bridge.App.CallWindow.OnToggleScreenShare = func() { _ = cc.ToggleScreenShare() }
 				cc.bridge.App.CallWindow.Update(info, cc.activeName, cc.activeNumber, cc.activeAvatar)
 			}
 		})

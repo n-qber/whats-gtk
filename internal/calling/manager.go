@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/purpshell/meowcaller"
 )
 
@@ -32,15 +33,18 @@ const (
 
 // CallInfo contains the full state and metadata of a call.
 type CallInfo struct {
-	CallID      string
-	RemoteJID   string
-	Direction   CallDirection
-	IsVideo     bool
-	State       CallState
-	StartTime   time.Time
-	Duration    time.Duration
-	IsMuted     bool
-	EndReason   string
+	CallID              string
+	RemoteJID           string
+	Direction           CallDirection
+	IsVideo             bool
+	State               CallState
+	StartTime           time.Time
+	Duration            time.Duration
+	IsMuted             bool
+	IsScreenSharing     bool
+	RemoteScreenSharing bool
+	RemoteVideoActive   bool
+	EndReason           string
 }
 
 var (
@@ -48,18 +52,21 @@ var (
 	ErrNoActiveCall      = errors.New("no active call")
 )
 
-// Manager coordinates VoIP calls, audio hardware, and event dispatch.
+// Manager coordinates VoIP calls, audio hardware, screen sharing, and event dispatch.
 type Manager struct {
-	mu           sync.RWMutex
-	client       *meowcaller.Client
-	activeCall   *meowcaller.Call
-	currentInfo  CallInfo
-	mic          *MicSource
-	speaker      *SpeakerSink
-	tones        *TonePlayer
-	ticker       *time.Ticker
-	stopTicker   chan struct{}
-	listeners    []func(CallInfo)
+	mu            sync.RWMutex
+	client        *meowcaller.Client
+	activeCall    *meowcaller.Call
+	currentInfo   CallInfo
+	mic           *MicSource
+	speaker       *SpeakerSink
+	tones         *TonePlayer
+	videoReceiver *VideoReceiver
+	screenCaster  *ScreenCaster
+	videoCallback func(*gdk.Texture)
+	ticker        *time.Ticker
+	stopTicker    chan struct{}
+	listeners     []func(CallInfo)
 }
 
 // NewManager creates a calling manager wrapping a meowcaller Client.
@@ -246,6 +253,98 @@ func (m *Manager) GetInfo() CallInfo {
 	return info
 }
 
+// StartScreenShare starts capturing the screen via XDG Desktop Portal and announces it on the active call.
+func (m *Manager) StartScreenShare(ctx context.Context) error {
+	m.mu.Lock()
+	call := m.activeCall
+	if call == nil || m.currentInfo.State != CallStateActive {
+		m.mu.Unlock()
+		return ErrNoActiveCall
+	}
+	if m.screenCaster != nil {
+		m.mu.Unlock()
+		return nil // Already sharing
+	}
+	m.mu.Unlock()
+
+	// 1. Announce screen share signaling
+	if err := call.StartScreenShare(nil); err != nil {
+		return fmt.Errorf("failed to signal screen share: %w", err)
+	}
+
+	// 2. Start desktop portal capture and GStreamer H.264 encoder
+	caster := NewScreenCaster(func(accessUnit []byte) {
+		m.mu.RLock()
+		active := m.activeCall
+		m.mu.RUnlock()
+		if active != nil {
+			_ = active.SendVideo(accessUnit)
+		}
+	})
+
+	if err := caster.Start(ctx); err != nil {
+		_ = call.StopScreenShare()
+		return err
+	}
+
+	m.mu.Lock()
+	m.screenCaster = caster
+	m.currentInfo.IsScreenSharing = true
+	info := m.currentInfo
+	m.mu.Unlock()
+
+	m.notifyListeners(info)
+	return nil
+}
+
+// StopScreenShare stops outbound screen sharing.
+func (m *Manager) StopScreenShare() error {
+	m.mu.Lock()
+	call := m.activeCall
+	caster := m.screenCaster
+	m.screenCaster = nil
+	m.currentInfo.IsScreenSharing = false
+	info := m.currentInfo
+	m.mu.Unlock()
+
+	if caster != nil {
+		_ = caster.Stop()
+	}
+
+	if call != nil {
+		_ = call.StopScreenShare()
+	}
+
+	m.notifyListeners(info)
+	return nil
+}
+
+// ToggleScreenShare toggles outbound screen share on/off.
+func (m *Manager) ToggleScreenShare(ctx context.Context) error {
+	m.mu.RLock()
+	isSharing := m.currentInfo.IsScreenSharing
+	m.mu.RUnlock()
+
+	if isSharing {
+		return m.StopScreenShare()
+	}
+	return m.StartScreenShare(ctx)
+}
+
+// IsSharingScreen returns true if local screen sharing is active.
+func (m *Manager) IsSharingScreen() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.currentInfo.IsScreenSharing
+}
+
+// SetVideoFrameCallback sets the callback for received video or screen share textures.
+func (m *Manager) SetVideoFrameCallback(fn func(*gdk.Texture)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.videoCallback = fn
+}
+
 func (m *Manager) handleIncomingCall(call *meowcaller.Call) {
 	m.mu.Lock()
 	if m.currentInfo.State != CallStateIdle && m.currentInfo.State != CallStateEnded {
@@ -301,6 +400,22 @@ func (m *Manager) wireCallEvents(call *meowcaller.Call) {
 			call.Receive(m.speaker)
 		}
 
+		// Initialize video receiver for remote video & screen sharing
+		if m.videoReceiver == nil {
+			vr, err := NewVideoReceiver(func(tex *gdk.Texture) {
+				m.mu.RLock()
+				cb := m.videoCallback
+				m.mu.RUnlock()
+				if cb != nil {
+					cb(tex)
+				}
+			})
+			if err == nil {
+				m.videoReceiver = vr
+				call.ReceiveVideo(vr)
+			}
+		}
+
 		m.currentInfo.State = CallStateActive
 		m.currentInfo.StartTime = time.Now()
 		m.startDurationTimer()
@@ -312,6 +427,22 @@ func (m *Manager) wireCallEvents(call *meowcaller.Call) {
 
 	call.OnEnd(func(reason string) {
 		m.finishCall(reason)
+	})
+
+	call.OnScreenShare(func(state meowcaller.ScreenShareState) {
+		m.mu.Lock()
+		m.currentInfo.RemoteScreenSharing = state.Active
+		info := m.currentInfo
+		m.mu.Unlock()
+		m.notifyListeners(info)
+	})
+
+	call.OnVideoState(func(state meowcaller.VideoState) {
+		m.mu.Lock()
+		m.currentInfo.RemoteVideoActive = state.Active
+		info := m.currentInfo
+		m.mu.Unlock()
+		m.notifyListeners(info)
 	})
 
 	call.OnStateChange(func(phase meowcaller.CallPhase) {
@@ -380,9 +511,12 @@ func (m *Manager) stopDurationTimer() {
 func (m *Manager) finishCall(reason string) {
 	m.mu.Lock()
 	m.stopDurationTimer()
-	m.teardownAudio()
+	m.teardownMedia()
 	m.activeCall = nil
 	m.currentInfo.State = CallStateEnded
+	m.currentInfo.IsScreenSharing = false
+	m.currentInfo.RemoteScreenSharing = false
+	m.currentInfo.RemoteVideoActive = false
 	if reason != "" {
 		m.currentInfo.EndReason = reason
 	}
@@ -393,6 +527,18 @@ func (m *Manager) finishCall(reason string) {
 }
 
 func (m *Manager) teardownAudio() {
+	m.teardownMedia()
+}
+
+func (m *Manager) teardownMedia() {
+	if m.screenCaster != nil {
+		_ = m.screenCaster.Stop()
+		m.screenCaster = nil
+	}
+	if m.videoReceiver != nil {
+		_ = m.videoReceiver.Close()
+		m.videoReceiver = nil
+	}
 	if m.tones != nil {
 		m.tones.Stop()
 		m.tones = nil

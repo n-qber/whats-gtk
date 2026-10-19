@@ -843,12 +843,20 @@ func loadCSS() {
 			color: @view_fg_color;
 		}
 		.call-btn-circle {
-			min-width: 56px;
-			min-height: 56px;
-			padding: 14px;
+			min-width: 52px;
+			min-height: 52px;
+			padding: 12px;
 		}
 		.call-avatar {
 			margin-bottom: 8px;
+		}
+		.call-video-box {
+			background-color: #0b141a;
+			border-radius: 12px;
+			overflow: hidden;
+			min-width: 340px;
+			min-height: 260px;
+			border: 1px solid rgba(255, 255, 255, 0.08);
 		}
 	`)
 	gtk.StyleContextAddProviderForDisplay(gdk.DisplayGetDefault(), cssProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
