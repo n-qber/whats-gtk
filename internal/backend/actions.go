@@ -44,8 +44,20 @@ func (b *Backend) SendText(ctx context.Context, to types.JID, text string, conte
 
 func (b *Backend) MarkRead(ctx context.Context, jid types.JID, ids []string, sender types.JID, timestamp time.Time) error {
 	mids := make([]types.MessageID, len(ids))
-	for i, id := range ids { mids[i] = types.MessageID(id) }
+	for i, id := range ids {
+		mids[i] = types.MessageID(id)
+	}
 	return b.Client.MarkRead(ctx, mids, timestamp, jid, sender)
+}
+
+// SendPresence updates the user's availability on WhatsApp. When the client is
+// unavailable, whatsmeow sends delivery receipts as "inactive", matching the
+// behaviour of WhatsApp Web while its window is not in the foreground.
+func (b *Backend) SendPresence(ctx context.Context, state types.Presence) error {
+	if b.Client == nil || !b.Client.IsConnected() {
+		return nil
+	}
+	return b.Client.SendPresence(ctx, state)
 }
 
 func (b *Backend) SendChatPresence(ctx context.Context, jid types.JID, state types.ChatPresence, media types.ChatPresenceMedia) error {
@@ -397,12 +409,12 @@ func (b *Backend) SendPollVote(ctx context.Context, chat types.JID, msgID string
 			IsGroup:  chat.Server == types.GroupServer,
 		},
 	}
-	
+
 	voteMsg, err := b.Client.BuildPollVote(ctx, info, optionNames)
 	if err != nil {
 		return err
 	}
-	
+
 	_, err = b.Client.SendMessage(ctx, chat, voteMsg)
 	return err
 }
