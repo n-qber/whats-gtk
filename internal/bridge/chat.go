@@ -19,10 +19,10 @@ import (
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
-	"go.mau.fi/whatsmeow/store"
-	meowEvents "go.mau.fi/whatsmeow/types/events"
-	"go.mau.fi/whatsmeow/types"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
+	"go.mau.fi/whatsmeow/store"
+	"go.mau.fi/whatsmeow/types"
+	meowEvents "go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 	"whats-gtk/internal/ui/chat"
 )
@@ -42,19 +42,27 @@ type ChatController struct {
 
 	OldestMessageTimes map[string]time.Time
 
-	selectedJID     *types.JID
-	lastSender      string
-	lastDateStr     string
-	activeProfileID int64
-	sidebarMutex    sync.Mutex
-	searchSerial    int
-	lastGroupSync   map[string]time.Time
-	cachedGroupInfo map[string]*types.GroupInfo
+	selectedJID          *types.JID
+	lastSender           string
+	lastDateStr          string
+	activeProfileID      int64
+	sidebarMutex         sync.Mutex
+	searchSerial         int
+	lastGroupSync        map[string]time.Time
+	cachedGroupInfo      map[string]*types.GroupInfo
 	groupMutex           sync.RWMutex
 	typingMu             sync.Mutex
 	typingStates         map[string]*typingState
 	incomingPresence     map[string]string
 	incomingTypingTimers map[string]*time.Timer
+
+	standbyMu      sync.Mutex
+	standbyEnabled bool
+	standbyActive  bool
+	windowActive   bool
+	standbyTimeout time.Duration
+	lastActivity   time.Time
+	pendingReads   []pendingRead
 }
 
 // NewChatController creates a new ChatController.
@@ -77,7 +85,11 @@ func NewChatController(b *backend.Backend, app *ui.App, db *database.AppDB, msgs
 		typingStates:         make(map[string]*typingState),
 		incomingPresence:     make(map[string]string),
 		incomingTypingTimers: make(map[string]*time.Timer),
+		standbyEnabled:       true,
+		standbyTimeout:       DefaultStandbyTimeout,
+		lastActivity:         time.Now(),
 	}
+	cc.LoadStandbySettings()
 	cc.setupSubscriptions()
 	return cc
 }
@@ -145,7 +157,7 @@ func (cc *ChatController) HandleLiveMessage(msg *meowEvents.Message, isSyncing b
 	if !isSyncing || isCurrentChat {
 		if isCurrentChat {
 			if cc.App.Window.IsActive() {
-				go cc.Backend.MarkRead(cc.ctx, msg.Info.Chat, []string{msg.Info.ID}, msg.Info.Sender, time.Now())
+				cc.MarkRead(msg.Info.Chat, []string{msg.Info.ID}, msg.Info.Sender, time.Now())
 			}
 		} else if cc.App != nil && cc.App.DetachedWindows != nil {
 			isDetachedActive := false
@@ -155,7 +167,7 @@ func (cc *ChatController) HandleLiveMessage(msg *meowEvents.Message, isSyncing b
 				isDetachedActive = true
 			}
 			if isDetachedActive {
-				go cc.Backend.MarkRead(cc.ctx, msg.Info.Chat, []string{msg.Info.ID}, msg.Info.Sender, time.Now())
+				cc.MarkRead(msg.Info.Chat, []string{msg.Info.ID}, msg.Info.Sender, time.Now())
 			}
 		}
 
@@ -203,13 +215,14 @@ func (cc *ChatController) HandleLiveMessage(msg *meowEvents.Message, isSyncing b
 }
 
 func (cc *ChatController) SelectedJID() *types.JID { return cc.selectedJID }
-func (cc *ChatController) LastSender() string     { return cc.lastSender }
+func (cc *ChatController) LastSender() string      { return cc.lastSender }
 
 func (cc *ChatController) HandleWindowActive() {
+	cc.HandleUserActivity()
 	if cc.App.Window.IsActive() {
 		jid := cc.SelectedJID()
 		if jid != nil && cc.Backend != nil && cc.Backend.Client != nil {
-			go cc.Backend.MarkRead(cc.ctx, *jid, []string{}, types.JID{}, time.Now())
+			cc.MarkRead(*jid, []string{}, types.JID{}, time.Now())
 		}
 	}
 }
@@ -219,6 +232,8 @@ func (cc *ChatController) LastDateStr() string     { return cc.lastDateStr }
 func (cc *ChatController) SetLastDateStr(s string) { cc.lastDateStr = s }
 
 func (cc *ChatController) HandleChatSelected(jidStr string) {
+	cc.HandleUserActivity()
+
 	jid, err := types.ParseJID(jidStr)
 	if err != nil {
 		return
@@ -296,7 +311,7 @@ func (cc *ChatController) HandleChatSelected(jidStr string) {
 
 	if cc.Backend != nil && cc.Backend.Client != nil {
 		if cc.App.Window.IsActive() {
-			go cc.Backend.MarkRead(cc.ctx, jid, []string{}, types.JID{}, time.Now())
+			cc.MarkRead(jid, []string{}, types.JID{}, time.Now())
 		}
 		if jid.Server != types.GroupServer {
 			go func(target types.JID) {
@@ -600,6 +615,7 @@ func (c *ChatController) HandleDetachJID(targetJID types.JID) {
 	glib.IdleAdd(func() {
 		win := adw.NewWindow()
 		win.SetDefaultSize(600, 700)
+		c.App.WatchActivity(win)
 
 		cv, err := chat.NewChatView()
 		if err != nil {
@@ -739,8 +755,11 @@ func (c *ChatController) HandleDetachJID(targetJID types.JID) {
 		}
 
 		win.Connect("notify::is-active", func() {
-			if win.IsActive() && c.Backend != nil && c.Backend.Client != nil {
-				go c.Backend.MarkRead(c.ctx, targetJID, []string{}, types.JID{}, time.Now())
+			if win.IsActive() {
+				c.HandleUserActivity()
+				if c.Backend != nil && c.Backend.Client != nil {
+					c.MarkRead(targetJID, []string{}, types.JID{}, time.Now())
+				}
 			}
 		})
 
@@ -940,4 +959,3 @@ func (cc *ChatController) HandleForwardMessages(targetJIDStrs []string, msgIDs [
 		}
 	}()
 }
-

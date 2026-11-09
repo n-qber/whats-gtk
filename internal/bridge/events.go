@@ -48,8 +48,8 @@ type EventHandler struct {
 	offlineSyncTotal    int
 	offlineSyncReceived int
 
-	reconnectMutex      sync.Mutex
-	isReconnecting      bool
+	reconnectMutex sync.Mutex
+	isReconnecting bool
 
 	stickerReloadTimer glib.SourceHandle
 	stickerReloadMutex sync.Mutex
@@ -238,11 +238,11 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 	eh.syncMutex.Lock()
 	eh.isSyncing = true
 	eh.syncMutex.Unlock()
-	
+
 	progress := v.Data.Data.GetProgress()
 	fraction := float64(progress) / 100.0
-	glib.IdleAdd(func() { 
-		eh.App.Sidebar.ShowSyncing(true) 
+	glib.IdleAdd(func() {
+		eh.App.Sidebar.ShowSyncing(true)
 		eh.App.Sidebar.SetSyncProgress(fraction)
 	})
 
@@ -256,7 +256,7 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 			eh.syncMutex.Lock()
 			eh.isSyncing = false
 			eh.syncMutex.Unlock()
-			
+
 			glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(false) })
 			eh.Chat.RefreshSidebarUI()
 		}()
@@ -294,7 +294,7 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 			chatJID = chatJID.ToNonAD()
 			contact := database.Contact{JID: chatJID.String(), IsGroup: sql.NullBool{Bool: chatJID.Server == types.GroupServer, Valid: true}}
 			_ = eh.DB.SaveContactTx(tx, contact)
-			
+
 			// Save sync metadata
 			unreadCount := int(conv.GetUnreadCount())
 			isPinned := conv.GetPinned() > 0
@@ -311,7 +311,7 @@ func (eh *EventHandler) handleHistorySync(v *backend.HistorySyncEvent) {
 				}
 			}
 			_ = eh.DB.SaveSyncDataTx(tx, chatJID.String(), unreadCount, isPinned, isArchived, mutedUntil, conv.GetName(), "", timestamp)
-			
+
 			for _, hMsg := range conv.GetMessages() {
 				if hMsg == nil || hMsg.GetMessage() == nil {
 					continue
@@ -368,7 +368,7 @@ func (eh *EventHandler) handleMessage(v *backend.MessageEvent) {
 			if msgKey != nil && msgKey.GetID() != "" {
 				voterJID := eh.Messages.ResolveJID(msg.Info.Sender).ToNonAD().String()
 				eh.DB.UpdatePollVote(msgKey.GetID(), voterJID, selectedHashes)
-				
+
 				votes, _ := eh.DB.GetPollVotes(msgKey.GetID())
 				chatJIDStr := eh.Messages.ResolveJID(msg.Info.Chat).ToNonAD().String()
 				var myJID string
@@ -391,7 +391,7 @@ func (eh *EventHandler) handleMessage(v *backend.MessageEvent) {
 	}
 
 	eh.Messages.PersistMessage(msg)
-	
+
 	// Process message through hooks (Rendering, auto-download, etc.)
 	eh.Pipeline.Process(msg)
 }
@@ -410,8 +410,10 @@ func (eh *EventHandler) handleConnected() {
 		}
 	})
 	go func() {
-		if eh.Backend != nil && eh.Backend.Client != nil {
-			_ = eh.Backend.Client.SendPresence(eh.ctx, types.PresenceAvailable)
+		if eh.Chat != nil {
+			eh.Chat.SyncPresenceAfterConnect()
+		} else if eh.Backend != nil {
+			_ = eh.Backend.SendPresence(eh.ctx, types.PresenceAvailable)
 		}
 		eh.Contacts.Sync(eh.ctx)
 		eh.Chat.RefreshSidebarUI()
@@ -525,7 +527,7 @@ func (eh *EventHandler) handleOfflineSyncCompleted() {
 	eh.isSyncing = false
 	eh.isOfflineSyncing = false
 	eh.syncMutex.Unlock()
-	
+
 	glib.IdleAdd(func() { eh.App.Sidebar.ShowSyncing(false) })
 	go func() {
 		eh.Chat.RefreshSidebarUI()
@@ -544,7 +546,7 @@ func (eh *EventHandler) handleOfflineSyncPreview(v *backend.OfflineSyncPreviewEv
 	eh.offlineSyncReceived = 0
 	eh.syncMutex.Unlock()
 
-	glib.IdleAdd(func() { 
+	glib.IdleAdd(func() {
 		eh.App.Sidebar.ShowSyncing(true)
 		eh.App.Sidebar.SetSyncProgress(0.0)
 	})
@@ -553,12 +555,14 @@ func (eh *EventHandler) handleOfflineSyncPreview(v *backend.OfflineSyncPreviewEv
 func (eh *EventHandler) incrementOfflineSync() {
 	eh.syncMutex.Lock()
 	defer eh.syncMutex.Unlock()
-	
+
 	if eh.isOfflineSyncing {
 		eh.offlineSyncReceived++
 		if eh.offlineSyncTotal > 0 {
 			fraction := float64(eh.offlineSyncReceived) / float64(eh.offlineSyncTotal)
-			if fraction > 1.0 { fraction = 1.0 }
+			if fraction > 1.0 {
+				fraction = 1.0
+			}
 			glib.IdleAdd(func() { eh.App.Sidebar.SetSyncProgress(fraction) })
 		}
 	}
@@ -608,7 +612,7 @@ func (eh *EventHandler) handleReceipt(v *backend.ReceiptEvent) {
 
 		var newStatus string
 		if isGroup {
-			
+
 			msgSenderJID := myJIDStr
 			if msg, err := eh.DB.GetMessage(id); err == nil && msg != nil && msg.SenderJID != "" {
 				msgSenderJID = msg.SenderJID
@@ -653,11 +657,12 @@ func (eh *EventHandler) handleReceipt(v *backend.ReceiptEvent) {
 
 func (eh *EventHandler) handleContact(v *backend.ContactEvent) {
 	if v.Info.Action != nil {
-		jid := v.Info.JID.ToNonAD().String(); pnJID := v.Info.Action.GetPnJID()
-		
+		jid := v.Info.JID.ToNonAD().String()
+		pnJID := v.Info.Action.GetPnJID()
+
 		savedName := sql.NullString{String: v.Info.Action.GetFullName(), Valid: v.Info.Action.GetFullName() != ""}
 		pushName := sql.NullString{String: v.Info.Action.GetFirstName(), Valid: v.Info.Action.GetFirstName() != ""}
-		
+
 		if pnJID != "" && strings.HasSuffix(jid, "@lid") {
 			pn := pnJID + "@s.whatsapp.net"
 			eh.DB.SaveContact(database.Contact{JID: pn, LID: sql.NullString{String: jid, Valid: true}, SavedName: savedName, PushName: pushName})
@@ -677,9 +682,11 @@ func (eh *EventHandler) handlePushName(v *backend.PushNameEvent) {
 // the new direct path, and re-triggers download.
 func (eh *EventHandler) handleMediaRetry(v *backend.MediaRetryEvent) {
 	fmt.Printf("Bridge: Received Media Retry for %s\n", v.Info.MessageID)
-	
+
 	msg, err := eh.DB.GetMessage(v.Info.MessageID)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 
 	retryData, err := whatsmeow.DecryptMediaRetryNotification(v.Info, msg.MediaKey)
 	if err != nil {
@@ -693,7 +700,7 @@ func (eh *EventHandler) handleMediaRetry(v *backend.MediaRetryEvent) {
 	}
 
 	msg.MediaDirectPath = sql.NullString{String: retryData.GetDirectPath(), Valid: retryData.GetDirectPath() != ""}
-	
+
 	eh.DB.SaveMessage(*msg)
 
 	// Re-trigger download
