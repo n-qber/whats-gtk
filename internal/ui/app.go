@@ -13,25 +13,26 @@ import (
 	"whats-gtk/internal/ui/logview"
 	"whats-gtk/internal/ui/sidebar"
 
+	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/gdkpixbuf/v2"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
-	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 )
 
 type App struct {
-	Window             *adw.ApplicationWindow
-	Sidebar            *sidebar.Sidebar
-	ChatView           *chat.ChatView
-	InfoView           *info.InfoView
-	InfoFlap           *adw.Flap
-	QRDialog           *gtk.Window
-	QRImage            *gtk.Image
-	ZoomLevel          float64
-	ZoomCSSProvider    *gtk.CSSProvider
-	OnKeyPressed       func(key string, mods gdk.ModifierType) bool
-	OnModifiersChanged func(mods gdk.ModifierType)
+	Window                  *adw.ApplicationWindow
+	Sidebar                 *sidebar.Sidebar
+	ChatView                *chat.ChatView
+	InfoView                *info.InfoView
+	InfoFlap                *adw.Flap
+	QRDialog                *gtk.Window
+	QRImage                 *gtk.Image
+	ZoomLevel               float64
+	ZoomCSSProvider         *gtk.CSSProvider
+	OnKeyPressed            func(key string, mods gdk.ModifierType) bool
+	OnUserActivity          func()
+	OnModifiersChanged      func(mods gdk.ModifierType)
 	OnSearchRequested       func()
 	OnNewChatRequested      func()
 	OnNextChatRequested     func()
@@ -39,14 +40,14 @@ type App struct {
 	OnCtrlReleased          func()
 	OnCancelCycle           func() bool
 	OnCommitCycle           func() bool
-	DetachedChats      map[string]*chat.ChatView
-	DetachedWindows    map[string]*adw.Window
-	ActiveMainJID      string
-	EventBus           *events.EventBus
-	ResolveJIDFunc     func(jid string) string
-	OnClose            func()
-	LogWindow          *logview.LogWindow
-	CallWindow         *call.CallWindow
+	DetachedChats           map[string]*chat.ChatView
+	DetachedWindows         map[string]*adw.Window
+	ActiveMainJID           string
+	EventBus                *events.EventBus
+	ResolveJIDFunc          func(jid string) string
+	OnClose                 func()
+	LogWindow               *logview.LogWindow
+	CallWindow              *call.CallWindow
 }
 
 func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
@@ -58,7 +59,7 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 	loadCSS()
 
 	splitView := adw.NewOverlaySplitView()
-	
+
 	s, err := sidebar.NewSidebar()
 	if err != nil {
 		return nil, err
@@ -113,6 +114,7 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 	}
 
 	a.setupSubscriptions()
+	a.WatchActivity(window)
 
 	window.Connect("close-request", func() bool {
 		if a.OnClose != nil {
@@ -127,7 +129,7 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 	keyCtrl := gtk.NewEventControllerKey()
 	keyCtrl.ConnectKeyPressed(func(keyval uint, keycode uint, state gdk.ModifierType) bool {
 		keyName := gdk.KeyvalName(keyval)
-		
+
 		if state&gdk.ControlMask != 0 && state&gdk.ShiftMask != 0 {
 			if keyName == "f" || keyName == "F" {
 				if a.OnSearchRequested != nil {
@@ -238,6 +240,58 @@ func NewApp(app *adw.Application, bus *events.EventBus) (*App, error) {
 	window.AddController(keyCtrl)
 
 	return a, nil
+}
+
+// eventControllerAdder is implemented by GTK widgets and windows that can host
+// event controllers.
+type eventControllerAdder interface {
+	AddController(gtk.EventControllerer)
+}
+
+// WatchActivity installs input event controllers on w so that pointer motion,
+// clicks, scrolling and key presses are reported through OnUserActivity. It is
+// used by the standby watcher to detect whether the user is still interacting
+// with a chat window.
+func (a *App) WatchActivity(w eventControllerAdder) {
+	motion := gtk.NewEventControllerMotion()
+	motion.ConnectMotion(func(x, y float64) {
+		a.notifyUserActivity()
+	})
+	motion.ConnectEnter(func(x, y float64) {
+		a.notifyUserActivity()
+	})
+	w.AddController(motion)
+
+	click := gtk.NewGestureClick()
+	click.ConnectPressed(func(nPress int, x, y float64) {
+		a.notifyUserActivity()
+	})
+	w.AddController(click)
+
+	scroll := gtk.NewEventControllerScroll(gtk.EventControllerScrollBothAxes)
+	scroll.ConnectScroll(func(dx, dy float64) bool {
+		a.notifyUserActivity()
+		return false
+	})
+	scroll.ConnectScrollBegin(func() {
+		a.notifyUserActivity()
+	})
+	w.AddController(scroll)
+
+	key := gtk.NewEventControllerKey()
+	key.SetPropagationPhase(gtk.PhaseCapture)
+	key.ConnectKeyPressed(func(keyval, keycode uint, state gdk.ModifierType) bool {
+		a.notifyUserActivity()
+		return false
+	})
+	w.AddController(key)
+}
+
+// notifyUserActivity forwards a detected input event to the activity callback.
+func (a *App) notifyUserActivity() {
+	if a.OnUserActivity != nil {
+		a.OnUserActivity()
+	}
 }
 
 func (a *App) setupSubscriptions() {
@@ -395,6 +449,14 @@ func (a *App) setupSubscriptions() {
 								cv.SetLoadingOlder(false)
 								return false
 							}
+							// Nothing to scroll: the content still fits in the
+							// viewport, so there is no offset to preserve. Let
+							// the message list decide whether another batch of
+							// older messages is needed.
+							if adj.Upper() <= adj.PageSize()+1 {
+								cv.SetLoadingOlder(false)
+								return false
+							}
 							if attempts >= 20 {
 								cv.SetLoadingOlder(false)
 								return false
@@ -421,26 +483,28 @@ func (a *App) setupSubscriptions() {
 					}
 
 					cv := a.GetChatViewForJID(payload.JID)
-					if cv == nil { return }
-					
+					if cv == nil {
+						return
+					}
+
 					m := payload.Message
 					if m.DateSeparator != "" {
 						cv.AddSeparator(m.DateSeparator)
 					}
-					
+
 					if m.Type == "text" {
 						cv.AddMessage(m.ID, m.JID, m.SenderName, m.Content, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText)
 					} else if m.Type == "image" || m.Type == "video" || m.Type == "sticker" {
 						var texImg, texThumb *gdk.Texture
 						texThumb = bytesToTexture(m.Thumbnail)
-						
+
 						if m.DocumentPath != "" && m.Type != "sticker" {
 							pixbuf, _ := gdkpixbuf.NewPixbufFromFileAtSize(m.DocumentPath, 400, 400)
 							if pixbuf != nil {
 								texImg = gdk.NewTextureForPixbuf(pixbuf)
 							}
 						}
-						
+
 						if m.Type == "image" {
 							cv.AddImage(m.ID, m.JID, m.SenderName, m.Content, texImg, texThumb, m.DocumentPath, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText, m.MediaWidth, m.MediaHeight)
 						} else if m.Type == "sticker" {
@@ -463,7 +527,7 @@ func (a *App) setupSubscriptions() {
 					} else if m.Type == "poll" {
 						cv.AddPoll(m.ID, m.JID, m.SenderName, m.Content, m.PollOptions, m.PollVotes, m.MyJID, m.IsFromMe, m.IsContinuation, m.Status, m.TimeString, m.Avatar, m.QuotedMsgID, m.QuotedMsgSender, m.QuotedMsgText)
 					}
-					
+
 					if len(m.Reactions) > 0 {
 						cv.UpdateMessageReactions(m.ID, m.Reactions)
 					}
@@ -526,12 +590,16 @@ func (a *App) setupSubscriptions() {
 }
 
 func bytesToTexture(data []byte) *gdk.Texture {
-	if len(data) == 0 { return nil }
+	if len(data) == 0 {
+		return nil
+	}
 	loader := gdkpixbuf.NewPixbufLoader()
 	loader.Write(data)
 	loader.Close()
 	pix := loader.Pixbuf()
-	if pix == nil { return nil }
+	if pix == nil {
+		return nil
+	}
 	return gdk.NewTextureForPixbuf(pix)
 }
 
@@ -1050,4 +1118,3 @@ func (a *App) CloseCallWindow() {
 		a.CallWindow = nil
 	}
 }
-
