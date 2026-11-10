@@ -224,11 +224,12 @@ func (br *Bridge) registerDefaultHooks() {
 		chatJID := br.Messages.ResolveJID(msg.Info.Chat).ToNonAD().String()
 		selJID := br.Chat.SelectedJID()
 		isCurrentChat := selJID != nil && selJID.ToNonAD().String() == chatJID
-		if br.App.Window.IsActive() && isCurrentChat {
+		inStandby := br.Chat.IsInStandby()
+		if br.App.Window.IsActive() && isCurrentChat && !inStandby {
 			return nil
 		}
 		if br.App.DetachedWindows != nil {
-			if dWin, ok := br.App.DetachedWindows[chatJID]; ok && dWin != nil && dWin.IsActive() {
+			if dWin, ok := br.App.DetachedWindows[chatJID]; ok && dWin != nil && dWin.IsActive() && !inStandby {
 				return nil
 			}
 		}
@@ -421,6 +422,17 @@ func (br *Bridge) setupUIHandlers() {
 			ShowGroupTag:              br.App.Sidebar != nil && br.App.Sidebar.IsShowGroupTag(),
 			ShowCommunityTag:          br.App.Sidebar != nil && br.App.Sidebar.IsShowCommunityTag(),
 			SoftReadEnabled:           br.App.Sidebar != nil && br.App.Sidebar.IsShowSoftRead(),
+			StandbyEnabled:            br.Chat.IsStandbyEnabled(),
+			StandbyTimeoutMinutes:     br.Chat.StandbyTimeoutMinutes(),
+			OnStandbySettingsChanged: func(enabled bool, minutes int) {
+				if minutes < 1 {
+					minutes = 1
+				}
+				_ = br.DB.SetSetting("standby_enabled", fmt.Sprintf("%t", enabled))
+				_ = br.DB.SetSetting("standby_timeout_minutes", fmt.Sprintf("%d", minutes))
+				br.Chat.SetStandbyEnabled(enabled)
+				br.Chat.SetStandbyTimeout(time.Duration(minutes) * time.Minute)
+			},
 			OnSettingChanged: func(key string, val bool) {
 				strVal := "false"
 				if val {
@@ -513,6 +525,8 @@ func (br *Bridge) setupUIHandlers() {
 	}
 
 	br.WireChatView(br.App.ChatView)
+	br.App.OnUserActivity = br.Chat.HandleUserActivity
+	br.Chat.StartStandbyWatcher()
 	br.App.Window.Connect("notify::is-active", br.Chat.HandleWindowActive)
 
 	br.App.OnKeyPressed = br.handleKeyPressed
@@ -568,7 +582,7 @@ func (br *Bridge) setupUIHandlers() {
 					glib.IdleAdd(func() { searchDialog.SetLoading(false) })
 					return
 				}
-				
+
 				glib.IdleAdd(func() {
 					if msgs == nil {
 						msgs = []database.Message{}
@@ -833,7 +847,7 @@ func (br *Bridge) setupServiceHandlers() {
 				if task.MsgType == "sticker" {
 					var anim *gdkpixbuf.PixbufAnimation
 					var tex *gdk.Texture
-					
+
 					anim, _ = gdkpixbuf.NewPixbufAnimationFromFile(path)
 					if anim != nil && anim.IsStaticImage() {
 						tex = gdk.NewTextureForPixbuf(anim.StaticImage())
@@ -844,7 +858,9 @@ func (br *Bridge) setupServiceHandlers() {
 				}
 
 				pixbuf, _ := gdkpixbuf.NewPixbufFromFile(path)
-				if pixbuf == nil { return }
+				if pixbuf == nil {
+					return
+				}
 				tex := gdk.NewTextureForPixbuf(pixbuf)
 
 				cv.UpdateMessageImage(task.ID, tex, path)
@@ -1015,7 +1031,7 @@ func (br *Bridge) WireChatView(cv *chat.ChatView) {
 	cv.OnSearchResultClick = func(id string) {
 		if jid := br.Chat.SelectedJID(); jid != nil {
 			glib.IdleAdd(func() {
-					cv.SearchBar.Close()
+				cv.SearchBar.Close()
 			})
 			br.Chat.CancelMessageSearchAndJump(jid.ToNonAD().String(), id)
 		}
