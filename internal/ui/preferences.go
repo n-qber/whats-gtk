@@ -18,9 +18,12 @@ type PreferencesSettings struct {
 	ShowGroupTag              bool
 	ShowCommunityTag          bool
 	SoftReadEnabled           bool
+	StandbyEnabled            bool
+	StandbyTimeoutMinutes     int
 
-	OnSettingChanged func(key string, val bool)
-	OnOpenLogs       func()
+	OnSettingChanged         func(key string, val bool)
+	OnStandbySettingsChanged func(enabled bool, minutes int)
+	OnOpenLogs               func()
 }
 
 // ShowPreferencesDialog presents the native GNOME Adwaita preferences window.
@@ -173,6 +176,30 @@ func ShowPreferencesDialog(parent *gtk.Window, notifier *notifications.Notifier,
 		}
 	})
 	chatGroup.Add(softReadRow)
+
+	standbyRow := adw.NewSwitchRow()
+	standbyRow.SetTitle("Standby por inatividade")
+	standbyRow.SetSubtitle("Ficar indisponível e não enviar confirmações de leitura após um período sem interação")
+	standbyRow.SetActive(settings.StandbyEnabled)
+
+	standbyTimeoutRow := adw.NewSpinRowWithRange(1, 60, 1)
+	standbyTimeoutRow.SetTitle("Tempo até o standby")
+	standbyTimeoutRow.SetSubtitle("Minutos sem eventos de interface antes de entrar em standby")
+	standbyTimeoutRow.SetValue(float64(settings.StandbyTimeoutMinutes))
+	standbyTimeoutRow.SetSensitive(settings.StandbyEnabled)
+
+	notifyStandby := func() {
+		if settings.OnStandbySettingsChanged != nil {
+			settings.OnStandbySettingsChanged(standbyRow.Active(), int(standbyTimeoutRow.Value()))
+		}
+	}
+	standbyRow.Connect("notify::active", func() {
+		standbyTimeoutRow.SetSensitive(standbyRow.Active())
+		notifyStandby()
+	})
+	standbyTimeoutRow.Connect("notify::value", notifyStandby)
+	chatGroup.Add(standbyRow)
+	chatGroup.Add(standbyTimeoutRow)
 
 	page.Add(chatGroup)
 
