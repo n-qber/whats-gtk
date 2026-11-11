@@ -113,11 +113,13 @@ func NewChatView() (*ChatView, error) {
 
 	// Wire SearchBar
 	cv.SearchBar.OnSearchMessages = func(query string) {
+		cv.SetSearching(true)
 		if cv.OnSearchMessages != nil {
 			cv.OnSearchMessages(query)
 		}
 	}
 	cv.SearchBar.OnCancelSearch = func() {
+		cv.SetSearching(false)
 		if cv.OnCancelSearch != nil {
 			cv.OnCancelSearch()
 		}
@@ -543,6 +545,13 @@ func (cv *ChatView) HighlightMessage(id string) {
 
 func (cv *ChatView) SetLoadingOlder(loading bool) {
 	cv.MessageList.SetLoadingOlder(loading)
+}
+
+// SetSearching toggles the in-chat search state. While search results are
+// displayed the message list must not auto-load chat history into them.
+func (cv *ChatView) SetSearching(searching bool) {
+	cv.IsSearching = searching
+	cv.MessageList.IsSearching = searching
 }
 
 // Passthrough Bubble Adders
