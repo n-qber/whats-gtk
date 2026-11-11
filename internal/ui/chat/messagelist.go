@@ -39,6 +39,7 @@ type MessageList struct {
 	// State
 	IsLoadingOlder          bool
 	NoMoreOlder             bool
+	fillCheckScheduled      bool
 	IsSearching             bool
 	KeyboardSelectedID      string
 	QuoteJumpStack          []string
@@ -171,10 +172,17 @@ func NewMessageList() *MessageList {
 
 	ml.ScrolledWindow.VAdjustment().ConnectValueChanged(func() {
 		adj := ml.ScrolledWindow.VAdjustment()
-		if len(ml.MessageRows) > 0 && adj.Value() <= 50.0 && !ml.IsLoadingOlder && !ml.NoMoreOlder && ml.OnLoadOlder != nil {
+		if len(ml.MessageRows) > 0 && adj.Value() <= 50.0 && !ml.IsSearching && !ml.IsLoadingOlder && !ml.NoMoreOlder && ml.OnLoadOlder != nil {
 			ml.SetLoadingOlder(true)
 			ml.OnLoadOlder()
 		}
+	})
+
+	// When the conversation does not fill the viewport there is nothing to
+	// scroll, so value-changed never fires. Re-check whenever the viewport or
+	// the content height changes (e.g. window resize, first allocation).
+	ml.ScrolledWindow.VAdjustment().ConnectChanged(func() {
+		ml.MaybeLoadOlder()
 	})
 
 	return ml
@@ -188,7 +196,47 @@ func (ml *MessageList) SetLoadingOlder(loading bool) {
 	} else {
 		ml.LoadingSpinner.Stop()
 		ml.LoadingSpinner.Hide()
+		// Chained loads: if the freshly rendered batch still does not fill
+		// the viewport, keep pulling older messages.
+		ml.MaybeLoadOlder()
 	}
+}
+
+// MaybeLoadOlder requests older messages when the whole conversation fits in
+// the viewport. In that case the scroll adjustment never moves, so the
+// value-changed based trigger above never runs on its own.
+func (ml *MessageList) MaybeLoadOlder() {
+	if len(ml.MessageRows) == 0 || ml.IsSearching || ml.IsLoadingOlder || ml.NoMoreOlder || ml.OnLoadOlder == nil {
+		return
+	}
+
+	adj := ml.ScrolledWindow.VAdjustment()
+	pageSize := adj.PageSize()
+	if pageSize <= 0 {
+		// Not allocated yet; ConnectChanged will re-check once it is.
+		return
+	}
+	if adj.Upper() > pageSize+1 {
+		// The list is scrollable, the normal scroll trigger takes over.
+		return
+	}
+
+	ml.SetLoadingOlder(true)
+	ml.OnLoadOlder()
+}
+
+// scheduleFillCheck debounces a viewport-fill check until GTK has laid out the
+// rows that were just added.
+func (ml *MessageList) scheduleFillCheck() {
+	if ml.fillCheckScheduled {
+		return
+	}
+	ml.fillCheckScheduled = true
+	glib.TimeoutAdd(50, func() bool {
+		ml.fillCheckScheduled = false
+		ml.MaybeLoadOlder()
+		return false
+	})
 }
 
 func (ml *MessageList) SetPinnedMessage(content string) {
@@ -203,11 +251,10 @@ func (ml *MessageList) SetPinnedMessage(content string) {
 func (ml *MessageList) Clear() {
 	ml.ClearKeyboardSelection()
 	ml.ExitSelectionMode()
-	ml.SetLoadingOlder(false)
-	ml.NoMoreOlder = false
-	for ml.ListBox.FirstChild() != nil {
-		ml.ListBox.Remove(ml.ListBox.FirstChild())
-	}
+
+	// Reset the row maps before tearing down the rows so the adjustment
+	// handlers don't mistake the emptying list for a chat that needs more
+	// history loaded.
 	ml.MessageRows = make(map[string]bubbles.Bubble)
 	ml.MessageListRows = make(map[string]*gtk.ListBoxRow)
 	ml.RowToMessageID = make(map[*gtk.ListBoxRow]string)
@@ -216,6 +263,13 @@ func (ml *MessageList) Clear() {
 	ml.KeyboardSelectedID = ""
 	ml.QuoteJumpStack = nil
 	ml.PendingKeyboardSelectID = ""
+
+	for ml.ListBox.FirstChild() != nil {
+		ml.ListBox.Remove(ml.ListBox.FirstChild())
+	}
+
+	ml.NoMoreOlder = false
+	ml.SetLoadingOlder(false)
 }
 
 func (ml *MessageList) ScrollToBottom() {
@@ -296,6 +350,8 @@ func (ml *MessageList) AddSeparator(text string) {
 	} else {
 		ml.ListBox.Append(row)
 	}
+
+	ml.scheduleFillCheck()
 }
 
 func (ml *MessageList) EnterSelectionMode(initialMsgID string) {
@@ -1047,6 +1103,8 @@ func (ml *MessageList) addBubble(id string, b bubbles.Bubble, isCont bool) {
 			return false
 		})
 	}
+
+	ml.scheduleFillCheck()
 }
 
 func (ml *MessageList) registerBubble(id, jid string, bubble bubbles.Bubble, isCont bool) {
