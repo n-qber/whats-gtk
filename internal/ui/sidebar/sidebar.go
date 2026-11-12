@@ -7,11 +7,11 @@ import (
 	"whats-gtk/internal/database"
 	"whats-gtk/internal/events"
 
+	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 	"github.com/diamondburned/gotk4/pkg/gdk/v4"
 	"github.com/diamondburned/gotk4/pkg/glib/v2"
 	"github.com/diamondburned/gotk4/pkg/gtk/v4"
 	"github.com/diamondburned/gotk4/pkg/pango"
-	"github.com/diamondburned/gotk4-adwaita/pkg/adw"
 )
 
 type SoftReadMessage struct {
@@ -53,14 +53,14 @@ type Sidebar struct {
 	OnClearChat       func(jid string)
 	OnGetSoftReadData func(jid string) (string, []SoftReadMessage)
 
-	profileItems []ProfileItem
+	profileItems    []ProfileItem
 	chatRows        map[string]*adw.ActionRow
 	chatListBoxRows map[string]*gtk.ListBoxRow
 	chatAvatars     map[string]*adw.Avatar
-	chatIndices  map[string]*gtk.Label
-	chatPinned   map[string]bool
-	chatUnread   map[string]bool
-	chatMuted    map[string]bool
+	chatIndices     map[string]*gtk.Label
+	chatPinned      map[string]bool
+	chatUnread      map[string]bool
+	chatMuted       map[string]bool
 
 	showGroupTag           bool
 	showCommunityTag       bool
@@ -80,6 +80,9 @@ type Sidebar struct {
 	chatUnreadCounts   map[string]int
 	chatLastMessages   map[string]string
 	chatTypingPresence map[string]string
+
+	chatOrder map[string]int
+	moveSeq   int
 
 	isRefreshing bool
 	isCycling    bool
@@ -141,34 +144,38 @@ func NewSidebar() (*Sidebar, error) {
 	box.Append(scrolled)
 
 	s := &Sidebar{
-		Box:               box,
-		ListBox:           listBox,
-		ScrolledWindow:    scrolled,
-		SearchEntry:       searchEntry,
-		ProgressBar:       progressBar,
-		ProfileCombo:      profileCombo,
-		NewChatBtn:        newChatBtn,
-		ManageProfilesBtn: manageBtn,
-		PreferencesBtn:    prefBtn,
+		Box:                    box,
+		ListBox:                listBox,
+		ScrolledWindow:         scrolled,
+		SearchEntry:            searchEntry,
+		ProgressBar:            progressBar,
+		ProfileCombo:           profileCombo,
+		NewChatBtn:             newChatBtn,
+		ManageProfilesBtn:      manageBtn,
+		PreferencesBtn:         prefBtn,
 		showGroupTag:           true,
 		showCommunityTag:       true,
 		showGroupUnread:        true,
 		showLastMessagePreview: true,
 		showSoftRead:           true,
-		chatRows:          make(map[string]*adw.ActionRow),
-		chatListBoxRows:   make(map[string]*gtk.ListBoxRow),
-		chatAvatars:       make(map[string]*adw.Avatar),
-		chatIndices:       make(map[string]*gtk.Label),
-		chatPinned:        make(map[string]bool),
-		chatUnread:        make(map[string]bool),
-		chatMuted:         make(map[string]bool),
-		chatNames:          make(map[string]string),
-		chatIsGroup:        make(map[string]bool),
-		chatIsCommunity:    make(map[string]bool),
-		chatUnreadCounts:   make(map[string]int),
-		chatLastMessages:   make(map[string]string),
-		chatTypingPresence: make(map[string]string),
+		chatRows:               make(map[string]*adw.ActionRow),
+		chatListBoxRows:        make(map[string]*gtk.ListBoxRow),
+		chatAvatars:            make(map[string]*adw.Avatar),
+		chatIndices:            make(map[string]*gtk.Label),
+		chatPinned:             make(map[string]bool),
+		chatUnread:             make(map[string]bool),
+		chatMuted:              make(map[string]bool),
+		chatNames:              make(map[string]string),
+		chatIsGroup:            make(map[string]bool),
+		chatIsCommunity:        make(map[string]bool),
+		chatUnreadCounts:       make(map[string]int),
+		chatLastMessages:       make(map[string]string),
+		chatTypingPresence:     make(map[string]string),
+		chatOrder:              make(map[string]int),
 	}
+
+	// Keep the list ordered by pin state and recency instead of insertion order.
+	listBox.SetSortFunc(s.sortChatRows)
 
 	profileCombo.ConnectChanged(func() {
 		if s.isRefreshing {
@@ -270,7 +277,9 @@ func NewSidebar() (*Sidebar, error) {
 
 	listBox.ConnectRowSelected(func(row *gtk.ListBoxRow) {
 		s.dismissSoftReadPopover()
-		if row == nil || s.isRefreshing { return }
+		if row == nil || s.isRefreshing {
+			return
+		}
 		s.isCycling = false
 		s.originalJID = ""
 		s.pendingJID = ""
@@ -280,6 +289,67 @@ func NewSidebar() (*Sidebar, error) {
 	})
 
 	return s, nil
+}
+
+// sortChatRows orders rows so pinned chats stay on top, followed by the most
+// recently updated chats. chatOrder holds the recency rank assigned by
+// SyncChats (from the database ordering) or by MoveChatToTop for live updates.
+func (s *Sidebar) sortChatRows(row1, row2 *gtk.ListBoxRow) int {
+	jid1, jid2 := row1.Name(), row2.Name()
+
+	pinned1 := s.chatPinned[jid1]
+	pinned2 := s.chatPinned[jid2]
+	if pinned1 != pinned2 {
+		if pinned1 {
+			return -1
+		}
+		return 1
+	}
+
+	const missingOrder = int(^uint(0) >> 1)
+	order1, ok1 := s.chatOrder[jid1]
+	if !ok1 {
+		order1 = missingOrder
+	}
+	order2, ok2 := s.chatOrder[jid2]
+	if !ok2 {
+		order2 = missingOrder
+	}
+	if order1 != order2 {
+		if order1 < order2 {
+			return -1
+		}
+		return 1
+	}
+
+	// Deterministic tiebreaker so rows do not jump around.
+	n1, n2 := strings.ToLower(row1.Name()), strings.ToLower(row2.Name())
+	switch {
+	case n1 < n2:
+		return -1
+	case n1 > n2:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// refreshIndexLabels renumbers the keyboard shortcut labels to match the
+// current visual order.
+func (s *Sidebar) refreshIndexLabels() {
+	for i := 0; ; i++ {
+		row := s.ListBox.RowAtIndex(i)
+		if row == nil {
+			break
+		}
+		if label, ok := s.chatIndices[row.Name()]; ok {
+			if i < 9 {
+				label.SetText(fmt.Sprintf("%d", i+1))
+			} else {
+				label.SetText("")
+			}
+		}
+	}
 }
 
 func (s *Sidebar) SetRefreshing(refreshing bool) {
@@ -727,15 +797,26 @@ func (s *Sidebar) AddChatFull(jid, name string, isGroup bool, isCommunity bool, 
 	if s.chatUnreadCounts != nil {
 		s.chatUnreadCounts[jid] = unreadCount
 	}
+	if s.chatOrder != nil {
+		if _, ok := s.chatOrder[jid]; !ok {
+			maxOrder := 0
+			for _, order := range s.chatOrder {
+				if order > maxOrder {
+					maxOrder = order
+				}
+			}
+			s.chatOrder[jid] = maxOrder + 1
+		}
+	}
 
 	row := adw.NewActionRow()
 	title := s.formatChatTitle(name, isGroup, isCommunity, unreadCount, isPinned, muted)
 	row.SetTitle(glib.MarkupEscapeText(title))
 	row.SetName(jid)
-	
+
 	avatar := adw.NewAvatar(32, name, true)
 	row.AddPrefix(avatar)
-	
+
 	// Add index label
 	idx := len(s.chatRows) + 1
 	idxLabel := gtk.NewLabel(fmt.Sprintf("%d", idx))
@@ -746,16 +827,16 @@ func (s *Sidebar) AddChatFull(jid, name string, isGroup bool, isCommunity bool, 
 	idxLabel.SetOpacity(0.5)
 	idxLabel.Hide()
 	row.AddSuffix(idxLabel)
-	
+
 	s.chatRows[jid] = row
 	s.chatAvatars[jid] = avatar
 	s.chatIndices[jid] = idxLabel
-	
+
 	// We need to wrap it in a ListBoxRow to set the name for lookup
 	lbRow := gtk.NewListBoxRow()
 	lbRow.SetChild(row)
 	lbRow.SetName(jid)
-	
+
 	// Right click context menu
 	rightClick := gtk.NewGestureClick()
 	rightClick.SetButton(3)
@@ -846,11 +927,15 @@ func (s *Sidebar) RemoveChat(jid string) {
 	delete(s.chatUnreadCounts, jid)
 	delete(s.chatLastMessages, jid)
 	delete(s.chatTypingPresence, jid)
+	delete(s.chatOrder, jid)
 }
 
 func (s *Sidebar) SyncChats(items []events.SidebarItem) {
 	if len(s.chatRows) == 0 {
-		for _, item := range items {
+		for i, item := range items {
+			if s.chatOrder != nil {
+				s.chatOrder[item.JID] = i
+			}
 			if item.LastMessage != "" && s.chatLastMessages != nil {
 				s.chatLastMessages[item.JID] = item.LastMessage
 			}
@@ -860,6 +945,8 @@ func (s *Sidebar) SyncChats(items []events.SidebarItem) {
 			}
 			s.updateRowSubtitle(item.JID)
 		}
+		s.ListBox.InvalidateSort()
+		s.refreshIndexLabels()
 		return
 	}
 
@@ -874,7 +961,10 @@ func (s *Sidebar) SyncChats(items []events.SidebarItem) {
 		}
 	}
 
-	for _, item := range items {
+	for i, item := range items {
+		if s.chatOrder != nil {
+			s.chatOrder[item.JID] = i
+		}
 		if item.LastMessage != "" && s.chatLastMessages != nil {
 			s.chatLastMessages[item.JID] = item.LastMessage
 		}
@@ -892,6 +982,9 @@ func (s *Sidebar) SyncChats(items []events.SidebarItem) {
 			s.updateRowSubtitle(item.JID)
 		}
 	}
+
+	s.ListBox.InvalidateSort()
+	s.refreshIndexLabels()
 }
 
 func (s *Sidebar) ClearChats() {
@@ -909,6 +1002,8 @@ func (s *Sidebar) ClearChats() {
 	s.chatUnreadCounts = make(map[string]int)
 	s.chatLastMessages = make(map[string]string)
 	s.chatTypingPresence = make(map[string]string)
+	s.chatOrder = make(map[string]int)
+	s.moveSeq = 0
 	for {
 		child := s.ListBox.FirstChild()
 		if child == nil {
@@ -1347,4 +1442,3 @@ func (s *Sidebar) SelectProfileIndex(index int) {
 		s.ProfileCombo.SetActive(index)
 	}
 }
-
