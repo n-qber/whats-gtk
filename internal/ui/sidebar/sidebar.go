@@ -700,6 +700,7 @@ func (s *Sidebar) UpdateChatRowFull(jid, name string, isGroup bool, isCommunity 
 	} else if s.chatMuted != nil {
 		muted = s.chatMuted[jid]
 	}
+	wasPinned := s.chatPinned[jid]
 	if s.chatPinned != nil {
 		s.chatPinned[jid] = isPinned
 	}
@@ -725,6 +726,10 @@ func (s *Sidebar) UpdateChatRowFull(jid, name string, isGroup bool, isCommunity 
 		title := s.formatChatTitle(name, isGroup, isCommunity, unreadCount, isPinned, muted)
 		row.SetTitle(glib.MarkupEscapeText(title))
 		s.updateRowSubtitle(jid)
+		if wasPinned != isPinned {
+			s.ListBox.InvalidateSort()
+			s.refreshIndexLabels()
+		}
 		return
 	}
 	s.AddChatFull(jid, name, isGroup, isCommunity, unreadCount, isPinned, muted)
@@ -1356,7 +1361,18 @@ func (s *Sidebar) IsShowSoftRead() bool {
 }
 
 func (s *Sidebar) MoveChatToTop(jid string) {
-	// [TODO: Implement Move to top logic]
+	if _, exists := s.chatRows[jid]; !exists {
+		return
+	}
+	if s.chatOrder == nil {
+		s.chatOrder = make(map[string]int)
+	}
+	// Negative ranks always sort before the non-negative ranks assigned by
+	// SyncChats, so the chat rises to the top of its pinned/unpinned group.
+	s.moveSeq--
+	s.chatOrder[jid] = s.moveSeq
+	s.ListBox.InvalidateSort()
+	s.refreshIndexLabels()
 }
 
 func (s *Sidebar) SetAvatar(jid string, tex *gdk.Texture) {
